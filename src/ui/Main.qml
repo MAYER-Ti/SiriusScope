@@ -1,8 +1,33 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import "components" as Components
 
-Window {
-    width: 640
-    height: 480
+ApplicationWindow {
+    width: 1080
+    height: 640
     visible: true
     title: qsTr("SiriusScope")
+    font.pixelSize: 12
+
+    menuBar: Components.MenuBarApp { }
+
+    RowLayout {
+        anchors.fill: parent
+        spacing: 8
+
+        Components.WaterfallView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.preferredWidth: parent.width * 0.6
+            Layout.minimumWidth: 400
+        }
+
+        Components.AntennaIndicator {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.preferredWidth: parent.width * 0.4
+            Layout.minimumWidth: 280
+        }
+    }
 }
