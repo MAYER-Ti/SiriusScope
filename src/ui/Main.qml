@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "components/AntennaIndicator" as AntInd
 import "components" as Components
 
 ApplicationWindow {
@@ -38,7 +39,7 @@ ApplicationWindow {
             }
         }
 
-        Components.AntennaIndicator {
+        AntInd.AntennaIndicator {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: parent.width * 0.4
