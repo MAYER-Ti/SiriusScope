@@ -14,13 +14,28 @@ ApplicationWindow {
 
     RowLayout {
         anchors.fill: parent
-        spacing: 8
+        spacing: 4
 
-        Components.WaterfallView {
+        ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: parent.width * 0.6
             Layout.minimumWidth: 400
+            spacing: 4
+
+            Components.SpectrumView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: parent.height * 0.2
+                Layout.minimumHeight: 120
+            }
+
+            Components.WaterfallView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: parent.height * 0.8
+                Layout.minimumHeight: 200
+            }
         }
 
         Components.AntennaIndicator {
@@ -30,4 +45,6 @@ ApplicationWindow {
             Layout.minimumWidth: 280
         }
     }
+
+    footer: Components.FooterDataView { }
 }

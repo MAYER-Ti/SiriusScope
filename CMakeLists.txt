@@ -19,6 +19,8 @@ qt_add_qml_module(appSiriusScope
         src/ui/components/WaterfallView.qml
         src/ui/components/AntennaIndicator.qml
         QML_FILES src/ui/components/MenuBarApp.qml
+        QML_FILES src/ui/components/FooterDataView.qml
+        QML_FILES src/ui/components/SpectrumView.qml
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
