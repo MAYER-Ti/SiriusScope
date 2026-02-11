@@ -11,9 +11,9 @@ Item {
 
     // Настройки "луча" антенны
     property real beamWidthDeg: 60          // полный угол сектора
-    property real innerRadiusRatio: 0.5    // отверстие в центре (0..1)
-    property real beamOpacity: 0.55         // базовая прозрачность
-    property real smoothing: 0.35           // 0..1: скорость подтягивания renderAzimuth к latestAzimuth
+    property real innerRadiusRatio: 0.1    // Радиус внутреннего кольца
+    property real beamOpacity: 0.45         // базовая прозрачность
+    property real smoothing: 0.1           // 0..1: скорость подтягивания renderAzimuth к latestAzimuth
     property int renderFps: 60              // частота обновления UI
 
     // Внутреннее состояние
@@ -79,24 +79,6 @@ Item {
         anchors.margins: 12
         spacing: 6
 
-        // RowLayout {
-        //     Layout.fillWidth: true
-        //     spacing: 8
-
-        //     Label {
-        //         text: qsTr("Пеленгатор")
-        //         font.bold: true
-        //         color: "#2b2f36"
-        //         Layout.fillWidth: true
-        //         elide: Text.ElideRight
-        //     }
-
-        //     Label {
-        //         text: qsTr("%1°").arg(Math.round(indicator._renderAzimuthDeg))
-        //         color: "#5a6270"
-        //     }
-        // }
-
         Item {
             id: dialArea
             Layout.fillWidth: true
@@ -127,52 +109,100 @@ Item {
                     radius: width / 2
                 }
 
-                // Labels
-                Text {
-                    text: "0"
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.topMargin: 6
-                    color: "#5a6270"
+                // --- Scale parameters (под dial.*) ---
+                readonly property real tickOuterPad: dial.rOuter * 0.03
+                readonly property real majorTickLen: dial.rOuter * 0.085
+                readonly property real midTickLen:   dial.rOuter * 0.055
+                readonly property real minorTickLen: dial.rOuter * 0.032
+                readonly property real labelRadius:  dial.rOuter * 0.80
+
+                // Функции координат для компасной системы: 0° вверх, 90° вправо
+                function _xAt(radius, deg) {
+                    var rad = deg * Math.PI / 180.0
+                    return dial.width / 2 + radius * Math.sin(rad)
                 }
-                Text {
-                    text: "90"
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.right: parent.right
-                    anchors.rightMargin: 6
-                    color: "#5a6270"
-                }
-                Text {
-                    text: "180"
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 6
-                    color: "#5a6270"
-                }
-                Text {
-                    text: "270"
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.leftMargin: 6
-                    color: "#5a6270"
+                function _yAt(radius, deg) {
+                    var rad = deg * Math.PI / 180.0
+                    return dial.height / 2 - radius * Math.cos(rad)
                 }
 
-                // Minor ticks (every 30°)
+                // --- Major ticks (каждые 30°) ---
                 Repeater {
-                    model: 12
+                    model: 12  // 0..330
                     Rectangle {
                         width: 2
-                        height: dial.rOuter * 0.06
+                        height: dial.majorTickLen
                         radius: 1
                         color: "#9aa3b1"
+                        opacity: 0.95
+
                         x: (dial.width - width) / 2
-                        y: 6
+                        y: dial.tickOuterPad
                         transform: Rotation {
                             origin.x: width / 2
-                            origin.y: dial.rOuter - 6
+                            origin.y: dial.rOuter - dial.tickOuterPad
                             angle: index * 30
                         }
-                        opacity: 0.75
+                    }
+                }
+
+                // --- Medium ticks (каждые 15°, но не 30°) ---
+                Repeater {
+                    model: 24 // 0..345 шаг 15
+                    Rectangle {
+                        readonly property int deg: index * 15
+                        visible: (deg % 30) !== 0
+
+                        width: 2
+                        height: dial.midTickLen
+                        radius: 1
+                        color: "#9aa3b1"
+                        opacity: 0.7
+
+                        x: (dial.width - width) / 2
+                        y: dial.tickOuterPad
+                        transform: Rotation {
+                            origin.x: width / 2
+                            origin.y: dial.rOuter - dial.tickOuterPad
+                            angle: deg
+                        }
+                    }
+                }
+
+                // --- Minor ticks (каждые 5°, но не 15°) ---
+                Repeater {
+                    model: 72 // 0..355 шаг 5
+                    Rectangle {
+                        readonly property int deg: index * 5
+                        visible: (deg % 15) !== 0   // не рисуем поверх 15° и 30° (30 тоже кратно 15)
+
+                        width: 1
+                        height: dial.minorTickLen
+                        radius: 0.5
+                        color: "#9aa3b1"
+                        opacity: 0.55
+
+                        x: (dial.width - width) / 2
+                        y: dial.tickOuterPad
+                        transform: Rotation {
+                            origin.x: width / 2
+                            origin.y: dial.rOuter - dial.tickOuterPad
+                            angle: deg
+                        }
+                    }
+                }
+
+                // --- Angle labels (каждые 30°) ---
+                Repeater {
+                    model: 12
+                    Text {
+                        readonly property int deg: index * 30
+                        text: deg.toString()
+                        color: "#5a6270"
+                        font.pixelSize: 12
+
+                        x: dial._xAt(dial.labelRadius, deg) - width / 2
+                        y: dial._yAt(dial.labelRadius, deg) - height / 2
                     }
                 }
 
@@ -184,6 +214,46 @@ Item {
                     // поэтому: baseRotation + azimuth
                     rotation: dial.baseRotation + indicator._renderAzimuthDeg
                     transformOrigin: Item.Center
+
+                    // --- Shadow under beam ---
+                    Shape {
+                        anchors.fill: parent
+                        antialiasing: true
+                        opacity: 0.12   // мягкая прозрачность
+
+                        ShapePath {
+                            fillColor: "#000000"
+                            strokeWidth: 0
+
+                            PathMove {
+                                x: dial.width / 2 + dial.rInner
+                                y: dial.height / 2 + 2   // небольшой сдвиг вниз
+                            }
+
+                            PathArc {
+                                x: dial.width / 2 + dial.rInner * Math.cos(dial.beamHalf * Math.PI / 180)
+                                y: dial.height / 2 + dial.rInner * Math.sin(dial.beamHalf * Math.PI / 180) + 2
+                                radiusX: dial.rInner * 1.02
+                                radiusY: dial.rInner * 1.02
+                                useLargeArc: false
+                                direction: PathArc.Clockwise
+                            }
+
+                            PathLine {
+                                x: dial.width / 2 + dial.rOuter * Math.cos(dial.beamHalf * Math.PI / 180)
+                                y: dial.height / 2 + dial.rOuter * Math.sin(dial.beamHalf * Math.PI / 180) + 2
+                            }
+
+                            PathArc {
+                                x: dial.width / 2 + dial.rOuter
+                                y: dial.height / 2 + 2
+                                radiusX: dial.rOuter
+                                radiusY: dial.rOuter
+                                useLargeArc: false
+                                direction: PathArc.Counterclockwise
+                            }
+                        }
+                    }
 
                     // Правая половина (зелёная): 0 .. +beamHalf
                     Shape {
@@ -310,7 +380,7 @@ Item {
 
                 // Центр
                 Rectangle {
-                    width: dial.width * 0.05
+                    width: dial.width * 0.03
                     height: width
                     radius: width / 2
                     color: "#2b2f36"
