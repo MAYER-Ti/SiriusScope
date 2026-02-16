@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import SiriusScope 1.0
 
 MenuBar {
     id: menuBar
@@ -10,6 +11,41 @@ MenuBar {
         font.pixelSize: 11
     }
 
+    ActionGroup {
+        id: appModeGroup
+    }
+
+    Menu {
+        title: qsTr("Режим")
+        Action {
+            text: qsTr("Тестовый")
+            checkable: true
+            ActionGroup.group: appModeGroup
+            checked: AppState.mode === AppState.Test
+            onTriggered: {
+                AppState.mode = AppState.Test
+                console.log("Режим->Тестовый")
+            }
+        }
+        Action {
+            text: qsTr("Боевой")
+            checkable: true
+            ActionGroup.group: appModeGroup
+            checked: AppState.mode === AppState.Combat
+            onTriggered: {
+                AppState.mode = AppState.Combat
+            }
+        }
+        Action {
+            text: qsTr("Контроль")
+            checkable: true
+            ActionGroup.group: appModeGroup
+            checked: AppState.mode === AppState.Control
+            onTriggered: {
+                AppState.mode = AppState.Control
+            }
+        }
+    }
     Menu {
         title: qsTr("Файл")
         Action {

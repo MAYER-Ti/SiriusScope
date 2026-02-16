@@ -20,21 +20,21 @@ ApplicationWindow {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredWidth: parent.width * 0.6
+            Layout.horizontalStretchFactor: 3
             Layout.minimumWidth: 400
             spacing: 4
 
             Components.SpectrumView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.preferredHeight: parent.height * 0.2
+                Layout.verticalStretchFactor: 2
                 Layout.minimumHeight: 120
             }
 
             Components.WaterfallView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.preferredHeight: parent.height * 0.8
+                Layout.verticalStretchFactor: 8
                 Layout.minimumHeight: 200
             }
         }
@@ -42,7 +42,7 @@ ApplicationWindow {
         AntInd.AntennaIndicator {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredWidth: parent.width * 0.4
+            Layout.horizontalStretchFactor: 2
             Layout.minimumWidth: 280
         }
     }

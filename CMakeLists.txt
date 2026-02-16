@@ -10,10 +10,13 @@ qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(appSiriusScope
     src/app/main.cpp
+    src/app/appstate.h
+    src/app/appstate.cpp
 )
 
 qt_add_qml_module(appSiriusScope
     URI SiriusScope
+    VERSION 1.0
     QML_FILES
         src/ui/Main.qml
         src/ui/components/WaterfallView.qml
@@ -21,7 +24,8 @@ qt_add_qml_module(appSiriusScope
         src/ui/components/MenuBarApp.qml
         src/ui/components/FooterDataView.qml
         src/ui/components/SpectrumView.qml
-        QML_FILES src/ui/components/AntennaIndicator/Indicator.qml
+        src/ui/components/AntennaIndicator/Indicator.qml
+        RESOURCES Todo.md
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
