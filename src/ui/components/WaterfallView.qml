@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import SiriusScope 1.0
 
 Item {
     id: root
@@ -9,6 +10,8 @@ Item {
     property bool busy: false
     property real fps: 0
     property real centerFrequency: 0
+    property real viewMinHz: FrequencyViewportModel.viewMinHz
+    property real viewMaxHz: FrequencyViewportModel.viewMaxHz
 
     Rectangle {
         id: frame

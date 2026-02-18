@@ -12,6 +12,12 @@ qt_add_executable(appSiriusScope
     src/app/main.cpp
     src/app/appstate.h
     src/app/appstate.cpp
+    src/app/frequencyviewportmodel.h
+    src/app/frequencyviewportmodel.cpp
+    src/app/spectrumcontrollerstub.h
+    src/app/spectrumcontrollerstub.cpp
+    src/app/spectrumdecimator.h
+    src/app/spectrumdecimator.cpp
 )
 
 qt_add_qml_module(appSiriusScope
@@ -24,6 +30,7 @@ qt_add_qml_module(appSiriusScope
         src/ui/components/MenuBarApp.qml
         src/ui/components/FooterDataView.qml
         src/ui/components/SpectrumView.qml
+        src/ui/components/Spectrum/BandItem.qml
         src/ui/components/AntennaIndicator/Indicator.qml
         src/ui/components/AntennaIndicator/TargetTracker.qml
         RESOURCES Todo.md
