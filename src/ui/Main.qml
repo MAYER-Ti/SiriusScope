@@ -27,14 +27,14 @@ ApplicationWindow {
             Components.SpectrumView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.verticalStretchFactor: 2
+                Layout.verticalStretchFactor: 4
                 Layout.minimumHeight: 120
             }
 
             Components.WaterfallView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.verticalStretchFactor: 8
+                Layout.verticalStretchFactor: 6
                 Layout.minimumHeight: 200
             }
         }
