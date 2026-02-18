@@ -6,12 +6,16 @@ import QtQuick.Controls
 Item {
     id: indicator
 
+    // сырые пеленги (0..359.9)
+    property var targetAzimuthsDeg: antennaIndicator.activeBearings
+
+
     // Вход: обновляется хоть каждые 10 мс (0..359.9)
     property real azimuthDeg: 0
 
     // Настройки "луча" антенны
     property real beamWidthDeg: 60          // полный угол сектора
-    property real innerRadiusRatio: 0.1    // Радиус внутреннего кольца
+    property real innerRadiusRatio: 0.3    // Радиус внутреннего кольца
     property real beamOpacity: 0.45         // базовая прозрачность
     property real smoothing: 0.1           // 0..1: скорость подтягивания renderAzimuth к latestAzimuth
     property int renderFps: 60              // частота обновления UI
@@ -20,6 +24,8 @@ Item {
     property real _latestAzimuthDeg: 0
     property real _renderAzimuthDeg: 0
     property real _tickMs: 0
+
+
 
     function _norm360(deg) {
         var a = deg % 360.0
@@ -53,6 +59,18 @@ Item {
         }
     }
 
+    TargetTracker {
+        id: targetTracker
+        maxTargets: 15
+        matchThresholdDeg: 4.0
+        ttlMs: 12000
+        fadeMs: 8000
+    }
+
+    function resetTargets() {
+        targetTracker.clear()
+    }
+
     Timer {
         id: renderTimer
         interval: Math.max(16, Math.round(1000 / Math.max(1, indicator.renderFps)))
@@ -61,6 +79,10 @@ Item {
         onTriggered: {
             indicator._tickMs = Date.now()
             indicator._updateRenderAzimuth()
+
+            // обновляем трекер целей
+            targetTracker.nowMs = indicator._tickMs
+            targetTracker.ingest(indicator.targetAzimuthsDeg)
         }
     }
 
@@ -115,6 +137,8 @@ Item {
                 readonly property real midTickLen:   dial.rOuter * 0.055
                 readonly property real minorTickLen: dial.rOuter * 0.032
                 readonly property real labelRadius:  dial.rOuter * 0.80
+                readonly property real targetRadius: dial.rInner + (dial.rOuter - dial.rInner) * 0.55
+
 
                 // Функции координат для компасной системы: 0° вверх, 90° вправо
                 function _xAt(radius, deg) {
@@ -260,6 +284,7 @@ Item {
                         anchors.fill: parent
                         layer.enabled: true
                         layer.smooth: true
+
                         antialiasing: true
                         opacity: indicator.beamOpacity
 
@@ -378,6 +403,51 @@ Item {
                     }
                 }
 
+                // --- Targets belt -----------------------------------------------------------
+                Item {
+                    id: targetsLayer
+                    anchors.fill: parent
+
+                    Repeater {
+                        model: targetTracker.tracks.length
+
+                        Item {
+                            readonly property var tr: targetTracker.tracks[index]
+                            readonly property real a: targetTracker.alpha(tr)
+                            readonly property bool freshest: index === 0
+
+                            readonly property real xPos: dial._xAt(dial.targetRadius, tr.az)
+                            readonly property real yPos: dial._yAt(dial.targetRadius, tr.az)
+
+                            // ореол самой свежей
+                            Rectangle {
+                                visible: freshest
+                                width: 14
+                                height: 14
+                                radius: 7
+                                x: xPos - width/2
+                                y: yPos - height/2
+                                color: "transparent"
+                                border.width: 2
+                                border.color: "#2b2f36"
+                                opacity: 0.22
+                            }
+
+                            // маркер цели
+                            Rectangle {
+                                width: freshest ? 8 : 6
+                                height: width
+                                radius: width / 2
+                                x: xPos - width/2
+                                y: yPos - height/2
+                                color: "#2b2f36"
+                                opacity: Math.max(0.10, a)
+                            }
+                        }
+                    }
+                }
+
+
                 // Центр
                 Rectangle {
                     width: dial.width * 0.03
@@ -403,3 +473,4 @@ Item {
         }
     }
 }
+
