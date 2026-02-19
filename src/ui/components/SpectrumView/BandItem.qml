@@ -70,7 +70,7 @@ Item {
             anchors.topMargin: 4
             text: "B" + (bandId + 1) + " " + thresholdDb.toFixed(0) + " dB"
             color: enabled ? "#e7eef8" : "#a0a6ad"
-            font.pixelSize: 11
+            font: "10px Consolas"
         }
 
         MouseArea {
@@ -257,7 +257,7 @@ Item {
             Text {
                 text: "Threshold"
                 color: "#d7dbe2"
-                font.pixelSize: 11
+                font: "10px Consolas"
             }
 
             Slider {
@@ -289,7 +289,7 @@ Item {
                 Text {
                     text: thresholdDb.toFixed(0) + " dB"
                     color: "#a9b2bd"
-                    font.pixelSize: 11
+                    font: "10px Consolas"
                 }
             }
         }

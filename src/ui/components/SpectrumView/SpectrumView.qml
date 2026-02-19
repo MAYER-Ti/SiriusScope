@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SiriusScope 1.0
-import "Spectrum" as Spectrum
 
 Item {
     id: root
@@ -91,11 +90,11 @@ Item {
 
     ListModel {
         id: bandModel
-        ListElement { bandId: 0; centerHz: 1.0e9; widthHz: 5.0e8; thresholdDb: -80; enabled: true }
-        ListElement { bandId: 1; centerHz: 2.5e9; widthHz: 5.0e8; thresholdDb: -85; enabled: true }
-        ListElement { bandId: 2; centerHz: 4.0e9; widthHz: 5.0e8; thresholdDb: -78; enabled: true }
-        ListElement { bandId: 3; centerHz: 6.0e9; widthHz: 5.0e8; thresholdDb: -90; enabled: true }
-        ListElement { bandId: 4; centerHz: 8.0e9; widthHz: 5.0e8; thresholdDb: -82; enabled: true }
+        ListElement { bandId: 0; centerHz: 3.0e9; widthHz: 5.0e8; thresholdDb: -80; enabled: true }
+        ListElement { bandId: 1; centerHz: 5.795e9; widthHz: 4.10e8; thresholdDb: -85; enabled: true }
+        ListElement { bandId: 2; centerHz: 8.25e9; widthHz: 5.0e8; thresholdDb: -78; enabled: true }
+        ListElement { bandId: 3; centerHz: 9.55e9; widthHz: 5.0e8; thresholdDb: -90; enabled: true }
+        ListElement { bandId: 4; centerHz: 1.425e10; widthHz: 5.0e8; thresholdDb: -82; enabled: true }
     }
 
     Connections {
@@ -169,7 +168,7 @@ Item {
                     }
 
                     ctx.fillStyle = "#a5b0bd"
-                    ctx.font = "10px Sans"
+                    ctx.font = "10px Consolas"
                     ctx.textAlign = "center"
                     ctx.textBaseline = "bottom"
 
@@ -302,7 +301,7 @@ Item {
             Repeater {
                 id: bandRepeater
                 model: bandModel
-                delegate: Spectrum.BandItem {
+                delegate: BandItem {
                     bandId: model.bandId
                     centerHz: model.centerHz
                     widthHz: model.widthHz
