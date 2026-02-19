@@ -36,7 +36,8 @@ void AppState::load()
 {
     QSettings s; // Заглужка для интеграции с QSettings
     const int v = s.value(QStringLiteral("app/mode"), static_cast<int>(Mode::Test)).toInt();
-    if ((static_cast<int>(Mode::Test) < v) || ( v < static_cast<int>(Mode::Control))) {
+    // Проверяем invalid/out-of-range значение, если оно вне диапазона enum Mode.
+    if (v < static_cast<int>(Mode::Test) || v > static_cast<int>(Mode::Control)) {
         m_mode = Mode::Test;
     }
     else {
