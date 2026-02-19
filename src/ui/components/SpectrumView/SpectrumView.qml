@@ -7,6 +7,8 @@ Item {
     id: root
     focus: true
 
+    readonly property string monoFontFamily: "Consolas, Monospace"
+
     property real minDb: -120
     property real maxDb: 0
     readonly property real viewMinHz: FrequencyViewportModel.viewMinHz
@@ -168,7 +170,7 @@ Item {
                     }
 
                     ctx.fillStyle = "#a5b0bd"
-                    ctx.font = "10px Consolas"
+                    ctx.font = "10px " + root.monoFontFamily
                     ctx.textAlign = "center"
                     ctx.textBaseline = "bottom"
 
