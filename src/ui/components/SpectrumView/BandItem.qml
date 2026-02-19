@@ -5,6 +5,8 @@ import SiriusScope 1.0
 Item {
     id: root
 
+    readonly property string monoFontFamily: "Consolas, Monospace"
+
     property int bandId: 0
     property real centerHz: 0
     property real widthHz: 0
@@ -71,7 +73,8 @@ Item {
             anchors.topMargin: 4
             text: "B" + (bandId + 1) + " " + thresholdDb.toFixed(0) + " dB"
             color: enabled ? "#e7eef8" : "#a0a6ad"
-            font: "10px Consolas"
+            font.family: root.monoFontFamily
+            font.pixelSize: 10
         }
 
         MouseArea {
@@ -267,7 +270,8 @@ Item {
             Text {
                 text: "Threshold"
                 color: "#d7dbe2"
-                font: "10px Consolas"
+                font.family: root.monoFontFamily
+                font.pixelSize: 10
             }
 
             Slider {
@@ -299,7 +303,8 @@ Item {
                 Text {
                     text: thresholdDb.toFixed(0) + " dB"
                     color: "#a9b2bd"
-                    font: "10px Consolas"
+                    font.family: root.monoFontFamily
+                    font.pixelSize: 10
                 }
             }
         }
