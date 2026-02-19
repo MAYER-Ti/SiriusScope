@@ -7,7 +7,7 @@ Item {
     id: root
     focus: true
 
-    readonly property string monoFontFamily: "Consolas, Monospace"
+    readonly property string monoFontFamily: "Consolas"
 
     property real minDb: -120
     property real maxDb: 0
