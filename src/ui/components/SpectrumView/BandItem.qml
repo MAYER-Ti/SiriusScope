@@ -33,6 +33,7 @@ Item {
     property real _pendingCenterHz: centerHz
     property real _pendingWidthHz: widthHz
     property real _pendingThresholdDb: thresholdDb
+    property point _lastRootPoint: Qt.point(0, 0)
 
     anchors.fill: parent
     visible: visibleMaxHz > visibleMinHz
@@ -81,7 +82,7 @@ Item {
             enabled: !leftResize.containsMouse && !rightResize.containsMouse
 
             property bool dragging: false
-            property real startX: 0
+            property real startRootX: 0
             property real startCenterHz: 0
 
             onPressed: (mouse) => {
@@ -96,7 +97,8 @@ Item {
                     return
                 }
                 dragging = true
-                startX = mouse.x
+                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                startRootX = _lastRootPoint.x
                 startCenterHz = centerHz
             }
 
@@ -104,7 +106,8 @@ Item {
                 if (!dragging) {
                     return
                 }
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
                 scheduleBandChange(nextCenter, widthHz, false)
             }
@@ -114,7 +117,8 @@ Item {
                     return
                 }
                 dragging = false
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
                 scheduleBandChange(nextCenter, widthHz, true)
             }
@@ -131,7 +135,7 @@ Item {
             z: 3
 
             property bool resizing: false
-            property real startX: 0
+            property real startRootX: 0
             property real startMinHz: 0
             property real startMaxHz: 0
 
@@ -141,7 +145,8 @@ Item {
                     return
                 }
                 resizing = true
-                startX = mouse.x
+                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
+                startRootX = _lastRootPoint.x
                 startMinHz = bandMinHz
                 startMaxHz = bandMaxHz
             }
@@ -150,7 +155,8 @@ Item {
                 if (!resizing) {
                     return
                 }
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMin = startMinHz + deltaHz
                 var result = clampEdges(nextMin, startMaxHz)
                 scheduleBandChange(result.centerHz, result.widthHz, false)
@@ -161,7 +167,8 @@ Item {
                     return
                 }
                 resizing = false
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMin = startMinHz + deltaHz
                 var result = clampEdges(nextMin, startMaxHz)
                 scheduleBandChange(result.centerHz, result.widthHz, true)
@@ -179,7 +186,7 @@ Item {
             z: 3
 
             property bool resizing: false
-            property real startX: 0
+            property real startRootX: 0
             property real startMinHz: 0
             property real startMaxHz: 0
 
@@ -189,7 +196,8 @@ Item {
                     return
                 }
                 resizing = true
-                startX = mouse.x
+                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
+                startRootX = _lastRootPoint.x
                 startMinHz = bandMinHz
                 startMaxHz = bandMaxHz
             }
@@ -198,7 +206,8 @@ Item {
                 if (!resizing) {
                     return
                 }
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMax = startMaxHz + deltaHz
                 var result = clampEdges(startMinHz, nextMax)
                 scheduleBandChange(result.centerHz, result.widthHz, false)
@@ -209,7 +218,8 @@ Item {
                     return
                 }
                 resizing = false
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMax = startMaxHz + deltaHz
                 var result = clampEdges(startMinHz, nextMax)
                 scheduleBandChange(result.centerHz, result.widthHz, true)
