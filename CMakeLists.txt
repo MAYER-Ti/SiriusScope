@@ -26,13 +26,13 @@ qt_add_qml_module(appSiriusScope
     QML_FILES
         src/ui/Main.qml
         src/ui/components/WaterfallView.qml
-        src/ui/components/AntennaIndicator/AntennaIndicator.qml
         src/ui/components/MenuBarApp.qml
         src/ui/components/FooterDataView.qml
-        src/ui/components/SpectrumView.qml
-        src/ui/components/Spectrum/BandItem.qml
+        src/ui/components/SpectrumView/SpectrumView.qml
+        src/ui/components/SpectrumView/BandItem.qml
         src/ui/components/AntennaIndicator/Indicator.qml
         src/ui/components/AntennaIndicator/TargetTracker.qml
+        src/ui/components/AntennaIndicator/AntennaIndicator.qml
         RESOURCES Todo.md
         RESOURCES CONTEXT.md
         RESOURCES ARCHITECTURE.md

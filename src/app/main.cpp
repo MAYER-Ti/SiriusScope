@@ -1,3 +1,6 @@
+/*! \file main.cpp
+ *  \brief Точка входа приложения и регистрация типов QML.
+ */
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
@@ -8,6 +11,11 @@
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 
+/*! \brief Инициализирует Qt/QML и запускает цикл обработки событий.
+ *  \param[in] argc Количество аргументов командной строки.
+ *  \param[in] argv Массив аргументов командной строки.
+ *  \return Код завершения приложения.
+ */
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);

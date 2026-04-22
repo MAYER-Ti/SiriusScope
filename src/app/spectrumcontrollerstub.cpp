@@ -1,13 +1,23 @@
+/*!
+ *  \file spectrumcontrollerstub.cpp
+ *  \brief Реализация SpectrumControllerStub.
+ */
 #include "spectrumcontrollerstub.h"
 
 #include <QtMath>
 #include <QDebug>
 
+//! \brief Конструирует заглушку контроллера.
 SpectrumControllerStub::SpectrumControllerStub(QObject *parent)
     : QObject(parent)
 {
 }
 
+/*!
+ *  \brief Генерирует и отправляет синтетический спектр.
+ *  \param[in] viewMinHz Нижняя граница обзора, Гц.
+ *  \param[in] viewMaxHz Верхняя граница обзора, Гц.
+ */
 void SpectrumControllerStub::requestSpectrum(double viewMinHz, double viewMaxHz)
 {
     float minDb = -120.0f;
@@ -16,6 +26,13 @@ void SpectrumControllerStub::requestSpectrum(double viewMinHz, double viewMaxHz)
     emit spectrumReady(viewMinHz, viewMaxHz, samples, minDb, maxDb);
 }
 
+/*!
+ *  \brief Логирует изменения полосы и отправляет echo-сигнал.
+ *  \param[in] bandId Идентификатор полосы.
+ *  \param[in] centerHz Центральная частота, Гц.
+ *  \param[in] widthHz Ширина полосы, Гц.
+ *  \param[in] isFinal Признак финального подтверждения изменения.
+ */
 void SpectrumControllerStub::setBand(int bandId, double centerHz, double widthHz, bool isFinal)
 {
     qInfo().noquote()
@@ -27,6 +44,12 @@ void SpectrumControllerStub::setBand(int bandId, double centerHz, double widthHz
     emit bandStateChanged(bandId, centerHz, widthHz, 0.0, true);
 }
 
+/*!
+ *  \brief Логирует изменение порога и отправляет echo-сигнал.
+ *  \param[in] bandId Идентификатор полосы.
+ *  \param[in] thresholdDb Порог, дБ.
+ *  \param[in] isFinal Признак финального подтверждения изменения.
+ */
 void SpectrumControllerStub::setBandThreshold(int bandId, double thresholdDb, bool isFinal)
 {
     qInfo().noquote()
@@ -37,6 +60,11 @@ void SpectrumControllerStub::setBandThreshold(int bandId, double thresholdDb, bo
     emit bandStateChanged(bandId, 0.0, 0.0, thresholdDb, true);
 }
 
+/*!
+ *  \brief Логирует включение полосы и отправляет echo-сигнал.
+ *  \param[in] bandId Идентификатор полосы.
+ *  \param[in] enabled Признак включения.
+ */
 void SpectrumControllerStub::setBandEnabled(int bandId, bool enabled)
 {
     qInfo().noquote()
@@ -46,6 +74,14 @@ void SpectrumControllerStub::setBandEnabled(int bandId, bool enabled)
     emit bandStateChanged(bandId, 0.0, 0.0, 0.0, enabled);
 }
 
+/*!
+ *  \brief Формирует синтетический спектр с пиками.
+ *  \param[in] viewMinHz Нижняя граница обзора, Гц.
+ *  \param[in] viewMaxHz Верхняя граница обзора, Гц.
+ *  \param[out] outMinDb Минимальное значение, дБ.
+ *  \param[out] outMaxDb Максимальное значение, дБ.
+ *  \return Список значений спектра.
+ */
 QVariantList SpectrumControllerStub::generateSpectrum(double viewMinHz, double viewMaxHz,
                                                       float &outMinDb, float &outMaxDb) const
 {

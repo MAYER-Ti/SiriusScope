@@ -1,13 +1,20 @@
+/*! \file appstate.cpp
+ *  \brief Реализация AppState.
+ */
 #include "appstate.h"
 
 #include <QSettings>
 
+//! \brief Возвращает экземпляр синглтона.
 AppState &AppState::instance()
 {
     static AppState inst;
     return inst;
 }
 
+/*! \brief Устанавливает новый режим и отправляет modeChanged при изменении.
+ *  \param[in] newMode Новый режим приложения.
+ */
 void AppState::setMode(Mode newMode)
 {
     if (m_mode == newMode)
@@ -17,17 +24,20 @@ void AppState::setMode(Mode newMode)
     emit modeChanged(m_mode);
 }
 
+//! \brief Конструирует синглтон и загружает сохраненное состояние.
 AppState::AppState(QObject *parent)
     : QObject{parent}
 {
     load();
 }
 
+//! \brief Загружает режим из QSettings.
 void AppState::load()
 {
     QSettings s; // Заглужка для интеграции с QSettings
     const int v = s.value(QStringLiteral("app/mode"), static_cast<int>(Mode::Test)).toInt();
-    if ((static_cast<int>(Mode::Test) < v) || ( v < static_cast<int>(Mode::Control))) {
+    // Проверяем invalid/out-of-range значение, если оно вне диапазона enum Mode.
+    if (v < static_cast<int>(Mode::Test) || v > static_cast<int>(Mode::Control)) {
         m_mode = Mode::Test;
     }
     else {
@@ -35,6 +45,7 @@ void AppState::load()
     }
 }
 
+//! \brief Сохраняет текущий режим в QSettings.
 void AppState::save()
 {
     QSettings s; // Заглужка для интеграции с QSettings

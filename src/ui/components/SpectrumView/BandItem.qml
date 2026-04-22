@@ -5,6 +5,8 @@ import SiriusScope 1.0
 Item {
     id: root
 
+    readonly property string monoFontFamily: "Consolas, Monospace"
+
     property int bandId: 0
     property real centerHz: 0
     property real widthHz: 0
@@ -33,6 +35,7 @@ Item {
     property real _pendingCenterHz: centerHz
     property real _pendingWidthHz: widthHz
     property real _pendingThresholdDb: thresholdDb
+    property point _lastRootPoint: Qt.point(0, 0)
 
     anchors.fill: parent
     visible: visibleMaxHz > visibleMinHz
@@ -70,7 +73,8 @@ Item {
             anchors.topMargin: 4
             text: "B" + (bandId + 1) + " " + thresholdDb.toFixed(0) + " dB"
             color: enabled ? "#e7eef8" : "#a0a6ad"
-            font.pixelSize: 11
+            font.family: root.monoFontFamily
+            font.pixelSize: 10
         }
 
         MouseArea {
@@ -81,7 +85,7 @@ Item {
             enabled: !leftResize.containsMouse && !rightResize.containsMouse
 
             property bool dragging: false
-            property real startX: 0
+            property real startRootX: 0
             property real startCenterHz: 0
 
             onPressed: (mouse) => {
@@ -96,7 +100,8 @@ Item {
                     return
                 }
                 dragging = true
-                startX = mouse.x
+                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                startRootX = _lastRootPoint.x
                 startCenterHz = centerHz
             }
 
@@ -104,7 +109,8 @@ Item {
                 if (!dragging) {
                     return
                 }
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
                 scheduleBandChange(nextCenter, widthHz, false)
             }
@@ -114,7 +120,8 @@ Item {
                     return
                 }
                 dragging = false
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
                 scheduleBandChange(nextCenter, widthHz, true)
             }
@@ -131,7 +138,7 @@ Item {
             z: 3
 
             property bool resizing: false
-            property real startX: 0
+            property real startRootX: 0
             property real startMinHz: 0
             property real startMaxHz: 0
 
@@ -141,7 +148,8 @@ Item {
                     return
                 }
                 resizing = true
-                startX = mouse.x
+                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
+                startRootX = _lastRootPoint.x
                 startMinHz = bandMinHz
                 startMaxHz = bandMaxHz
             }
@@ -150,7 +158,8 @@ Item {
                 if (!resizing) {
                     return
                 }
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMin = startMinHz + deltaHz
                 var result = clampEdges(nextMin, startMaxHz)
                 scheduleBandChange(result.centerHz, result.widthHz, false)
@@ -161,7 +170,8 @@ Item {
                     return
                 }
                 resizing = false
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMin = startMinHz + deltaHz
                 var result = clampEdges(nextMin, startMaxHz)
                 scheduleBandChange(result.centerHz, result.widthHz, true)
@@ -179,7 +189,7 @@ Item {
             z: 3
 
             property bool resizing: false
-            property real startX: 0
+            property real startRootX: 0
             property real startMinHz: 0
             property real startMaxHz: 0
 
@@ -189,7 +199,8 @@ Item {
                     return
                 }
                 resizing = true
-                startX = mouse.x
+                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
+                startRootX = _lastRootPoint.x
                 startMinHz = bandMinHz
                 startMaxHz = bandMaxHz
             }
@@ -198,7 +209,8 @@ Item {
                 if (!resizing) {
                     return
                 }
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMax = startMaxHz + deltaHz
                 var result = clampEdges(startMinHz, nextMax)
                 scheduleBandChange(result.centerHz, result.widthHz, false)
@@ -209,7 +221,8 @@ Item {
                     return
                 }
                 resizing = false
-                var deltaHz = (mouse.x - startX) / root.width * viewSpanHz
+                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
+                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextMax = startMaxHz + deltaHz
                 var result = clampEdges(startMinHz, nextMax)
                 scheduleBandChange(result.centerHz, result.widthHz, true)
@@ -257,7 +270,8 @@ Item {
             Text {
                 text: "Threshold"
                 color: "#d7dbe2"
-                font.pixelSize: 11
+                font.family: root.monoFontFamily
+                font.pixelSize: 10
             }
 
             Slider {
@@ -289,7 +303,8 @@ Item {
                 Text {
                     text: thresholdDb.toFixed(0) + " dB"
                     color: "#a9b2bd"
-                    font.pixelSize: 11
+                    font.family: root.monoFontFamily
+                    font.pixelSize: 10
                 }
             }
         }

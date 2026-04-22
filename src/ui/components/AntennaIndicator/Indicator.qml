@@ -6,8 +6,8 @@ import QtQuick.Controls
 Item {
     id: indicator
 
-    // сырые пеленги (0..359.9)
-    property var targetAzimuthsDeg: antennaIndicator.activeBearings
+    // сырые пеленги (0..359.9); передаются извне для изоляции компонента
+    property var targetAzimuthsDeg: []
 
 
     // Вход: обновляется хоть каждые 10 мс (0..359.9)
@@ -473,4 +473,3 @@ Item {
         }
     }
 }
-

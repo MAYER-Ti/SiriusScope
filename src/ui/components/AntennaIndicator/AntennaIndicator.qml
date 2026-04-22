@@ -103,6 +103,7 @@ Item {
         Indicator {
             id: indicator
             azimuthDeg: antennaIndicator.azimuthDeg
+            targetAzimuthsDeg: antennaIndicator.activeBearings
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.verticalStretchFactor: 8

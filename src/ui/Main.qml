@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "components/AntennaIndicator" as AntInd
+import "components/SpectrumView" as SpecView
 import "components" as Components
 
 ApplicationWindow {
@@ -24,7 +25,7 @@ ApplicationWindow {
             Layout.minimumWidth: 400
             spacing: 4
 
-            Components.SpectrumView {
+            SpecView.SpectrumView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.verticalStretchFactor: 4

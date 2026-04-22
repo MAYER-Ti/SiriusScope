@@ -1,13 +1,23 @@
+/*!
+ *  \file spectrumdecimator.cpp
+ *  \brief Реализация SpectrumDecimator.
+ */
 #include "spectrumdecimator.h"
 
 #include <QtMath>
 #include <limits>
 
+//! \brief Конструирует декоматор.
 SpectrumDecimator::SpectrumDecimator(QObject *parent)
     : QObject(parent)
-{
-}
+{}
 
+/*!
+ *  \brief Вычисляет min/max для каждой выходной колонки.
+ *  \param[in] samples Исходные значения спектра.
+ *  \param[in] targetWidth Целевая ширина в пикселях.
+ *  \return Список значений вида [min0, max0, min1, max1, ...].
+ */
 QVariantList SpectrumDecimator::decimateMinMax(const QVariantList &samples, int targetWidth) const
 {
     if (samples.isEmpty() || targetWidth <= 0) {
