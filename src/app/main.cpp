@@ -11,8 +11,15 @@
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 
-void initializeQmlObjects(const QGuiApplication& app)
+/*! \brief Инициализирует Qt/QML и запускает цикл обработки событий.
+ *  \param[in] argc Количество аргументов командной строки.
+ *  \param[in] argv Массив аргументов командной строки.
+ *  \return Код завершения приложения.
+ */
+int main(int argc, char *argv[])
 {
+    QGuiApplication app(argc, argv);
+
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
     QQmlApplicationEngine engine;
@@ -56,18 +63,6 @@ void initializeQmlObjects(const QGuiApplication& app)
         );
 
     engine.loadFromModule("SiriusScope", "Main");
-}
-
-/*! \brief Инициализирует Qt/QML и запускает цикл обработки событий.
- *  \param[in] argc Количество аргументов командной строки.
- *  \param[in] argv Массив аргументов командной строки.
- *  \return Код завершения приложения.
- */
-int main(int argc, char *argv[])
-{
-    QGuiApplication app(argc, argv);
-
-    initializeQmlObjects(app);
 
     return app.exec();
 }
