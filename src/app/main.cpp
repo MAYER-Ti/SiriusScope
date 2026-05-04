@@ -10,6 +10,8 @@
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
+#include "waterfallcontrollerstub.h"
+#include "waterfallitem.h"
 
 /*! \brief Инициализирует Qt/QML и запускает цикл обработки событий.
  *  \param[in] argc Количество аргументов командной строки.
@@ -37,9 +39,16 @@ int main(int argc, char *argv[])
         &AppState::instance()
         );
 
+    qmlRegisterType<WaterfallItem>(
+        "SiriusScope",
+        1, 0,
+        "WaterfallItem"
+        );
+
     FrequencyViewportModel viewportModel;
     SpectrumControllerStub spectrumController;
     SpectrumDecimator spectrumDecimator;
+    WaterfallControllerStub waterfallController(&viewportModel);
 
     qmlRegisterSingletonInstance(
         "SiriusScope",
@@ -60,6 +69,13 @@ int main(int argc, char *argv[])
         1, 0,
         "SpectrumDecimator",
         &spectrumDecimator
+        );
+
+    qmlRegisterSingletonInstance(
+        "SiriusScope",
+        1, 0,
+        "WaterfallController",
+        &waterfallController
         );
 
     engine.loadFromModule("SiriusScope", "Main");

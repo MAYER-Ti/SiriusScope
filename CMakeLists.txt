@@ -4,7 +4,7 @@ project(SiriusScope VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick)
+find_package(Qt6 REQUIRED COMPONENTS Quick ShaderTools)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
@@ -18,6 +18,12 @@ qt_add_executable(appSiriusScope
     src/app/spectrumcontrollerstub.cpp
     src/app/spectrumdecimator.h
     src/app/spectrumdecimator.cpp
+    src/app/waterfallcontrollerstub.h
+    src/app/waterfallcontrollerstub.cpp
+    src/app/waterfallitem.h
+    src/app/waterfallitem.cpp
+    src/app/waterfallringbuffer.h
+    src/app/waterfallringbuffer.cpp
 )
 
 qt_add_qml_module(appSiriusScope
@@ -25,6 +31,7 @@ qt_add_qml_module(appSiriusScope
     VERSION 1.0
     QML_FILES
         src/ui/Main.qml
+        src/ui/BandModel.qml
         src/ui/components/WaterfallView.qml
         src/ui/components/MenuBarApp.qml
         src/ui/components/FooterDataView.qml
@@ -33,9 +40,14 @@ qt_add_qml_module(appSiriusScope
         src/ui/components/AntennaIndicator/Indicator.qml
         src/ui/components/AntennaIndicator/TargetTracker.qml
         src/ui/components/AntennaIndicator/AntennaIndicator.qml
-        RESOURCES Todo.md
-        RESOURCES CONTEXT.md
-        RESOURCES ARCHITECTURE.md
+)
+
+qt_add_shaders(appSiriusScope "waterfall_shaders"
+    PREFIX "/SiriusScope/shaders"
+    BASE "src/ui/shaders"
+    FILES
+        src/ui/shaders/waterfall.vert
+        src/ui/shaders/waterfall.frag
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
