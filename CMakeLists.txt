@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 3.16)
 
 project(SiriusScope VERSION 0.1 LANGUAGES CXX)
 
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick ShaderTools)
 
@@ -63,6 +65,10 @@ set_target_properties(appSiriusScope PROPERTIES
 
 target_link_libraries(appSiriusScope
     PRIVATE Qt6::Quick
+)
+
+target_compile_features(appSiriusScope
+    PRIVATE cxx_std_20
 )
 
 include(GNUInstallDirs)

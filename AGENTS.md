@@ -237,20 +237,22 @@ For UI-only changes, run the application and manually verify the affected view.
 Configure debug build:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug
 ```
 
 Build:
 
 ```bash
-cmake --build build
+cmake --build build/build-codex
 ```
 
 Run tests:
 
 ```bash
-ctest --test-dir build --output-on-failure
+ctest --test-dir build/build-codex --output-on-failure
 ```
+
+Keep concrete CMake build trees under `build/`; do not use the repository-root `build/` directory itself as the build tree. See `docs/development/build-and-test.md` for detailed build and test workflow.
 
 Use Qt 6.8+ with Qt Quick.
 The target development version is Qt 6.9.3.

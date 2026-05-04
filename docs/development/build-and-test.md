@@ -75,11 +75,22 @@ Default local verification build directory:
 build/build-codex
 ```
 
+Until third-party Conan dependencies are added, the direct CMake configure path remains valid. When a third-party dependency is introduced or formalized, run `conan install` first and configure CMake with the generated Conan toolchain file.
+
 ### Debug build
 
 ```bash
 cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug
 ```
+
+### Debug build with Conan
+
+```bash
+conan install . -of build/build-codex/conan -s build_type=Debug --build=missing
+cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=build/build-codex/conan/conan_toolchain.cmake
+```
+
+The repository root `conanfile.py` is the Conan entry point. It currently defines CMake generators and settings only; it intentionally has no `requires` entries until the project has a real third-party dependency to consume.
 
 ### Release build
 
@@ -303,6 +314,15 @@ cmake --build build/build-codex
 ctest --test-dir build/build-codex --output-on-failure
 ```
 
+For Conan-related changes or after third-party dependencies are introduced, also verify:
+
+```bash
+conan install . -of build/build-codex/conan -s build_type=Debug --build=missing
+cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=build/build-codex/conan/conan_toolchain.cmake
+cmake --build build/build-codex
+ctest --test-dir build/build-codex --output-on-failure
+```
+
 Recommended:
 
 * also test Release configuration if the change affects compiler flags, optimization, packaging, or target properties.
@@ -451,11 +471,19 @@ When adding a dependency:
 
 1. Prefer standard C++ or Qt already available in the project.
 2. Justify why the dependency is needed.
-3. Keep the dependency out of domain models unless unavoidable.
-4. Update build documentation.
-5. Update CI or setup instructions if applicable.
+3. Add third-party dependencies through Conan.
+4. Keep the dependency out of domain models unless unavoidable.
+5. Update build documentation.
+6. Update CI or setup instructions if applicable.
 
 Do not add large dependencies for small utilities.
+
+Boost is part of the target development stack, but it must not be linked to a target before code actually uses it. On first real Boost usage:
+
+* pin a concrete Boost version in `conanfile.py`, for example `requires = "boost/<version>"`;
+* configure through `conan install` and `CMAKE_TOOLCHAIN_FILE`;
+* use `find_package(Boost REQUIRED COMPONENTS ...)` in CMake;
+* link only the required Boost components to the specific target that needs them.
 
 ## 18. Performance checks
 
