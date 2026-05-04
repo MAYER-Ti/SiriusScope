@@ -9,8 +9,8 @@ Item {
 
     readonly property string monoFontFamily: "Consolas"
 
-    property real minDb: -120
-    property real maxDb: 0
+    readonly property real amplitudeMin: 0
+    readonly property real amplitudeMax: 500
     readonly property real viewMinHz: FrequencyViewportModel.viewMinHz
     readonly property real viewMaxHz: FrequencyViewportModel.viewMaxHz
     readonly property real globalMinHz: FrequencyViewportModel.globalMinHz
@@ -22,7 +22,6 @@ Item {
     property real pendingRequestMinHz: viewMinHz
     property real pendingRequestMaxHz: viewMaxHz
     property bool spacePressed: false
-    readonly property var bandModel: BandModel
 
     function scheduleSpectrumRequest() {
         pendingRequestMinHz = viewMinHz
@@ -38,6 +37,24 @@ Item {
         plot.requestPaint()
     }
 
+    function samplesAsAmplitude(samples, sampleMin, sampleMax) {
+        if (sampleMin >= amplitudeMin && sampleMax <= amplitudeMax) {
+            return samples
+        }
+
+        var sourceSpan = Math.max(1.0, sampleMax - sampleMin)
+        var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
+        var amplitudes = []
+        for (var i = 0; i < samples.length; i++) {
+            amplitudes.push(amplitudeMin + ((samples[i] - sampleMin) / sourceSpan) * amplitudeSpan)
+        }
+        return amplitudes
+    }
+
+    function clampAmplitude(value) {
+        return Math.max(amplitudeMin, Math.min(amplitudeMax, value))
+    }
+
     function thresholdForHz(hz) {
         var threshold = -1e9
         for (var i = 0; i < bandModel.count; i++) {
@@ -49,7 +66,7 @@ Item {
             var minHz = band.centerHz - half
             var maxHz = band.centerHz + half
             if (hz >= minHz && hz <= maxHz) {
-                threshold = Math.max(threshold, band.thresholdDb)
+                threshold = Math.max(threshold, band.thresholdAmplitude)
             }
         }
         return threshold
@@ -91,23 +108,28 @@ Item {
         }
     }
 
+    ListModel {
+        id: bandModel
+        ListElement { bandId: 0; centerHz: 3.0e9; widthHz: 5.0e8; thresholdAmplitude: 180; enabled: true }
+        ListElement { bandId: 1; centerHz: 5.795e9; widthHz: 4.10e8; thresholdAmplitude: 160; enabled: true }
+        ListElement { bandId: 2; centerHz: 8.25e9; widthHz: 5.0e8; thresholdAmplitude: 190; enabled: true }
+        ListElement { bandId: 3; centerHz: 9.55e9; widthHz: 5.0e8; thresholdAmplitude: 140; enabled: true }
+        ListElement { bandId: 4; centerHz: 1.425e10; widthHz: 5.0e8; thresholdAmplitude: 170; enabled: true }
+    }
+
     Connections {
         target: SpectrumController
-        function onSpectrumReady(minHz, maxHz, samples, minDbValue, maxDbValue) {
+        function onSpectrumReady(minHz, maxHz, samples, sampleMinValue, sampleMaxValue) {
             if (Math.abs(minHz - viewMinHz) > 1 || Math.abs(maxHz - viewMaxHz) > 1) {
                 return
             }
-            rawSamples = samples
-            minDb = minDbValue
-            maxDb = maxDbValue
+            rawSamples = samplesAsAmplitude(samples, sampleMinValue, sampleMaxValue)
             decimateAndRepaint()
         }
     }
 
     onViewMinHzChanged: scheduleSpectrumRequest()
     onViewMaxHzChanged: scheduleSpectrumRequest()
-    onMinDbChanged: plot.requestPaint()
-    onMaxDbChanged: plot.requestPaint()
 
     Component.onCompleted: {
         scheduleSpectrumRequest()
@@ -137,7 +159,7 @@ Item {
                     ctx.fillRect(0, 0, width, height)
 
                     var spanHz = Math.max(1.0, viewMaxHz - viewMinHz)
-                    var dbSpan = Math.max(1.0, maxDb - minDb)
+                    var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
 
                     ctx.strokeStyle = "#222a33"
                     ctx.lineWidth = 1
@@ -176,9 +198,9 @@ Item {
                     ctx.textAlign = "left"
                     ctx.textBaseline = "middle"
                     for (var ty = 0; ty < tickCountY; ty++) {
-                        var db = maxDb - (ty / (tickCountY - 1)) * dbSpan
+                        var amplitude = amplitudeMax - (ty / (tickCountY - 1)) * amplitudeSpan
                         var ly = (ty / (tickCountY - 1)) * height
-                        ctx.fillText(db.toFixed(0) + " dB", 4, ly)
+                        ctx.fillText(amplitude.toFixed(0), 4, ly)
                     }
 
                     if (decimatedMinMax.length < 2) {
@@ -207,8 +229,11 @@ Item {
                             }
                         }
 
-                        var yMin = height - (minVal - minDb) / dbSpan * height
-                        var yMax = height - (maxVal - minDb) / dbSpan * height
+                        minVal = clampAmplitude(minVal)
+                        maxVal = clampAmplitude(maxVal)
+
+                        var yMin = height - (minVal - amplitudeMin) / amplitudeSpan * height
+                        var yMax = height - (maxVal - amplitudeMin) / amplitudeSpan * height
 
                         ctx.beginPath()
                         ctx.moveTo(px + 0.5, yMin)
@@ -299,14 +324,14 @@ Item {
                     bandId: model.bandId
                     centerHz: model.centerHz
                     widthHz: model.widthHz
-                    thresholdDb: model.thresholdDb
+                    thresholdAmplitude: model.thresholdAmplitude
                     enabled: model.enabled
                     viewMinHz: root.viewMinHz
                     viewMaxHz: root.viewMaxHz
                     globalMinHz: root.globalMinHz
                     globalMaxHz: root.globalMaxHz
-                    minDb: root.minDb
-                    maxDb: root.maxDb
+                    minAmplitude: root.amplitudeMin
+                    maxAmplitude: root.amplitudeMax
                     panModifierActive: root.spacePressed
                     z: 2
 
@@ -317,7 +342,7 @@ Item {
                     }
 
                     onThresholdEdited: (nextThreshold, isFinal) => {
-                        bandModel.setProperty(index, "thresholdDb", nextThreshold)
+                        bandModel.setProperty(index, "thresholdAmplitude", nextThreshold)
                         plot.requestPaint()
                     }
 

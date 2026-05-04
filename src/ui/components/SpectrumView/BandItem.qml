@@ -10,7 +10,7 @@ Item {
     property int bandId: 0
     property real centerHz: 0
     property real widthHz: 0
-    property real thresholdDb: -80
+    property real thresholdAmplitude: 180
     property bool enabled: true
     property real viewMinHz: 0
     property real viewMaxHz: 0
@@ -18,12 +18,12 @@ Item {
     property real globalMaxHz: 0
     property real minWidthHz: 100e6
     property real maxWidthHz: 500e6
-    property real minDb: -120
-    property real maxDb: 0
+    property real minAmplitude: 0
+    property real maxAmplitude: 500
     property bool panModifierActive: false
 
     signal bandEdited(real centerHz, real widthHz, bool isFinal)
-    signal thresholdEdited(real thresholdDb, bool isFinal)
+    signal thresholdEdited(real thresholdAmplitude, bool isFinal)
     signal enabledEdited(bool enabled, bool isFinal)
 
     readonly property real viewSpanHz: Math.max(1.0, viewMaxHz - viewMinHz)
@@ -34,7 +34,7 @@ Item {
 
     property real _pendingCenterHz: centerHz
     property real _pendingWidthHz: widthHz
-    property real _pendingThresholdDb: thresholdDb
+    property real _pendingThresholdAmplitude: thresholdAmplitude
     property point _lastRootPoint: Qt.point(0, 0)
 
     anchors.fill: parent
@@ -71,7 +71,7 @@ Item {
             anchors.leftMargin: 10
             anchors.top: parent.top
             anchors.topMargin: 4
-            text: "B" + (bandId + 1) + " " + thresholdDb.toFixed(0) + " dB"
+            text: "B" + (bandId + 1) + " " + thresholdAmplitude.toFixed(0)
             color: enabled ? "#e7eef8" : "#a0a6ad"
             font.family: root.monoFontFamily
             font.pixelSize: 10
@@ -94,9 +94,7 @@ Item {
                     return
                 }
                 if (mouse.button === Qt.RightButton) {
-                    thresholdPopup.x = Math.max(0, mouse.x - 20)
-                    thresholdPopup.y = Math.max(0, mouse.y + 6)
-                    thresholdPopup.open()
+                    openThresholdPopupAt(bodyDrag, mouse.x, mouse.y)
                     return
                 }
                 dragging = true
@@ -244,7 +242,7 @@ Item {
         interval: 80
         repeat: false
         onTriggered: {
-            SpectrumController.setBandThreshold(bandId, _pendingThresholdDb, false)
+            SpectrumController.setBandThreshold(bandId, _pendingThresholdAmplitude, false)
         }
     }
 
@@ -268,7 +266,7 @@ Item {
             spacing: 8
 
             Text {
-                text: "Threshold"
+                text: "Amplitude threshold"
                 color: "#d7dbe2"
                 font.family: root.monoFontFamily
                 font.pixelSize: 10
@@ -276,9 +274,9 @@ Item {
 
             Slider {
                 id: thresholdSlider
-                from: minDb
-                to: maxDb
-                value: thresholdDb
+                from: minAmplitude
+                to: maxAmplitude
+                value: thresholdAmplitude
                 onMoved: {
                     scheduleThresholdChange(value, false)
                 }
@@ -301,7 +299,7 @@ Item {
                     }
                 }
                 Text {
-                    text: thresholdDb.toFixed(0) + " dB"
+                    text: thresholdAmplitude.toFixed(0)
                     color: "#a9b2bd"
                     font.family: root.monoFontFamily
                     font.pixelSize: 10
@@ -321,14 +319,28 @@ Item {
         }
     }
 
-    function scheduleThresholdChange(nextThresholdDb, isFinal) {
-        _pendingThresholdDb = nextThresholdDb
-        thresholdEdited(nextThresholdDb, isFinal)
+    function scheduleThresholdChange(nextThresholdAmplitude, isFinal) {
+        _pendingThresholdAmplitude = nextThresholdAmplitude
+        thresholdEdited(nextThresholdAmplitude, isFinal)
         if (isFinal) {
-            SpectrumController.setBandThreshold(bandId, nextThresholdDb, true)
+            SpectrumController.setBandThreshold(bandId, nextThresholdAmplitude, true)
         } else {
             thresholdPreviewTimer.restart()
         }
+    }
+
+    function clampedPopupCoordinate(value, popupSize, availableSize) {
+        if (availableSize <= popupSize) {
+            return 0
+        }
+        return Math.max(0, Math.min(value, availableSize - popupSize))
+    }
+
+    function openThresholdPopupAt(sourceItem, sourceX, sourceY) {
+        var clickPoint = root.mapFromItem(sourceItem, sourceX, sourceY)
+        thresholdPopup.x = clampedPopupCoordinate(clickPoint.x + 8, thresholdPopup.width, root.width)
+        thresholdPopup.y = clampedPopupCoordinate(clickPoint.y + 8, thresholdPopup.height, root.height)
+        thresholdPopup.open()
     }
 
     function clampCenter(nextCenter, currentWidth) {
