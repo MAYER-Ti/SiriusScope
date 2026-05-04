@@ -51,27 +51,40 @@ Recommended build and test related layout:
 │   └── hardware/
 ├── docs/
 └── build/
+    ├── build-codex/
+    ├── build-debug/
+    └── build-release/
 ```
 
 Rules:
 
-* keep generated files in `build/`;
+* keep generated files under `build/`;
+* create concrete CMake build trees as subdirectories of `build/`, not as the repository-root `build` directory itself;
+* use `build/build-codex` for Codex-assisted local verification unless a task requires a different build tree;
 * do not commit local build directories;
 * do not commit generated CMake cache files;
 * do not commit temporary IDE output unless explicitly required.
 
+The repository-root `build/` directory is an umbrella directory for generated build trees. It may contain IDE-generated folders or stale partial configuration files. Do not assume `build/` itself has a valid `CMakeCache.txt`.
+
 ## 3. Configure
+
+Default local verification build directory:
+
+```text
+build/build-codex
+```
 
 ### Debug build
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug
 ```
 
 ### Release build
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build/build-release -DCMAKE_BUILD_TYPE=Release
 ```
 
 ### Multi-config generators
@@ -79,34 +92,38 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 For generators such as Visual Studio or Ninja Multi-Config:
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build/build-codex
 ```
 
 Then specify configuration at build time:
 
 ```bash
-cmake --build build --config Debug
-cmake --build build --config Release
+cmake --build build/build-codex --config Debug
+cmake --build build/build-codex --config Release
 ```
+
+If CMake reports `could not load cache`, the selected build tree is not configured. Run the configure command for that exact build directory before building.
+
+If CMake or Ninja fails during compiler detection because temporary files under `CMakeFiles/CMakeScratch` cannot be removed, retry with a fresh subdirectory under `build/`, for example `build/build-codex`. Do not create ad hoc build directories at repository root.
 
 ## 4. Build
 
 ### Default build
 
 ```bash
-cmake --build build
+cmake --build build/build-codex
 ```
 
 ### Parallel build
 
 ```bash
-cmake --build build -j
+cmake --build build/build-codex -j
 ```
 
 ### Release build with multi-config generator
 
 ```bash
-cmake --build build --config Release
+cmake --build build/build-codex --config Release
 ```
 
 ## 5. Run
@@ -122,14 +139,20 @@ The exact runtime path depends on generator and platform.
 Typical Linux path:
 
 ```bash
-./build/appSiriusScope
+./build/build-codex/appSiriusScope
 ```
 
 For multi-config generators, the executable may be under a configuration subdirectory, for example:
 
 ```bash
-./build/Debug/appSiriusScope
-./build/Release/appSiriusScope
+./build/build-codex/Debug/appSiriusScope
+./build/build-codex/Release/appSiriusScope
+```
+
+On Windows with the current Ninja/MSYS-style build, the executable is expected at:
+
+```text
+build/build-codex/appSiriusScope.exe
 ```
 
 If the executable location differs, inspect the CMake build output or target properties.
@@ -139,13 +162,13 @@ If the executable location differs, inspect the CMake build output or target pro
 ### Run all tests
 
 ```bash
-ctest --test-dir build --output-on-failure
+ctest --test-dir build/build-codex --output-on-failure
 ```
 
 ### Run tests with verbose output
 
 ```bash
-ctest --test-dir build --output-on-failure --verbose
+ctest --test-dir build/build-codex --output-on-failure --verbose
 ```
 
 ### Run tests for a specific configuration
@@ -153,9 +176,11 @@ ctest --test-dir build --output-on-failure --verbose
 For multi-config generators:
 
 ```bash
-ctest --test-dir build -C Debug --output-on-failure
-ctest --test-dir build -C Release --output-on-failure
+ctest --test-dir build/build-codex -C Debug --output-on-failure
+ctest --test-dir build/build-codex -C Release --output-on-failure
 ```
+
+If CTest prints `No tests were found!!!`, the command itself succeeded but the current project configuration does not define test targets yet.
 
 ## 7. Test framework
 
@@ -225,8 +250,8 @@ Recommended:
 Required:
 
 ```bash
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake --build build/build-codex
+ctest --test-dir build/build-codex --output-on-failure
 ```
 
 Also required:
@@ -273,9 +298,9 @@ Required:
 Required:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/build-codex
+ctest --test-dir build/build-codex --output-on-failure
 ```
 
 Recommended:
@@ -373,7 +398,7 @@ Recommended debug options:
 Example CMake configure command may be added later when sanitizer options are formalized:
 
 ```bash
-cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DSIRIUS_ENABLE_ASAN=ON
+cmake -S . -B build/build-asan -DCMAKE_BUILD_TYPE=Debug -DSIRIUS_ENABLE_ASAN=ON
 ```
 
 Do not add sanitizer flags ad hoc to unrelated files. Prefer centralized CMake options.
@@ -469,8 +494,8 @@ Changed:
 - tests/domain/tst_timebase.cpp
 
 Checked:
-- cmake --build build
-- ctest --test-dir build --output-on-failure
+- cmake --build build/build-codex
+- ctest --test-dir build/build-codex --output-on-failure
 
 Notes:
 - Protocol timestamp integration remains TBD.
