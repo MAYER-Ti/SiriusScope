@@ -80,7 +80,7 @@ Conan-first workflow is mandatory for all supported local and CI builds. Direct 
 ### Debug build (mandatory Conan-first)
 
 ```bash
-conan remote clean
+conan remote remove conancenter || true
 conan remote add conancenter https://center2.conan.io
 conan install . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug --build=missing
 cmake --preset conan-debug

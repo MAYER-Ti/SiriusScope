@@ -24,7 +24,7 @@ jobs:
 
       - name: Configure Conan remotes
         run: |
-          conan remote clean
+          conan remote remove conancenter || true
           conan remote add conancenter https://center2.conan.io
 
       - name: Restore Conan cache
