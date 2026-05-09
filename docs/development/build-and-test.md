@@ -557,3 +557,5 @@ When Codex works on the repository:
 - `CMAKE_TOOLCHAIN_FILE` points to missing file: verify `-of` path and preset path alignment (`build/.../conan/build/<Config>/generators/conan_toolchain.cmake`).
 - Dependency drift between machines: regenerate and commit `conan.lock` after intentional dependency updates.
 - CI fails guard step: ensure configure uses `cmake --preset conan-debug` and cache contains `conan_toolchain.cmake`.
+
+- `opengl/system` fails with missing `libgl-dev`/`libgl1-mesa-dev`: install OS package (`sudo apt-get install -y libgl1-mesa-dev`) before `conan install`, or enable Conan system package installation mode.

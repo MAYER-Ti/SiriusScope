@@ -33,6 +33,11 @@ jobs:
           path: ~/.conan2
           key: ${{ runner.os }}-conan-${{ hashFiles('conanfile.py', 'conan/profiles/*') }}
 
+      - name: Install system OpenGL deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev
+
       - name: Conan install
         run: conan install . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug --build=missing
 
