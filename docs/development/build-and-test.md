@@ -82,7 +82,7 @@ Conan-first workflow is mandatory for all supported local and CI builds. Direct 
 ```bash
 conan remote remove conancenter || true
 conan remote add conancenter https://center2.conan.io
-conan install . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug -c tools.system.package_manager:mode=install --build=missing
+conan install . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug -c tools.system.package_manager:mode=install -c tools.system.package_manager:sudo=True --build=missing
 cmake --preset conan-debug
 ```
 
@@ -99,7 +99,7 @@ The repository root `conanfile.py` is the Conan entry point and the only support
 ### Release build
 
 ```bash
-conan install . -of build/build-release/conan -pr:h conan/profiles/linux-gcc-release -pr:b conan/profiles/linux-gcc-release -c tools.system.package_manager:mode=install --build=missing
+conan install . -of build/build-release/conan -pr:h conan/profiles/linux-gcc-release -pr:b conan/profiles/linux-gcc-release -c tools.system.package_manager:mode=install -c tools.system.package_manager:sudo=True --build=missing
 cmake --preset conan-release
 ```
 
@@ -561,3 +561,5 @@ When Codex works on the repository:
 - `opengl/system` fails with missing `libgl-dev`/`libgl1-mesa-dev`: install OS package (`sudo apt-get install -y libgl1-mesa-dev`) before `conan install`, or enable Conan system package installation mode.
 
 - `xorg/system` fails because many `libx*` and `libxcb*` dev packages are missing: run `conan install` with `-c tools.system.package_manager:mode=install` (CI default), or preinstall required X11/XCB development packages manually.
+
+- `apt-get update` fails with `/var/lib/apt/lists/lock` permission denied during Conan system requirements: add `-c tools.system.package_manager:sudo=True` to `conan install` (CI default), or run pre-install steps with elevated privileges.
