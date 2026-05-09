@@ -75,27 +75,30 @@ Default local verification build directory:
 build/build-codex
 ```
 
-Until third-party Conan dependencies are added, the direct CMake configure path remains valid. When a third-party dependency is introduced or formalized, run `conan install` first and configure CMake with the generated Conan toolchain file.
+Conan-first workflow is mandatory for all supported local and CI builds. Direct configure without Conan is a legacy-only fallback for emergency diagnostics and is not supported for regular development.
 
-### Debug build
-
-```bash
-cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug
-```
-
-### Debug build with Conan
+### Debug build (mandatory Conan-first)
 
 ```bash
-conan install . -of build/build-codex/conan -s build_type=Debug --build=missing
-cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=build/build-codex/conan/conan_toolchain.cmake
+conan remote clean
+conan remote add conancenter https://center2.conan.io
+conan install . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug --build=missing
+cmake --preset conan-debug
 ```
 
-The repository root `conanfile.py` is the Conan entry point. It currently defines CMake generators and settings only; it intentionally has no `requires` entries until the project has a real third-party dependency to consume.
+For reproducible dependency graphs, generate/update lockfile when updating dependencies:
+
+```bash
+conan lock create . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug --lockfile-out=conan.lock
+```
+
+The repository root `conanfile.py` is the Conan entry point and the only supported place for external dependency declaration.
 
 ### Release build
 
 ```bash
-cmake -S . -B build/build-release -DCMAKE_BUILD_TYPE=Release
+conan install . -of build/build-release/conan -pr:h conan/profiles/linux-gcc-release -pr:b conan/profiles/linux-gcc-release --build=missing
+cmake --preset conan-release
 ```
 
 ### Multi-config generators
@@ -544,3 +547,11 @@ When Codex works on the repository:
 * do not silently implement future extensions;
 * update docs when module contracts or behavior change.
 
+
+
+## 10. Troubleshooting (Conan/CMake)
+
+- `Could not find package configuration file provided by Qt6`: run `conan install` for the same profile/build type and configure via the preset with Conan toolchain.
+- `CMAKE_TOOLCHAIN_FILE` points to missing file: verify `-of` path and preset path alignment (`build/.../conan/build/<Config>/generators/conan_toolchain.cmake`).
+- Dependency drift between machines: regenerate and commit `conan.lock` after intentional dependency updates.
+- CI fails guard step: ensure configure uses `cmake --preset conan-debug` and cache contains `conan_toolchain.cmake`.

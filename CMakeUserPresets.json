@@ -1,9 +1,6 @@
 {
     "version": 4,
-    "vendor": {
-        "conan": {}
-    },
     "include": [
-        "build/build-codex-conan/conan/CMakePresets.json"
+        "CMakePresets.json"
     ]
 }
