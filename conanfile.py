@@ -9,28 +9,8 @@ class SiriusScopeConan(ConanFile):
 
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {
-        "shared": [True, False],
-        "fPIC": [True, False],
-    }
-    default_options = {
-        "shared": False,
-        "fPIC": True,
-        "qt/*:shared": True,
-        "qt/*:gui": True,
-        "qt/*:widgets": False,
-        "qt/*:with_pq": False,
-        "qt/*:with_mysql": False,
-        "qt/*:with_odbc": False,
-        "qt/*:with_sqlite3": False,
-    }
-
-    def config_options(self):
-        if self.settings.os == "Windows":
-            self.options.rm_safe("fPIC")
-
     def requirements(self):
-        self.requires("qt/6.9.3")
+        self.requires("qt/6.10.1")
 
     def build_requirements(self):
         self.tool_requires("cmake/3.31.10")

@@ -22,7 +22,7 @@ Target stack:
 Target development version:
 
 ```text
-Qt 6.9.3
+Qt 6.10.1
 ```
 
 Minimum acceptable Qt version for development may be:
