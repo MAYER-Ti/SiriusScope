@@ -10,8 +10,7 @@ find_package(Qt6 REQUIRED COMPONENTS Quick ShaderTools)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
-qt_add_executable(appSiriusScope
-    src/app/main.cpp
+set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/appstate.h
     src/app/appstate.cpp
     src/app/frequencyviewportmodel.h
@@ -26,6 +25,48 @@ qt_add_executable(appSiriusScope
     src/app/waterfallitem.cpp
     src/app/waterfallringbuffer.h
     src/app/waterfallringbuffer.cpp
+)
+
+set(SIRIUSSCOPE_CORE_SOURCES
+    src/core/layer_placeholder.cpp
+)
+
+add_library(siriusscope_core STATIC
+    ${SIRIUSSCOPE_CORE_SOURCES}
+)
+
+target_compile_features(siriusscope_core
+    PUBLIC cxx_std_20
+)
+
+add_library(siriusscope_processing_iface INTERFACE)
+add_library(siriusscope_infrastructure_iface INTERFACE)
+add_library(siriusscope_hardware_iface INTERFACE)
+
+add_library(siriusscope_application STATIC
+    ${SIRIUSSCOPE_APPLICATION_SOURCES}
+)
+
+target_link_libraries(siriusscope_application
+    PUBLIC
+        Qt6::Quick
+        siriusscope_core
+        siriusscope_processing_iface
+        siriusscope_infrastructure_iface
+        siriusscope_hardware_iface
+)
+
+target_compile_features(siriusscope_application
+    PUBLIC cxx_std_20
+)
+
+qt_add_executable(appSiriusScope
+    src/app/main.cpp
+)
+
+target_link_libraries(appSiriusScope
+    PRIVATE
+        siriusscope_application
 )
 
 qt_add_qml_module(appSiriusScope
@@ -61,14 +102,6 @@ set_target_properties(appSiriusScope PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
-)
-
-target_link_libraries(appSiriusScope
-    PRIVATE Qt6::Quick
-)
-
-target_compile_features(appSiriusScope
-    PRIVATE cxx_std_20
 )
 
 include(GNUInstallDirs)
