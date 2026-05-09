@@ -86,6 +86,8 @@ conan install . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug
 cmake --preset conan-debug
 ```
 
+The provided Conan profiles in `conan/profiles/` define `compiler.cppstd=gnu20` to satisfy Qt package validation on ConanCenter.
+
 For reproducible dependency graphs, generate/update lockfile when updating dependencies:
 
 ```bash
