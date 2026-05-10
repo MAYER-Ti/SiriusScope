@@ -80,6 +80,7 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 Read these documents before changing build scripts, tests, formatting, or developer workflow.
 
 - `development/build-and-test.md` — build, test, and QA commands.
+- `development/conan-migration-task.md` — Conan-first migration requirements and completion criteria.
 - `development/coding-style.md` — C++ and QML style rules.
 - `development/testing-strategy.md` — required test types and coverage expectations.
 - `development/codex-task-template.md` — recommended format for tasks given to Codex.
