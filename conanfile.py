@@ -8,6 +8,15 @@ class SiriusScopeConan(ConanFile):
     package_type = "application"
 
     settings = "os", "compiler", "build_type", "arch"
+    
+    default_options = {
+        "qt/*:qtdeclarative": True,
+        "qt/*:qtshadertools": True,
+        "qt/*:gui": True,
+        "qt/*:widgets": True,
+        "qt/*:opengl": "desktop",
+        "qt/*:with_x11": True,
+    }
 
     def requirements(self):
         self.requires("qt/6.10.1")

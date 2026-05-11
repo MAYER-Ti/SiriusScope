@@ -6,8 +6,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick ShaderTools)
-
+find_package(Qt6 REQUIRED COMPONENTS
+    Core
+    Gui
+    Quick
+    Qml
+    ShaderTools
+)
 qt_standard_project_setup(REQUIRES 6.8)
 
 set(SIRIUSSCOPE_APPLICATION_SOURCES
@@ -49,7 +54,10 @@ add_library(siriusscope_application STATIC
 
 target_link_libraries(siriusscope_application
     PUBLIC
+        Qt6::Core
+        Qt6::Gui
         Qt6::Quick
+        Qt6::Qml
         siriusscope_core
         siriusscope_processing_iface
         siriusscope_infrastructure_iface
@@ -69,7 +77,7 @@ target_link_libraries(appSiriusScope
         siriusscope_application
 )
 
-qt_add_qml_module(appSiriusScope
+qt6_add_qml_module(appSiriusScope
     URI SiriusScope
     VERSION 1.0
     QML_FILES
@@ -85,7 +93,7 @@ qt_add_qml_module(appSiriusScope
         src/ui/components/AntennaIndicator/AntennaIndicator.qml
 )
 
-qt_add_shaders(appSiriusScope "waterfall_shaders"
+qt6_add_shaders(appSiriusScope "waterfall_shaders"
     PREFIX "/SiriusScope/shaders"
     BASE "src/ui/shaders"
     FILES
