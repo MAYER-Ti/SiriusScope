@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Shapes
 import QtQuick.Layouts
 import QtQuick.Controls
+import SiriusScope 1.0
 
 Item {
     id: indicator
@@ -86,12 +87,11 @@ Item {
         }
     }
 
-    // --- Background / Frame -------------------------------------------------
     Rectangle {
         id: frame
         anchors.fill: parent
-        color: "#f3f4f6"
-        border.color: "#b5bcc7"
+        color: "transparent"
+        border.color: "transparent"
         border.width: 1
         radius: 4
     }
@@ -125,8 +125,11 @@ Item {
                 // Dial base
                 Rectangle {
                     anchors.fill: parent
-                    color: "#eef1f5"
-                    border.color: "#9aa3b1"
+                    gradient: Gradient {
+                        GradientStop { position: 0.0; color: "#17222D" }
+                        GradientStop { position: 1.0; color: Theme.waterfallBackground }
+                    }
+                    border.color: "#344353"
                     border.width: 1
                     radius: width / 2
                 }
@@ -157,7 +160,7 @@ Item {
                         width: 2
                         height: dial.majorTickLen
                         radius: 1
-                        color: "#9aa3b1"
+                        color: "#8EA1B4"
                         opacity: 0.95
 
                         x: (dial.width - width) / 2
@@ -180,8 +183,8 @@ Item {
                         width: 2
                         height: dial.midTickLen
                         radius: 1
-                        color: "#9aa3b1"
-                        opacity: 0.7
+                        color: "#5A6D7F"
+                        opacity: 0.82
 
                         x: (dial.width - width) / 2
                         y: dial.tickOuterPad
@@ -203,8 +206,8 @@ Item {
                         width: 1
                         height: dial.minorTickLen
                         radius: 0.5
-                        color: "#9aa3b1"
-                        opacity: 0.55
+                        color: "#5A6D7F"
+                        opacity: 0.48
 
                         x: (dial.width - width) / 2
                         y: dial.tickOuterPad
@@ -222,8 +225,8 @@ Item {
                     Text {
                         readonly property int deg: index * 30
                         text: deg.toString()
-                        color: "#5a6270"
-                        font.pixelSize: 12
+                        color: Theme.textLabel
+                        font.pixelSize: 10
 
                         x: dial._xAt(dial.labelRadius, deg) - width / 2
                         y: dial._yAt(dial.labelRadius, deg) - height / 2
@@ -289,7 +292,7 @@ Item {
                         opacity: indicator.beamOpacity
 
                         ShapePath {
-                            fillColor: "#2ecc71"
+                            fillColor: Theme.statusGood
                             strokeColor: "transparent"
                             strokeWidth: 0
 
@@ -329,7 +332,7 @@ Item {
                         opacity: indicator.beamOpacity
 
                         ShapePath {
-                            fillColor: "#e74c3c"
+                            fillColor: Theme.statusBad
                             strokeColor: "transparent"
                             strokeWidth: 0
 
@@ -367,7 +370,7 @@ Item {
                         opacity: 0.45
 
                         ShapePath {
-                            strokeColor: "#2b2f36"
+                            strokeColor: Theme.panelBorderSoft
                             strokeWidth: 1
                             fillColor: "transparent"
 
@@ -416,32 +419,20 @@ Item {
                             readonly property real a: targetTracker.alpha(tr)
                             readonly property bool freshest: index === 0
 
-                            readonly property real xPos: dial._xAt(dial.targetRadius, tr.az)
-                            readonly property real yPos: dial._yAt(dial.targetRadius, tr.az)
-
-                            // ореол самой свежей
                             Rectangle {
-                                visible: freshest
-                                width: 14
-                                height: 14
-                                radius: 7
-                                x: xPos - width/2
-                                y: yPos - height/2
-                                color: "transparent"
-                                border.width: 2
-                                border.color: "#2b2f36"
-                                opacity: 0.22
-                            }
-
-                            // маркер цели
-                            Rectangle {
-                                width: freshest ? 8 : 6
-                                height: width
+                                id: marker
+                                width: freshest ? 6 : 5
+                                height: Math.max(22, dial.rOuter * 0.20)
                                 radius: width / 2
-                                x: xPos - width/2
-                                y: yPos - height/2
-                                color: "#2b2f36"
-                                opacity: Math.max(0.10, a)
+                                x: (dial.width - width) / 2
+                                y: dial.rOuter * 0.055
+                                color: Theme.bandColor(index % 5)
+                                opacity: Math.max(0.18, a)
+                                transform: Rotation {
+                                    origin.x: marker.width / 2
+                                    origin.y: dial.rOuter - marker.y
+                                    angle: tr.az
+                                }
                             }
                         }
                     }
@@ -453,7 +444,7 @@ Item {
                     width: dial.width * 0.03
                     height: width
                     radius: width / 2
-                    color: "#2b2f36"
+                    color: Theme.textSecondary
                     anchors.centerIn: parent
                     opacity: 0.85
                 }
@@ -465,9 +456,9 @@ Item {
                     radius: width / 2
                     anchors.centerIn: parent
                     color: "transparent"
-                    border.color: "#9aa3b1"
+                    border.color: "#56687A"
                     border.width: 1
-                    opacity: 0.65
+                    opacity: 0.82
                 }
             }
         }

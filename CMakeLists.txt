@@ -114,15 +114,26 @@ target_link_libraries(appSiriusScope
         siriusscope_application
 )
 
+set_source_files_properties(
+    src/ui/BandModel.qml
+    src/ui/Theme.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE
+)
+
 qt6_add_qml_module(appSiriusScope
     URI SiriusScope
     VERSION 1.0
     QML_FILES
         src/ui/Main.qml
         src/ui/BandModel.qml
+        src/ui/Theme.qml
         src/ui/components/WaterfallView.qml
         src/ui/components/MenuBarApp.qml
         src/ui/components/FooterDataView.qml
+        src/ui/components/Panel.qml
+        src/ui/components/ResultTablePanel.qml
+        src/ui/components/StatusChip.qml
+        src/ui/components/TopToolbar.qml
         src/ui/components/SpectrumView/SpectrumView.qml
         src/ui/components/SpectrumView/BandItem.qml
         src/ui/components/AntennaIndicator/Indicator.qml

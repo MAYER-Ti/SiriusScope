@@ -5,13 +5,16 @@ import SiriusScope 1.0
 Item {
     id: root
 
-    readonly property string monoFontFamily: "Consolas, Monospace"
+    readonly property string monoFontFamily: Theme.monoFontFamily
 
     property int bandId: 0
     property real centerHz: 0
     property real widthHz: 0
     property real thresholdAmplitude: 180
     property bool enabled: true
+    property color bandColor: Theme.bandColor(bandId)
+    property color bandBorderColor: Theme.bandBorderColor(bandId)
+    property color bandTextColor: Theme.bandTextColor(bandId)
     property real viewMinHz: 0
     property real viewMaxHz: 0
     property real globalMinHz: 0
@@ -46,15 +49,17 @@ Item {
         width: Math.max(1, (visibleMaxHz - visibleMinHz) / viewSpanHz * parent.width)
         height: parent.height
         z: 2
-        color: enabled ? "#3353b0ff" : "#1f444b55"
-        border.color: enabled ? "#7fb3ff" : "#5a6a74"
+        color: enabled ? root.bandColor : "#444B55"
+        opacity: enabled ? 0.18 : 0.12
+        border.color: enabled ? root.bandBorderColor : "#5A6A74"
         border.width: 1
 
         Rectangle {
             id: leftHandle
             width: 8
             height: parent.height
-            color: enabled ? "#7fb3ff" : "#5a6a74"
+            color: enabled ? root.bandBorderColor : "#5A6A74"
+            opacity: 1.0
         }
 
         Rectangle {
@@ -62,7 +67,8 @@ Item {
             width: 8
             height: parent.height
             anchors.right: parent.right
-            color: enabled ? "#7fb3ff" : "#5a6a74"
+            color: enabled ? root.bandBorderColor : "#5A6A74"
+            opacity: 1.0
         }
 
         Text {
@@ -72,9 +78,10 @@ Item {
             anchors.top: parent.top
             anchors.topMargin: 4
             text: "B" + (bandId + 1) + " " + thresholdAmplitude.toFixed(0)
-            color: enabled ? "#e7eef8" : "#a0a6ad"
+            color: enabled ? root.bandTextColor : Theme.textMuted
             font.family: root.monoFontFamily
             font.pixelSize: 10
+            font.weight: Font.DemiBold
         }
 
         MouseArea {
@@ -255,9 +262,9 @@ Item {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         background: Rectangle {
-            color: "#1b2028"
-            border.color: "#4c5868"
-            radius: 4
+            color: Theme.panelBottom
+            border.color: Theme.panelBorder
+            radius: Theme.radiusInset
         }
 
         Column {
@@ -266,8 +273,8 @@ Item {
             spacing: 8
 
             Text {
-                text: "Amplitude threshold"
-                color: "#d7dbe2"
+                text: qsTr("Порог амплитуды")
+                color: Theme.textPrimary
                 font.family: root.monoFontFamily
                 font.pixelSize: 10
             }
@@ -292,7 +299,7 @@ Item {
                 CheckBox {
                     id: enabledCheck
                     checked: enabled
-                    text: "Enabled"
+                    text: qsTr("Включено")
                     onCheckedChanged: {
                         enabledEdited(checked, true)
                         SpectrumController.setBandEnabled(bandId, checked)
@@ -300,7 +307,7 @@ Item {
                 }
                 Text {
                     text: thresholdAmplitude.toFixed(0)
-                    color: "#a9b2bd"
+                    color: Theme.textSecondary
                     font.family: root.monoFontFamily
                     font.pixelSize: 10
                 }

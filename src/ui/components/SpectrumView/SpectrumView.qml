@@ -7,7 +7,7 @@ Item {
     id: root
     focus: true
 
-    readonly property string monoFontFamily: "Consolas"
+    readonly property string monoFontFamily: Theme.monoFontFamily
 
     readonly property real amplitudeMin: 0
     readonly property real amplitudeMax: 500
@@ -57,8 +57,8 @@ Item {
 
     function thresholdForHz(hz) {
         var threshold = -1e9
-        for (var i = 0; i < bandModel.count; i++) {
-            var band = bandModel.get(i)
+        for (var i = 0; i < BandModel.count; i++) {
+            var band = BandModel.get(i)
             if (!band.enabled) {
                 continue
             }
@@ -108,15 +108,6 @@ Item {
         }
     }
 
-    ListModel {
-        id: bandModel
-        ListElement { bandId: 0; centerHz: 3.0e9; widthHz: 5.0e8; thresholdAmplitude: 180; enabled: true }
-        ListElement { bandId: 1; centerHz: 5.795e9; widthHz: 4.10e8; thresholdAmplitude: 160; enabled: true }
-        ListElement { bandId: 2; centerHz: 8.25e9; widthHz: 5.0e8; thresholdAmplitude: 190; enabled: true }
-        ListElement { bandId: 3; centerHz: 9.55e9; widthHz: 5.0e8; thresholdAmplitude: 140; enabled: true }
-        ListElement { bandId: 4; centerHz: 1.425e10; widthHz: 5.0e8; thresholdAmplitude: 170; enabled: true }
-    }
-
     Connections {
         target: SpectrumController
         function onSpectrumReady(minHz, maxHz, samples, sampleMinValue, sampleMaxValue) {
@@ -137,15 +128,19 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#0f131a"
-        border.color: "#2b2f36"
+        color: Theme.plotBackgroundBottom
+        border.color: Theme.panelBorderSoft
         border.width: 1
-        radius: 6
+        radius: Theme.radiusInset
+        clip: true
 
         Item {
             id: plotArea
             anchors.fill: parent
-            anchors.margins: 8
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            anchors.topMargin: 10
+            anchors.bottomMargin: 8
 
             Canvas {
                 id: plot
@@ -155,13 +150,16 @@ Item {
                     var ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
 
-                    ctx.fillStyle = "#0f131a"
+                    var background = ctx.createLinearGradient(0, 0, 0, height)
+                    background.addColorStop(0, String(Theme.plotBackgroundTop))
+                    background.addColorStop(1, String(Theme.plotBackgroundBottom))
+                    ctx.fillStyle = background
                     ctx.fillRect(0, 0, width, height)
 
                     var spanHz = Math.max(1.0, viewMaxHz - viewMinHz)
                     var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
 
-                    ctx.strokeStyle = "#222a33"
+                    ctx.strokeStyle = String(Theme.gridSoft)
                     ctx.lineWidth = 1
 
                     var tickCountX = 5
@@ -169,6 +167,7 @@ Item {
 
                     for (var i = 0; i < tickCountX; i++) {
                         var x = (i / (tickCountX - 1)) * width
+                        ctx.strokeStyle = i === 0 || i === tickCountX - 1 ? String(Theme.gridMajor) : String(Theme.gridSoft)
                         ctx.beginPath()
                         ctx.moveTo(x, 0)
                         ctx.lineTo(x, height)
@@ -177,13 +176,14 @@ Item {
 
                     for (var j = 0; j < tickCountY; j++) {
                         var y = (j / (tickCountY - 1)) * height
+                        ctx.strokeStyle = j === 0 || j === tickCountY - 1 ? String(Theme.gridMajor) : String(Theme.gridSoft)
                         ctx.beginPath()
                         ctx.moveTo(0, y)
                         ctx.lineTo(width, y)
                         ctx.stroke()
                     }
 
-                    ctx.fillStyle = "#a5b0bd"
+                    ctx.fillStyle = String(Theme.textMuted)
                     ctx.font = "10px " + root.monoFontFamily
                     ctx.textAlign = "center"
                     ctx.textBaseline = "bottom"
@@ -203,12 +203,39 @@ Item {
                         ctx.fillText(amplitude.toFixed(0), 4, ly)
                     }
 
+                    ctx.save()
+                    ctx.setLineDash([5, 5])
+                    ctx.globalAlpha = 0.55
+                    ctx.strokeStyle = String(Theme.statusWarn)
+                    ctx.lineWidth = 1
+                    for (var b = 0; b < BandModel.count; b++) {
+                        var thresholdBand = BandModel.get(b)
+                        if (!thresholdBand.enabled) {
+                            continue
+                        }
+                        var bandMin = thresholdBand.centerHz - thresholdBand.widthHz * 0.5
+                        var bandMax = thresholdBand.centerHz + thresholdBand.widthHz * 0.5
+                        var clippedMin = Math.max(viewMinHz, bandMin)
+                        var clippedMax = Math.min(viewMaxHz, bandMax)
+                        if (clippedMax <= clippedMin) {
+                            continue
+                        }
+                        var thresholdY = height - (thresholdBand.thresholdAmplitude - amplitudeMin) / amplitudeSpan * height
+                        var thresholdX0 = (clippedMin - viewMinHz) / spanHz * width
+                        var thresholdX1 = (clippedMax - viewMinHz) / spanHz * width
+                        ctx.beginPath()
+                        ctx.moveTo(thresholdX0, thresholdY)
+                        ctx.lineTo(thresholdX1, thresholdY)
+                        ctx.stroke()
+                    }
+                    ctx.restore()
+
                     if (decimatedMinMax.length < 2) {
                         return
                     }
 
-                    ctx.strokeStyle = "#4ea1ff"
-                    ctx.lineWidth = 1
+                    ctx.strokeStyle = String(Theme.signalCyan)
+                    ctx.lineWidth = 1.6
 
                     for (var px = 0; px < width; px++) {
                         var idx = px * 2
@@ -319,13 +346,16 @@ Item {
 
             Repeater {
                 id: bandRepeater
-                model: bandModel
+                model: BandModel
                 delegate: BandItem {
                     bandId: model.bandId
                     centerHz: model.centerHz
                     widthHz: model.widthHz
                     thresholdAmplitude: model.thresholdAmplitude
                     enabled: model.enabled
+                    bandColor: model.color
+                    bandBorderColor: model.borderColor
+                    bandTextColor: model.textColor
                     viewMinHz: root.viewMinHz
                     viewMaxHz: root.viewMaxHz
                     globalMinHz: root.globalMinHz
@@ -336,18 +366,18 @@ Item {
                     z: 2
 
                     onBandEdited: (nextCenter, nextWidth, isFinal) => {
-                        bandModel.setProperty(index, "centerHz", nextCenter)
-                        bandModel.setProperty(index, "widthHz", nextWidth)
+                        BandModel.setProperty(index, "centerHz", nextCenter)
+                        BandModel.setProperty(index, "widthHz", nextWidth)
                         plot.requestPaint()
                     }
 
                     onThresholdEdited: (nextThreshold, isFinal) => {
-                        bandModel.setProperty(index, "thresholdAmplitude", nextThreshold)
+                        BandModel.setProperty(index, "thresholdAmplitude", nextThreshold)
                         plot.requestPaint()
                     }
 
                     onEnabledEdited: (nextEnabled, isFinal) => {
-                        bandModel.setProperty(index, "enabled", nextEnabled)
+                        BandModel.setProperty(index, "enabled", nextEnabled)
                         plot.requestPaint()
                     }
                 }

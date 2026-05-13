@@ -5,10 +5,30 @@ import SiriusScope 1.0
 MenuBar {
     id: menuBar
 
+    background: Rectangle {
+        color: Theme.chromeTopBar
+    }
+
     delegate: MenuBarItem {
-        implicitHeight: 22
-        padding: 2
+        implicitHeight: 30
+        leftPadding: 12
+        rightPadding: 12
+        topPadding: 0
+        bottomPadding: 0
         font.pixelSize: 11
+
+        contentItem: Text {
+            text: parent.text
+            color: parent.highlighted ? Theme.textPrimary : Theme.textSecondary
+            font: parent.font
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            color: parent.highlighted ? Theme.chipBackground : Theme.chromeTopBar
+        }
     }
 
     ActionGroup {
