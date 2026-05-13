@@ -1,6 +1,6 @@
 /*!
  *  \file waterfallitem.cpp
- *  \brief Scene graph renderer for waterfall data.
+ *  \brief Реализация рендерера данных Waterfall через граф сцены.
  */
 #include "waterfallitem.h"
 

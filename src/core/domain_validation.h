@@ -2,7 +2,7 @@
 
 /*!
  * \file domain_validation.h
- * \brief Validation result types shared by SiriusScope domain models.
+ * \brief Типы результатов валидации, общие для доменных моделей SiriusScope.
  */
 
 #include <optional>
@@ -13,51 +13,51 @@
 namespace siriusscope::core {
 
 /*!
- * \brief Stable validation issue identifiers used by domain and processing diagnostics.
+ * \brief Стабильные идентификаторы ошибок валидации для домена и обработки.
  */
 enum class ValidationCode
 {
-    Ok, //!< No validation problem.
-    InvalidAmplitude, //!< Input amplitude is outside the accepted 1..127 range.
-    InvalidBeamIndex, //!< Beam index is not valid for current capabilities.
-    InvalidBandIndex, //!< Band index is not valid for current capabilities.
-    InvalidFrequency, //!< Absolute frequency is outside the system frequency range.
-    BandOutOfRange, //!< Band edges leave the system frequency range.
-    InvalidBandWidth, //!< Band width is zero, negative, or above the current limit.
-    InvalidFrequencyOffset, //!< Sample frequency offset is outside the configured band.
-    InvalidAzimuth, //!< Azimuth is outside the accepted [0, 360) degree range.
-    InvalidScanSector, //!< Scan sector is invalid or has zero span.
-    InvalidSampleIndex, //!< Sample index cannot be mapped by the requested model.
-    InvalidTimeBase, //!< Time base parameters are invalid or overflow conversion.
-    InvalidQuality, //!< Normalized quality value is outside 0..1.
-    EmptyFrequencySet, //!< Result frequency list is empty.
+    Ok, //!< Ошибка валидации отсутствует.
+    InvalidAmplitude, //!< Входная амплитуда вне допустимого диапазона 1..127.
+    InvalidBeamIndex, //!< Индекс луча недопустим для текущих возможностей.
+    InvalidBandIndex, //!< Индекс полосы недопустим для текущих возможностей.
+    InvalidFrequency, //!< Абсолютная частота вне системного частотного диапазона.
+    BandOutOfRange, //!< Границы полосы выходят за системный частотный диапазон.
+    InvalidBandWidth, //!< Ширина полосы нулевая, отрицательная или выше предела.
+    InvalidFrequencyOffset, //!< Смещение частоты отсчета вне настроенной полосы.
+    InvalidAzimuth, //!< Азимут вне допустимого диапазона [0, 360) градусов.
+    InvalidScanSector, //!< Сектор сканирования недопустим или имеет нулевую ширину.
+    InvalidSampleIndex, //!< Индекс отсчета нельзя отобразить выбранной моделью.
+    InvalidTimeBase, //!< Параметры временной базы недопустимы или дают переполнение.
+    InvalidQuality, //!< Нормализованное значение качества вне диапазона 0..1.
+    EmptyFrequencySet, //!< Список частот результата пуст.
 };
 
 /*!
- * \brief One validation issue with a stable code and optional human-readable detail.
+ * \brief Одна ошибка валидации со стабильным кодом и необязательным описанием.
  */
 struct ValidationIssue
 {
-    //! Machine-readable issue identifier.
+    //! Машиночитаемый идентификатор ошибки.
     ValidationCode code = ValidationCode::Ok;
-    //! Optional diagnostic text intended for logs or developer-facing status.
+    //! Необязательный диагностический текст для логов или статуса разработчика.
     std::string message;
 };
 
 /*!
- * \brief Accumulates zero or more validation issues.
+ * \brief Накапливает ноль или более ошибок валидации.
  *
- * A default-constructed result is valid. Functions that check several rules
- * should merge all detected issues instead of failing fast when that helps
- * diagnostics.
+ * Результат, созданный по умолчанию, считается успешным. Функции, проверяющие
+ * несколько правил, должны объединять все найденные ошибки, если это улучшает
+ * диагностику.
  */
 class ValidationResult
 {
 public:
     /*!
-     * \brief Creates a successful validation result.
+     * \brief Создает успешный результат валидации.
      *
-     * \return Result without issues.
+     * \return Результат без ошибок.
      */
     static ValidationResult ok()
     {
@@ -65,11 +65,11 @@ public:
     }
 
     /*!
-     * \brief Creates a failed validation result with one issue.
+     * \brief Создает неуспешный результат валидации с одной ошибкой.
      *
-     * \param[in] code Stable issue code. ValidationCode::Ok is ignored.
-     * \param[in] message Optional diagnostic text.
-     * \return Result containing the requested issue when the code is not Ok.
+     * \param[in] code Стабильный код ошибки. ValidationCode::Ok игнорируется.
+     * \param[in] message Необязательный диагностический текст.
+     * \return Результат с указанной ошибкой, если код не равен Ok.
      */
     static ValidationResult invalid(ValidationCode code, std::string message = {})
     {
@@ -79,9 +79,9 @@ public:
     }
 
     /*!
-     * \brief Checks whether no validation issues were collected.
+     * \brief Проверяет, что ошибки валидации не были собраны.
      *
-     * \return true when the result is valid.
+     * \return true, если результат успешен.
      */
     bool isValid() const noexcept
     {
@@ -89,7 +89,7 @@ public:
     }
 
     /*!
-     * \brief Boolean shortcut for isValid().
+     * \brief Булево сокращение для isValid().
      */
     explicit operator bool() const noexcept
     {
@@ -97,9 +97,9 @@ public:
     }
 
     /*!
-     * \brief Returns the collected validation issues.
+     * \brief Возвращает собранные ошибки валидации.
      *
-     * \return Ordered issue list. The reference stays valid while this object lives.
+     * \return Упорядоченный список ошибок. Ссылка действительна, пока жив объект.
      */
     const std::vector<ValidationIssue>& issues() const noexcept
     {
@@ -107,10 +107,10 @@ public:
     }
 
     /*!
-     * \brief Adds one validation issue.
+     * \brief Добавляет одну ошибку валидации.
      *
-     * \param[in] code Stable issue code. ValidationCode::Ok is ignored.
-     * \param[in] message Optional diagnostic text.
+     * \param[in] code Стабильный код ошибки. ValidationCode::Ok игнорируется.
+     * \param[in] message Необязательный диагностический текст.
      */
     void add(ValidationCode code, std::string message = {})
     {
@@ -122,9 +122,9 @@ public:
     }
 
     /*!
-     * \brief Appends issues from another result.
+     * \brief Добавляет ошибки из другого результата.
      *
-     * \param[in] other Result whose issues are appended in order.
+     * \param[in] other Результат, ошибки которого добавляются с сохранением порядка.
      */
     void merge(const ValidationResult& other)
     {
@@ -132,10 +132,10 @@ public:
     }
 
     /*!
-     * \brief Checks whether at least one issue has the requested code.
+     * \brief Проверяет, есть ли хотя бы одна ошибка с заданным кодом.
      *
-     * \param[in] code Issue code to find.
-     * \return true when the code is present.
+     * \param[in] code Код ошибки для поиска.
+     * \return true, если код найден.
      */
     bool contains(ValidationCode code) const noexcept
     {
@@ -153,24 +153,24 @@ private:
 };
 
 /*!
- * \brief Domain operation result with an optional value and validation details.
+ * \brief Результат доменной операции с необязательным значением и валидацией.
  *
- * A result can carry validation issues even when a value is present. The
- * boolean conversion is deliberately stricter than hasValue(): it returns true
- * only when the value exists and validation has no issues.
+ * Результат может содержать ошибки валидации даже при наличии значения.
+ * Булево преобразование намеренно строже, чем hasValue(): оно возвращает true
+ * только при наличии значения и отсутствии ошибок валидации.
  *
- * \tparam T Stored domain value type.
+ * \tparam T Тип сохраняемого доменного значения.
  */
 template <typename T>
 class DomainResult
 {
 public:
     /*!
-     * \brief Creates a result with a value.
+     * \brief Создает результат со значением.
      *
-     * \param[in] value Domain value to store.
-     * \param[in] validation Validation details associated with the value.
-     * \return Successful value wrapper.
+     * \param[in] value Доменное значение для хранения.
+     * \param[in] validation Валидация, связанная со значением.
+     * \return Обертка успешного значения.
      */
     static DomainResult success(T value, ValidationResult validation = ValidationResult::ok())
     {
@@ -178,10 +178,10 @@ public:
     }
 
     /*!
-     * \brief Creates a result without a value.
+     * \brief Создает результат без значения.
      *
-     * \param[in] validation Validation details explaining why no value exists.
-     * \return Failed value wrapper.
+     * \param[in] validation Валидация, объясняющая отсутствие значения.
+     * \return Обертка неуспешного результата.
      */
     static DomainResult failure(ValidationResult validation)
     {
@@ -189,9 +189,9 @@ public:
     }
 
     /*!
-     * \brief Checks whether the wrapper stores a value.
+     * \brief Проверяет, хранит ли обертка значение.
      *
-     * \return true when value() can return a non-null pointer.
+     * \return true, если value() может вернуть ненулевой указатель.
      */
     bool hasValue() const noexcept
     {
@@ -199,9 +199,9 @@ public:
     }
 
     /*!
-     * \brief Checks whether the result contains a valid value.
+     * \brief Проверяет, содержит ли результат корректное значение.
      *
-     * \return true only when a value exists and validation is valid.
+     * \return true только при наличии значения и успешной валидации.
      */
     explicit operator bool() const noexcept
     {
@@ -209,9 +209,9 @@ public:
     }
 
     /*!
-     * \brief Returns a pointer to the stored value.
+     * \brief Возвращает указатель на сохраненное значение.
      *
-     * \return Stored value pointer, or nullptr when the result has no value.
+     * \return Указатель на значение или nullptr, если значения нет.
      */
     const T* value() const noexcept
     {
@@ -219,9 +219,9 @@ public:
     }
 
     /*!
-     * \brief Returns a mutable pointer to the stored value.
+     * \brief Возвращает изменяемый указатель на сохраненное значение.
      *
-     * \return Stored value pointer, or nullptr when the result has no value.
+     * \return Указатель на значение или nullptr, если значения нет.
      */
     T* value() noexcept
     {
@@ -229,9 +229,9 @@ public:
     }
 
     /*!
-     * \brief Returns validation details for success and failure cases.
+     * \brief Возвращает сведения валидации для успешных и неуспешных случаев.
      *
-     * \return Validation result stored in this wrapper.
+     * \return Результат валидации, сохраненный в обертке.
      */
     const ValidationResult& validation() const noexcept
     {

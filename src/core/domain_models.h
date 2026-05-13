@@ -2,7 +2,7 @@
 
 /*!
  * \file domain_models.h
- * \brief Core SiriusScope domain models and validation entry points.
+ * \brief Доменные модели SiriusScope и точки входа валидации.
  */
 
 #include "core/domain_constraints.h"
@@ -15,56 +15,57 @@
 namespace siriusscope::core {
 
 /*!
- * \brief Inclusive frequency interval in hertz.
+ * \brief Включительный частотный интервал, Гц.
  */
 struct FrequencyRange
 {
-    //! Lower frequency edge, in hertz.
+    //! Нижняя граница частоты, Гц.
     std::int64_t minHz = 0;
-    //! Upper frequency edge, in hertz.
+    //! Верхняя граница частоты, Гц.
     std::int64_t maxHz = 0;
 
     /*!
-     * \brief Returns the interval width.
+     * \brief Возвращает ширину интервала.
      *
-     * \return maxHz - minHz. Invalid ranges can therefore produce a negative value.
+     * \return maxHz - minHz. Некорректные диапазоны могут дать отрицательное значение.
      */
     std::int64_t widthHz() const noexcept;
     /*!
-     * \brief Checks whether a frequency belongs to this inclusive range.
+     * \brief Проверяет, принадлежит ли частота этому включительному диапазону.
      *
-     * \param[in] frequencyHz Frequency in hertz.
-     * \return true when frequencyHz is inside [minHz, maxHz].
+     * \param[in] frequencyHz Частота, Гц.
+     * \return true, если frequencyHz находится внутри [minHz, maxHz].
      */
     bool contains(std::int64_t frequencyHz) const noexcept;
 };
 
 /*!
- * \brief Configuration of one BCO band represented by a BandItem.
+ * \brief Конфигурация одной полосы BCO, представленной BandItem.
  *
- * The model is UI-independent. UI changes must be validated by application
- * controllers before they reach hardware command adapters.
+ * Модель не зависит от пользовательского интерфейса. Изменения из интерфейса
+ * должны проходить валидацию в контроллерах приложения до попадания в адаптеры
+ * аппаратных команд.
  */
 struct BandConfig
 {
-    //! Zero-based band index.
+    //! Индекс полосы, начиная с нуля.
     int bandIndex = 0;
-    //! Band center frequency, in hertz.
+    //! Центральная частота полосы, Гц.
     std::int64_t centerFrequencyHz = DomainConstraints::minSystemFrequencyHz;
-    //! Band width in hertz. Current maximum is 500 MHz.
+    //! Ширина полосы, Гц. Текущий максимум — 500 МГц.
     std::int64_t widthHz = DomainConstraints::maxBandWidthHz;
-    //! Whether the band participates in reception and visualization.
+    //! Признак участия полосы в приеме и визуализации.
     bool enabled = true;
 
     /*!
-     * \brief Creates a validated band configuration.
+     * \brief Создает провалидированную конфигурацию полосы.
      *
-     * \param[in] bandIndex Zero-based band index.
-     * \param[in] centerFrequencyHz Band center frequency, in hertz.
-     * \param[in] widthHz Band width, in hertz.
-     * \param[in] enabled Whether the band is enabled.
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Created config or validation issues.
+     * \param[in] bandIndex Индекс полосы, начиная с нуля.
+     * \param[in] centerFrequencyHz Центральная частота полосы, Гц.
+     * \param[in] widthHz Ширина полосы, Гц.
+     * \param[in] enabled Признак включения полосы.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Созданная конфигурация или ошибки валидации.
      */
     static DomainResult<BandConfig> create(int bandIndex,
                                            std::int64_t centerFrequencyHz,
@@ -74,68 +75,68 @@ struct BandConfig
                                                defaultRuntimeCapabilities());
 
     /*!
-     * \brief Returns the inclusive frequency range covered by the band.
+     * \brief Возвращает включительный частотный диапазон полосы.
      *
-     * \return Center frequency plus/minus half the configured width.
+     * \return Центральная частота плюс/минус половина заданной ширины.
      */
     FrequencyRange frequencyRange() const noexcept;
     /*!
-     * \brief Checks whether an absolute frequency is inside this band.
+     * \brief Проверяет, находится ли абсолютная частота внутри этой полосы.
      *
-     * \param[in] frequencyHz Absolute frequency in hertz.
-     * \return true when the frequency belongs to frequencyRange().
+     * \param[in] frequencyHz Абсолютная частота, Гц.
+     * \return true, если частота принадлежит frequencyRange().
      */
     bool containsFrequency(std::int64_t frequencyHz) const noexcept;
     /*!
-     * \brief Validates band index, center frequency, width, and system bounds.
+     * \brief Валидирует индекс, центральную частоту, ширину и системные границы.
      *
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Validation result with all detected issues.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Результат валидации со всеми найденными ошибками.
      */
     ValidationResult validate(const RuntimeCapabilities& capabilities =
                                   defaultRuntimeCapabilities()) const;
 };
 
 /*!
- * \brief Raw beam-local sample before it is attached to a band.
+ * \brief Сырой отсчет в координатах луча до привязки к полосе.
  */
 struct BeamSample
 {
-    //! Original BCO sample index. It must be preserved by all higher layers.
+    //! Исходный индекс отсчета BCO. Должен сохраняться всеми вышестоящими слоями.
     std::uint64_t sampleIndex = 0;
-    //! Frequency offset from the band center, in hertz.
+    //! Смещение частоты от центра полосы, Гц.
     std::int64_t frequencyOffsetHz = 0;
-    //! Input amplitude. Valid range is 1..127.
+    //! Входная амплитуда. Допустимый диапазон 1..127.
     int amplitude = 0;
-    //! Beam index from the current antenna model.
+    //! Индекс луча из текущей модели антенны.
     int beamIndex = 0;
 };
 
 /*!
- * \brief Validated signal sample with absolute frequency and band context.
+ * \brief Провалидированный сигнальный отсчет с абсолютной частотой и полосой.
  */
 struct SignalSample
 {
-    //! Original BCO sample index.
+    //! Исходный индекс отсчета BCO.
     std::uint64_t sampleIndex = 0;
-    //! Zero-based band index.
+    //! Индекс полосы, начиная с нуля.
     int bandIndex = 0;
-    //! Frequency offset from the band center, in hertz.
+    //! Смещение частоты от центра полосы, Гц.
     std::int64_t frequencyOffsetHz = 0;
-    //! Absolute sample frequency in hertz.
+    //! Абсолютная частота отсчета, Гц.
     std::int64_t absoluteFrequencyHz = 0;
-    //! Input amplitude in the valid 1..127 range.
+    //! Входная амплитуда в допустимом диапазоне 1..127.
     int amplitude = 0;
-    //! Beam index in the current runtime capabilities.
+    //! Индекс луча в текущих возможностях времени выполнения.
     int beamIndex = 0;
 
     /*!
-     * \brief Creates a validated signal sample from a beam sample and band config.
+     * \brief Создает провалидированный сигнальный отсчет из отсчета луча и полосы.
      *
-     * \param[in] beamSample Beam-local sample received from parser or simulator.
-     * \param[in] bandConfig Band used to derive the absolute frequency.
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Created sample or validation issues.
+     * \param[in] beamSample Отсчет в координатах луча от парсера или симулятора.
+     * \param[in] bandConfig Полоса для вычисления абсолютной частоты.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Созданный отсчет или ошибки валидации.
      */
     static DomainResult<SignalSample> create(const BeamSample& beamSample,
                                              const BandConfig& bandConfig,
@@ -143,11 +144,11 @@ struct SignalSample
                                                  defaultRuntimeCapabilities());
 
     /*!
-     * \brief Validates sample fields against the related band configuration.
+     * \brief Валидирует поля отсчета относительно связанной конфигурации полосы.
      *
-     * \param[in] bandConfig Band expected to own this sample.
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Validation result with all detected issues.
+     * \param[in] bandConfig Полоса, которой должен принадлежать отсчет.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Результат валидации со всеми найденными ошибками.
      */
     ValidationResult validate(const BandConfig& bandConfig,
                               const RuntimeCapabilities& capabilities =
@@ -155,132 +156,132 @@ struct SignalSample
 };
 
 /*!
- * \brief Antenna scan sector in degrees.
+ * \brief Сектор сканирования антенны в градусах.
  *
- * The range uses [0, 360) azimuth values. A sector wraps around north when
- * startAzimuthDeg is greater than endAzimuthDeg.
+ * Диапазон использует азимуты [0, 360). Сектор проходит через север,
+ * если startAzimuthDeg больше endAzimuthDeg.
  */
 struct ScanSector
 {
-    //! Sector start azimuth in degrees, inclusive.
+    //! Начальный азимут сектора, градусы, включительно.
     double startAzimuthDeg = 0.0;
-    //! Sector end azimuth in degrees, inclusive for contains().
+    //! Конечный азимут сектора, градусы, включительно для contains().
     double endAzimuthDeg = 0.0;
 
     /*!
-     * \brief Creates a validated scan sector.
+     * \brief Создает провалидированный сектор сканирования.
      *
-     * \param[in] startAzimuthDeg Sector start in degrees.
-     * \param[in] endAzimuthDeg Sector end in degrees.
-     * \return Created sector or validation issues.
+     * \param[in] startAzimuthDeg Начало сектора, градусы.
+     * \param[in] endAzimuthDeg Конец сектора, градусы.
+     * \return Созданный сектор или ошибки валидации.
      */
     static DomainResult<ScanSector> create(double startAzimuthDeg, double endAzimuthDeg);
 
     /*!
-     * \brief Validates azimuth bounds and non-zero span.
+     * \brief Валидирует границы азимута и ненулевую ширину сектора.
      *
-     * \return Validation result.
+     * \return Результат валидации.
      */
     ValidationResult validate() const;
     /*!
-     * \brief Checks whether the sector crosses the 360/0 degree boundary.
+     * \brief Проверяет, пересекает ли сектор границу 360/0 градусов.
      *
-     * \return true when startAzimuthDeg > endAzimuthDeg.
+     * \return true, если startAzimuthDeg > endAzimuthDeg.
      */
     bool isWrapAround() const noexcept;
     /*!
-     * \brief Checks whether an azimuth belongs to this sector.
+     * \brief Проверяет, принадлежит ли азимут этому сектору.
      *
-     * \param[in] azimuthDeg Azimuth in degrees.
-     * \return true for azimuths inside the sector.
+     * \param[in] azimuthDeg Азимут, градусы.
+     * \return true для азимутов внутри сектора.
      */
     bool contains(double azimuthDeg) const noexcept;
     /*!
-     * \brief Calculates sector span in degrees.
+     * \brief Вычисляет ширину сектора в градусах.
      *
-     * \return Sector span, accounting for wrap-around.
+     * \return Ширина сектора с учетом перехода через 360/0 градусов.
      */
     double spanDegrees() const noexcept;
 };
 
 /*!
- * \brief Converts preserved BCO sample indices to local and UTC time.
+ * \brief Преобразует сохраненные индексы отсчетов BCO в локальное и UTC-время.
  */
 struct TimeBase
 {
-    //! UTC recording start timestamp in nanoseconds.
+    //! UTC-время начала записи, наносекунды.
     std::int64_t recordingStartUtcNs = 0;
-    //! First BCO sample index in the recording.
+    //! Первый индекс отсчета BCO в записи.
     std::uint64_t firstSampleIndex = 0;
-    //! Duration of one sample step in nanoseconds.
+    //! Длительность одного шага отсчета, наносекунды.
     std::uint64_t samplePeriodNs = DomainConstraints::defaultSamplePeriodNs;
 
     /*!
-     * \brief Creates a validated time base.
+     * \brief Создает провалидированную временную базу.
      *
-     * \param[in] recordingStartUtcNs UTC recording start timestamp in nanoseconds.
-     * \param[in] firstSampleIndex First BCO sample index in the recording.
-     * \param[in] samplePeriodNs Duration of one sample step in nanoseconds.
-     * \return Created time base or validation issues.
+     * \param[in] recordingStartUtcNs UTC-время начала записи, наносекунды.
+     * \param[in] firstSampleIndex Первый индекс отсчета BCO в записи.
+     * \param[in] samplePeriodNs Длительность одного шага отсчета, наносекунды.
+     * \return Созданная временная база или ошибки валидации.
      */
     static DomainResult<TimeBase> create(std::int64_t recordingStartUtcNs,
                                          std::uint64_t firstSampleIndex,
                                          std::uint64_t samplePeriodNs);
 
     /*!
-     * \brief Validates timestamp origin and sample period.
+     * \brief Валидирует начало отсчета времени и период отсчетов.
      *
-     * \return Validation result.
+     * \return Результат валидации.
      */
     ValidationResult validate() const;
     /*!
-     * \brief Converts a sample index to time from recording start.
+     * \brief Преобразует индекс отсчета во время от начала записи.
      *
-     * \param[in] sampleIndex Original BCO sample index.
-     * \return Local time in nanoseconds or validation issues.
+     * \param[in] sampleIndex Исходный индекс отсчета BCO.
+     * \return Локальное время в наносекундах или ошибки валидации.
      */
     DomainResult<std::int64_t> localTimeNsForSample(std::uint64_t sampleIndex) const;
     /*!
-     * \brief Converts a sample index to global UTC time.
+     * \brief Преобразует индекс отсчета в глобальное UTC-время.
      *
-     * \param[in] sampleIndex Original BCO sample index.
-     * \return UTC time in nanoseconds or validation issues.
+     * \param[in] sampleIndex Исходный индекс отсчета BCO.
+     * \return UTC-время в наносекундах или ошибки валидации.
      */
     DomainResult<std::int64_t> globalTimeUtcNsForSample(std::uint64_t sampleIndex) const;
 };
 
 /*!
- * \brief Domain-level bearing result prepared outside QML.
+ * \brief Доменный результат пеленгации, подготовленный вне QML.
  */
 struct BearingResult
 {
-    //! Representative sample index for the result.
+    //! Представительный индекс отсчета для результата.
     std::uint64_t sampleIndex = 0;
-    //! Result time in UTC nanoseconds.
+    //! Время результата в UTC, наносекунды.
     std::int64_t resultTimeUtcNs = 0;
-    //! Related band index.
+    //! Связанный индекс полосы.
     int bandIndex = 0;
-    //! Calculated bearing azimuth in degrees.
+    //! Рассчитанный азимут пеленга, градусы.
     double bearingAzimuthDeg = 0.0;
-    //! Frequencies associated with the result, in hertz.
+    //! Частоты, связанные с результатом, Гц.
     std::vector<std::int64_t> frequenciesHz;
-    //! Optional normalized quality value in range 0..1.
+    //! Необязательное нормализованное качество в диапазоне 0..1.
     std::optional<double> quality;
-    //! Domain diagnostics that should be preserved with the result.
+    //! Доменные диагностики, которые должны сохраняться вместе с результатом.
     std::vector<ValidationIssue> diagnostics;
 
     /*!
-     * \brief Creates a validated bearing result.
+     * \brief Создает провалидированный результат пеленгации.
      *
-     * \param[in] sampleIndex Representative sample index.
-     * \param[in] resultTimeUtcNs Result UTC time in nanoseconds.
-     * \param[in] bandIndex Related band index.
-     * \param[in] bearingAzimuthDeg Bearing azimuth in degrees.
-     * \param[in] frequenciesHz Non-empty related frequency set.
-     * \param[in] quality Optional normalized quality value.
-     * \param[in] diagnostics Domain diagnostics to preserve with the result.
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Created result or validation issues.
+     * \param[in] sampleIndex Представительный индекс отсчета.
+     * \param[in] resultTimeUtcNs UTC-время результата, наносекунды.
+     * \param[in] bandIndex Связанный индекс полосы.
+     * \param[in] bearingAzimuthDeg Азимут пеленга, градусы.
+     * \param[in] frequenciesHz Непустой набор связанных частот.
+     * \param[in] quality Необязательное нормализованное качество.
+     * \param[in] diagnostics Доменные диагностики для сохранения с результатом.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Созданный результат или ошибки валидации.
      */
     static DomainResult<BearingResult> create(std::uint64_t sampleIndex,
                                               std::int64_t resultTimeUtcNs,
@@ -293,42 +294,42 @@ struct BearingResult
                                                   defaultRuntimeCapabilities());
 
     /*!
-     * \brief Validates result time, band, azimuth, frequencies, and quality.
+     * \brief Валидирует время результата, полосу, азимут, частоты и качество.
      *
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Validation result with all detected issues.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Результат валидации со всеми найденными ошибками.
      */
     ValidationResult validate(const RuntimeCapabilities& capabilities =
                                   defaultRuntimeCapabilities()) const;
 };
 
 /*!
- * \brief Read-only result table row derived from a bearing result.
+ * \brief Строка таблицы результатов только для чтения, полученная из пеленга.
  */
 struct ResultTableRow
 {
-    //! Representative sample index for the row.
+    //! Представительный индекс отсчета для строки.
     std::uint64_t sampleIndex = 0;
-    //! Result time in UTC nanoseconds.
+    //! Время результата в UTC, наносекунды.
     std::int64_t resultTimeUtcNs = 0;
-    //! Antenna azimuth at result time, in degrees.
+    //! Азимут антенны в момент результата, градусы.
     double antennaAzimuthDeg = 0.0;
-    //! Related band index.
+    //! Связанный индекс полосы.
     int bandIndex = 0;
-    //! Frequencies associated with the result, in hertz.
+    //! Частоты, связанные с результатом, Гц.
     std::vector<std::int64_t> frequenciesHz;
-    //! Optional normalized quality value in range 0..1.
+    //! Необязательное нормализованное качество в диапазоне 0..1.
     std::optional<double> quality;
-    //! Domain diagnostics preserved for UI and storage.
+    //! Доменные диагностики, сохраняемые для пользовательского интерфейса и хранилища.
     std::vector<ValidationIssue> diagnostics;
 
     /*!
-     * \brief Builds a result table row from a validated bearing result.
+     * \brief Строит строку таблицы результатов из провалидированного пеленга.
      *
-     * \param[in] result Bearing result to copy into the row.
-     * \param[in] antennaAzimuthDeg Antenna azimuth at result time.
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Created row or validation issues.
+     * \param[in] result Результат пеленгации для копирования в строку.
+     * \param[in] antennaAzimuthDeg Азимут антенны в момент результата.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Созданная строка или ошибки валидации.
      */
     static DomainResult<ResultTableRow> fromBearingResult(
         const BearingResult& result,
@@ -336,54 +337,54 @@ struct ResultTableRow
         const RuntimeCapabilities& capabilities = defaultRuntimeCapabilities());
 
     /*!
-     * \brief Validates row time, antenna azimuth, band, frequencies, and quality.
+     * \brief Валидирует время строки, азимут антенны, полосу, частоты и качество.
      *
-     * \param[in] capabilities Runtime band and beam limits.
-     * \return Validation result with all detected issues.
+     * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+     * \return Результат валидации со всеми найденными ошибками.
      */
     ValidationResult validate(const RuntimeCapabilities& capabilities =
                                   defaultRuntimeCapabilities()) const;
 };
 
 /*!
- * \brief Validates input amplitude against the current 1..127 range.
+ * \brief Валидирует входную амплитуду по текущему диапазону 1..127.
  *
- * \param[in] amplitude Input amplitude value.
- * \return Validation result.
+ * \param[in] amplitude Значение входной амплитуды.
+ * \return Результат валидации.
  */
 ValidationResult validateAmplitude(int amplitude);
 /*!
- * \brief Validates a beam index against runtime capabilities.
+ * \brief Валидирует индекс луча по возможностям времени выполнения.
  *
- * \param[in] beamIndex Beam index to validate.
- * \param[in] capabilities Runtime band and beam limits.
- * \return Validation result.
+ * \param[in] beamIndex Проверяемый индекс луча.
+ * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+ * \return Результат валидации.
  */
 ValidationResult validateBeamIndex(int beamIndex,
                                    const RuntimeCapabilities& capabilities =
                                        defaultRuntimeCapabilities());
 /*!
- * \brief Validates a band index against runtime capabilities.
+ * \brief Валидирует индекс полосы по возможностям времени выполнения.
  *
- * \param[in] bandIndex Band index to validate.
- * \param[in] capabilities Runtime band and beam limits.
- * \return Validation result.
+ * \param[in] bandIndex Проверяемый индекс полосы.
+ * \param[in] capabilities Ограничения полос и лучей времени выполнения.
+ * \return Результат валидации.
  */
 ValidationResult validateBandIndex(int bandIndex,
                                    const RuntimeCapabilities& capabilities =
                                        defaultRuntimeCapabilities());
 /*!
- * \brief Validates azimuth in the [0, 360) degree range.
+ * \brief Валидирует азимут в диапазоне [0, 360) градусов.
  *
- * \param[in] azimuthDeg Azimuth in degrees.
- * \return Validation result.
+ * \param[in] azimuthDeg Азимут, градусы.
+ * \return Результат валидации.
  */
 ValidationResult validateAzimuth(double azimuthDeg);
 /*!
- * \brief Validates absolute frequency against the full system range.
+ * \brief Валидирует абсолютную частоту по полному системному диапазону.
  *
- * \param[in] frequencyHz Absolute frequency in hertz.
- * \return Validation result.
+ * \param[in] frequencyHz Абсолютная частота, Гц.
+ * \return Результат валидации.
  */
 ValidationResult validateSystemFrequency(std::int64_t frequencyHz);
 

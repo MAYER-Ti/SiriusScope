@@ -1,6 +1,6 @@
 /*!
  *  \file waterfallringbuffer.cpp
- *  \brief Ring buffer implementation for waterfall rows.
+ *  \brief Реализация кольцевого буфера строк Waterfall.
  */
 #include "waterfallringbuffer.h"
 

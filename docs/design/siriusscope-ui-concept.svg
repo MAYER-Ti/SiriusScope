@@ -20,11 +20,11 @@
       <stop offset="1" stop-color="#0B1016"/>
     </linearGradient>
     <clipPath id="waterfallActiveBands" clipPathUnits="userSpaceOnUse">
-      <rect x="154" y="426" width="84" height="346"/>
-      <rect x="286" y="426" width="70" height="346"/>
-      <rect x="414" y="426" width="86" height="346"/>
-      <rect x="482" y="426" width="84" height="346"/>
-      <rect x="720" y="426" width="86" height="346"/>
+      <rect x="154" y="360" width="84" height="398"/>
+      <rect x="286" y="360" width="70" height="398"/>
+      <rect x="414" y="360" width="86" height="398"/>
+      <rect x="482" y="360" width="84" height="398"/>
+      <rect x="720" y="360" width="86" height="398"/>
     </clipPath>
     <filter id="panelShadow" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
       <feDropShadow dx="0" dy="10" stdDeviation="15" flood-color="#000000" flood-opacity="0.28"/>
@@ -106,109 +106,97 @@
       <text x="734" y="72" class="mono">REC 00:18</text>
     </g>
     <g id="viewport-control">
-      <text x="1044" y="72" class="label">Диапазон наблюдения</text>
-      <rect x="1190" y="57" width="178" height="22" rx="4" fill="#0C1118" stroke="#2D3945"/>
-      <text x="1204" y="72" class="monoStrong">0.30-18.00 GHz</text>
+      <text x="970" y="72" class="label">Диапазон наблюдения</text>
+      <rect x="1114" y="57" width="160" height="22" rx="4" fill="#0C1118" stroke="#2D3945"/>
+      <text x="1126" y="72" class="monoStrong">0.30-18.00 GHz</text>
+      <rect x="1286" y="55" width="60" height="26" rx="5" fill="#183B2A" stroke="#35D07F"/>
+      <path d="M1300 62 L1300 74 L1311 68 Z" fill="#35D07F"/>
+      <text x="1316" y="72" class="monoStrong">Старт</text>
+      <rect x="1354" y="55" width="58" height="26" rx="5" fill="#3A1D20" stroke="#F05D55"/>
+      <rect x="1368" y="63" width="10" height="10" rx="1.5" fill="#F05D55"/>
+      <text x="1384" y="72" class="monoStrong">Стоп</text>
     </g>
   </g>
 
   <g id="spectrum-panel" filter="url(#panelShadow)">
     <rect x="16" y="100" width="900" height="708" rx="6" class="panel"/>
-    <text x="34" y="124" class="label">5 активных полос БКО, масштаб и пороги амплитуды</text>
-    <text x="810" y="124" class="mono">500 MHz / band</text>
 
-    <rect x="34" y="154" width="864" height="188" rx="4" fill="url(#plotGrad)" stroke="#25313D"/>
+    <rect x="34" y="116" width="864" height="218" rx="4" fill="url(#plotGrad)" stroke="#25313D"/>
     <g id="spectrum-grid">
-      <line x1="34" y1="190" x2="898" y2="190" class="gridSoft"/>
-      <line x1="34" y1="226" x2="898" y2="226" class="gridSoft"/>
-      <line x1="34" y1="262" x2="898" y2="262" class="gridSoft"/>
-      <line x1="34" y1="298" x2="898" y2="298" class="gridSoft"/>
-      <line x1="178" y1="154" x2="178" y2="342" class="grid"/>
-      <line x1="322" y1="154" x2="322" y2="342" class="grid"/>
-      <line x1="466" y1="154" x2="466" y2="342" class="grid"/>
-      <line x1="610" y1="154" x2="610" y2="342" class="grid"/>
-      <line x1="754" y1="154" x2="754" y2="342" class="grid"/>
+      <line x1="34" y1="158" x2="898" y2="158" class="gridSoft"/>
+      <line x1="34" y1="200" x2="898" y2="200" class="gridSoft"/>
+      <line x1="34" y1="242" x2="898" y2="242" class="gridSoft"/>
+      <line x1="34" y1="284" x2="898" y2="284" class="gridSoft"/>
+      <line x1="178" y1="116" x2="178" y2="334" class="grid"/>
+      <line x1="322" y1="116" x2="322" y2="334" class="grid"/>
+      <line x1="466" y1="116" x2="466" y2="334" class="grid"/>
+      <line x1="610" y1="116" x2="610" y2="334" class="grid"/>
+      <line x1="754" y1="116" x2="754" y2="334" class="grid"/>
     </g>
 
-    <g id="spectrum-band-items">
-      <rect x="154" y="154" width="84" height="188" fill="#4BB4FF" opacity="0.20" stroke="#7FCBFF"/>
-      <rect x="154" y="154" width="8" height="188" fill="#7FCBFF"/>
-      <rect x="230" y="154" width="8" height="188" fill="#7FCBFF"/>
+    <g id="spectrum-band-items" transform="translate(0 -38)">
+      <rect x="154" y="154" width="84" height="218" fill="#4BB4FF" opacity="0.20" stroke="#7FCBFF"/>
+      <rect x="154" y="154" width="8" height="218" fill="#7FCBFF"/>
+      <rect x="230" y="154" width="8" height="218" fill="#7FCBFF"/>
       <text x="166" y="171" class="microMono" fill="#DDF4FF">B1 180</text>
 
-      <rect x="286" y="154" width="70" height="188" fill="#35D07F" opacity="0.17" stroke="#7CF3A9"/>
-      <rect x="286" y="154" width="8" height="188" fill="#7CF3A9"/>
-      <rect x="348" y="154" width="8" height="188" fill="#7CF3A9"/>
+      <rect x="286" y="154" width="70" height="218" fill="#35D07F" opacity="0.17" stroke="#7CF3A9"/>
+      <rect x="286" y="154" width="8" height="218" fill="#7CF3A9"/>
+      <rect x="348" y="154" width="8" height="218" fill="#7CF3A9"/>
       <text x="298" y="171" class="microMono" fill="#E3FFF0">B2 160</text>
 
-      <rect x="414" y="154" width="86" height="188" fill="#E5B84B" opacity="0.18" stroke="#FFD671"/>
-      <rect x="414" y="154" width="8" height="188" fill="#FFD671"/>
-      <rect x="492" y="154" width="8" height="188" fill="#FFD671"/>
+      <rect x="414" y="154" width="86" height="218" fill="#E5B84B" opacity="0.18" stroke="#FFD671"/>
+      <rect x="414" y="154" width="8" height="218" fill="#FFD671"/>
+      <rect x="492" y="154" width="8" height="218" fill="#FFD671"/>
       <text x="426" y="171" class="microMono" fill="#FFF2C5">B3 190</text>
 
-      <rect x="482" y="154" width="84" height="188" fill="#E46BD4" opacity="0.17" stroke="#FF9AF0"/>
-      <rect x="482" y="154" width="8" height="188" fill="#FF9AF0"/>
-      <rect x="558" y="154" width="8" height="188" fill="#FF9AF0"/>
+      <rect x="482" y="154" width="84" height="218" fill="#E46BD4" opacity="0.17" stroke="#FF9AF0"/>
+      <rect x="482" y="154" width="8" height="218" fill="#FF9AF0"/>
+      <rect x="558" y="154" width="8" height="218" fill="#FF9AF0"/>
       <text x="494" y="171" class="microMono" fill="#FFE0FA">B4 140</text>
 
-      <rect x="720" y="154" width="86" height="188" fill="#8A7CFF" opacity="0.18" stroke="#B6AEFF"/>
-      <rect x="720" y="154" width="8" height="188" fill="#B6AEFF"/>
-      <rect x="798" y="154" width="8" height="188" fill="#B6AEFF"/>
+      <rect x="720" y="154" width="86" height="218" fill="#8A7CFF" opacity="0.18" stroke="#B6AEFF"/>
+      <rect x="720" y="154" width="8" height="218" fill="#B6AEFF"/>
+      <rect x="798" y="154" width="8" height="218" fill="#B6AEFF"/>
       <text x="732" y="171" class="microMono" fill="#ECE9FF">B5 170</text>
     </g>
 
-    <g id="spectrum-signal">
+    <g id="spectrum-signal" transform="translate(0 -38)">
       <path d="M44 319 L62 312 L80 327 L98 293 L116 304 L134 263 L152 280 L170 218 L188 244 L206 188 L224 241 L242 256 L260 286 L278 246 L296 208 L314 236 L332 195 L350 252 L368 273 L386 260 L404 217 L422 226 L440 173 L458 213 L476 168 L494 222 L512 212 L530 252 L548 229 L566 245 L584 286 L602 270 L620 245 L638 262 L656 298 L674 276 L692 292 L710 240 L728 208 L746 224 L764 175 L782 214 L800 252 L818 276 L836 264 L854 296 L872 282 L890 311" stroke="#4BB4FF" stroke-width="1.7" fill="none"/>
       <path d="M44 321 C130 326 248 310 330 286 C428 252 505 302 601 292 C718 285 795 314 890 303" stroke="#35D07F" stroke-width="1" opacity="0.45" fill="none"/>
       <line x1="34" y1="274" x2="898" y2="274" stroke="#E5B84B" stroke-dasharray="5 5" opacity="0.55"/>
     </g>
 
     <g id="spectrum-axis">
-      <text x="42" y="164" class="microMono">500</text>
-      <text x="42" y="235" class="microMono">250</text>
-      <text x="42" y="337" class="microMono">0</text>
-      <text x="38" y="356" class="microMono">0.30</text>
-      <text x="166" y="356" class="microMono">3.00</text>
-      <text x="300" y="356" class="microMono">5.80</text>
-      <text x="438" y="356" class="microMono">8.25</text>
-      <text x="542" y="356" class="microMono">9.55</text>
-      <text x="736" y="356" class="microMono">14.25</text>
-      <text x="850" y="356" class="microMono">18.00 GHz</text>
+      <text x="42" y="126" class="microMono">500</text>
+      <text x="42" y="214" class="microMono">250</text>
+      <text x="42" y="329" class="microMono">0</text>
+      <text x="38" y="350" class="microMono">0.30</text>
+      <text x="166" y="350" class="microMono">3.00</text>
+      <text x="300" y="350" class="microMono">5.80</text>
+      <text x="438" y="350" class="microMono">8.25</text>
+      <text x="542" y="350" class="microMono">9.55</text>
+      <text x="736" y="350" class="microMono">14.25</text>
+      <text x="850" y="350" class="microMono">18.00 GHz</text>
     </g>
   </g>
 
   <g id="waterfall-panel">
-    <text x="790" y="396" class="mono">UTC 18:24:13</text>
-    <g id="waterfall-direction-controls">
-      <rect x="520" y="386" width="94" height="22" rx="4" fill="#214B35" stroke="#347552"/>
-      <text x="535" y="401" class="monoStrong">DIR ON</text>
-      <rect x="622" y="386" width="62" height="22" rx="4" class="chip"/>
-      <text x="635" y="401" class="mono">γ .7</text>
-      <rect x="692" y="386" width="84" height="22" rx="4" class="chip"/>
-      <text x="704" y="401" class="mono">D .10</text>
-      <rect x="520" y="410" width="256" height="9" rx="3" fill="#0C1118" stroke="#25313D"/>
-      <rect x="526" y="413" width="72" height="3" rx="1.5" fill="#DF9A9A"/>
-      <rect x="606" y="413" width="72" height="3" rx="1.5" fill="#B8C0C8"/>
-      <rect x="686" y="413" width="72" height="3" rx="1.5" fill="#A3E9AE"/>
-      <text x="524" y="423" class="microMono">левый луч</text>
-      <text x="613" y="423" class="microMono">равно</text>
-      <text x="688" y="423" class="microMono">правый луч</text>
-    </g>
-
-    <rect x="34" y="426" width="864" height="346" rx="4" fill="#0B1016" stroke="#25313D"/>
+    <rect x="34" y="360" width="864" height="398" rx="4" fill="#0B1016" stroke="#25313D"/>
     <g id="waterfall-grid">
-      <line x1="178" y1="426" x2="178" y2="772" class="grid"/>
-      <line x1="322" y1="426" x2="322" y2="772" class="grid"/>
-      <line x1="466" y1="426" x2="466" y2="772" class="grid"/>
-      <line x1="610" y1="426" x2="610" y2="772" class="grid"/>
-      <line x1="754" y1="426" x2="754" y2="772" class="grid"/>
-      <line x1="34" y1="492" x2="898" y2="492" class="gridSoft"/>
-      <line x1="34" y1="558" x2="898" y2="558" class="gridSoft"/>
-      <line x1="34" y1="624" x2="898" y2="624" class="gridSoft"/>
-      <line x1="34" y1="690" x2="898" y2="690" class="gridSoft"/>
+      <line x1="178" y1="360" x2="178" y2="758" class="grid"/>
+      <line x1="322" y1="360" x2="322" y2="758" class="grid"/>
+      <line x1="466" y1="360" x2="466" y2="758" class="grid"/>
+      <line x1="610" y1="360" x2="610" y2="758" class="grid"/>
+      <line x1="754" y1="360" x2="754" y2="758" class="grid"/>
+      <line x1="34" y1="438" x2="898" y2="438" class="gridSoft"/>
+      <line x1="34" y1="516" x2="898" y2="516" class="gridSoft"/>
+      <line x1="34" y1="594" x2="898" y2="594" class="gridSoft"/>
+      <line x1="34" y1="672" x2="898" y2="672" class="gridSoft"/>
+      <line x1="34" y1="740" x2="898" y2="740" class="gridSoft"/>
     </g>
 
-    <g id="waterfall-history" clip-path="url(#waterfallActiveBands)" fill="none" stroke-linecap="butt">
+    <g id="waterfall-history" clip-path="url(#waterfallActiveBands)" fill="none" stroke-linecap="butt" transform="translate(0 -64)">
       <g id="waterfall-low-amplitude-noise" stroke-width="1.4" opacity="0.42">
         <path class="wfNeutralLow" d="M154 438 H238 M286 438 H356 M414 438 H566 M720 438 H806 M154 456 H238 M286 456 H356 M414 456 H566 M720 456 H806 M154 478 H238 M286 478 H356 M414 478 H566 M720 478 H806 M154 502 H238 M286 502 H356 M414 502 H566 M720 502 H806 M154 526 H238 M286 526 H356 M414 526 H566 M720 526 H806 M154 552 H238 M286 552 H356 M414 552 H566 M720 552 H806 M154 574 H238 M286 574 H356 M414 574 H566 M720 574 H806 M154 598 H238 M286 598 H356 M414 598 H566 M720 598 H806 M154 624 H238 M286 624 H356 M414 624 H566 M720 624 H806 M154 650 H238 M286 650 H356 M414 650 H566 M720 650 H806 M154 676 H238 M286 676 H356 M414 676 H566 M720 676 H806 M154 704 H238 M286 704 H356 M414 704 H566 M720 704 H806 M154 732 H238 M286 732 H356 M414 732 H566 M720 732 H806 M154 758 H238 M286 758 H356 M414 758 H566 M720 758 H806"/>
       </g>
@@ -230,30 +218,52 @@
     </g>
 
     <g id="waterfall-band-overlays">
-      <rect x="154" y="426" width="84" height="346" fill="#4BB4FF" opacity="0.10"/>
-      <rect x="286" y="426" width="70" height="346" fill="#35D07F" opacity="0.10"/>
-      <rect x="414" y="426" width="86" height="346" fill="#E5B84B" opacity="0.09"/>
-      <rect x="482" y="426" width="84" height="346" fill="#E46BD4" opacity="0.09"/>
-      <rect x="720" y="426" width="86" height="346" fill="#8A7CFF" opacity="0.10"/>
+      <rect x="154" y="360" width="84" height="398" fill="#4BB4FF" opacity="0.10"/>
+      <rect x="286" y="360" width="70" height="398" fill="#35D07F" opacity="0.10"/>
+      <rect x="414" y="360" width="86" height="398" fill="#E5B84B" opacity="0.09"/>
+      <rect x="482" y="360" width="84" height="398" fill="#E46BD4" opacity="0.09"/>
+      <rect x="720" y="360" width="86" height="398" fill="#8A7CFF" opacity="0.10"/>
     </g>
 
     <g id="waterfall-time-axis">
-      <text x="40" y="443" class="microMono">+00:00</text>
-      <text x="40" y="509" class="microMono">+00:05</text>
-      <text x="40" y="575" class="microMono">+00:10</text>
-      <text x="40" y="641" class="microMono">+00:15</text>
-      <text x="40" y="707" class="microMono">+00:20</text>
-      <text x="34" y="798" class="label">Directional-режим: яркость = амплитуда, оттенок = преобладающий луч</text>
+      <text x="40" y="377" class="microMono">+00:00</text>
+      <text x="40" y="455" class="microMono">+00:05</text>
+      <text x="40" y="533" class="microMono">+00:10</text>
+      <text x="40" y="611" class="microMono">+00:15</text>
+      <text x="40" y="689" class="microMono">+00:20</text>
+      <text x="40" y="747" class="microMono">+00:25</text>
+    </g>
+
+    <g id="waterfall-direction-controls">
+      <text x="34" y="786" class="label">Directional: яркость = амплитуда, оттенок = луч</text>
+      <rect x="300" y="772" width="74" height="22" rx="4" fill="#214B35" stroke="#347552"/>
+      <text x="316" y="787" class="monoStrong">DIR ON</text>
+      <rect x="382" y="772" width="58" height="22" rx="4" class="chip"/>
+      <text x="395" y="787" class="mono">γ .7</text>
+      <rect x="448" y="772" width="70" height="22" rx="4" class="chip"/>
+      <text x="460" y="787" class="mono">D .10</text>
+      <rect x="536" y="777" width="54" height="4" rx="2" fill="#DF9A9A"/>
+      <text x="536" y="795" class="microMono">левый</text>
+      <rect x="614" y="777" width="54" height="4" rx="2" fill="#B8C0C8"/>
+      <text x="618" y="795" class="microMono">равно</text>
+      <rect x="694" y="777" width="54" height="4" rx="2" fill="#A3E9AE"/>
+      <text x="690" y="795" class="microMono">правый</text>
+      <text x="790" y="786" class="mono">UTC 18:24:13</text>
     </g>
   </g>
 
   <g id="antenna-panel" filter="url(#panelShadow)">
     <rect x="928" y="100" width="496" height="510" rx="6" class="panel"/>
-    <text x="946" y="124" class="label">Азимут, сектор сканирования и пеленги по цветам BandItem</text>
-    <rect x="1292" y="112" width="112" height="24" rx="4" fill="#0C1118" stroke="#2D3945"/>
-    <text x="1308" y="128" class="monoStrong">AZ 034.7°</text>
+    <rect x="946" y="112" width="112" height="24" rx="4" fill="#0C1118" stroke="#2D3945"/>
+    <text x="960" y="128" class="mono">Speed 5°/s</text>
+    <rect x="1068" y="112" width="98" height="24" rx="4" fill="#0C1118" stroke="#2D3945"/>
+    <text x="1082" y="128" class="mono">Tracks 5</text>
+    <rect x="1176" y="112" width="86" height="24" rx="4" fill="#0C1118" stroke="#2D3945"/>
+    <text x="1190" y="128" class="mono">TTL 12s</text>
+    <rect x="1272" y="112" width="132" height="24" rx="4" fill="#0C1118" stroke="#2D3945"/>
+    <text x="1290" y="128" class="monoStrong">AZ 034.7°</text>
 
-    <g id="dial" transform="translate(1176 354) scale(0.85) translate(-1176 -354)">
+    <g id="dial" transform="translate(1176 354) scale(0.95) translate(-1176 -354)">
       <circle cx="1176" cy="354" r="194" fill="url(#dialFace)" stroke="#344353" stroke-width="1.4"/>
       <circle cx="1176" cy="354" r="60" fill="none" stroke="#56687A" stroke-width="1" opacity="0.82"/>
       <circle cx="1176" cy="354" r="4.5" fill="#AFC0CE"/>
@@ -354,40 +364,29 @@
       <rect x="1316" y="554" width="78" height="28" rx="4" fill="#17222D" stroke="#344353"/>
       <text x="1355" y="572" class="monoStrong" text-anchor="middle">+10°</text>
     </g>
-
-    <g id="antenna-legend">
-      <rect x="946" y="146" width="104" height="22" rx="4" fill="#0C1118" stroke="#2D3945"/>
-      <text x="958" y="161" class="mono">Sector 60°</text>
-      <rect x="1058" y="146" width="104" height="22" rx="4" fill="#0C1118" stroke="#2D3945"/>
-      <text x="1070" y="161" class="mono">Speed 5°/s</text>
-      <rect x="1170" y="146" width="104" height="22" rx="4" fill="#0C1118" stroke="#2D3945"/>
-      <text x="1182" y="161" class="mono">Tracks 5</text>
-      <rect x="1282" y="146" width="122" height="22" rx="4" fill="#0C1118" stroke="#2D3945"/>
-      <text x="1294" y="161" class="mono">TTL 12s</text>
-    </g>
   </g>
 
   <g id="result-table-panel" filter="url(#panelShadow)">
     <rect x="928" y="624" width="496" height="184" rx="6" class="panel"/>
-    <text x="946" y="648" class="label">Финальные результаты сканирования, read-only</text>
-    <rect x="946" y="680" width="460" height="106" rx="4" fill="#0C1118" stroke="#25313D"/>
-    <rect x="946" y="680" width="460" height="24" rx="4" fill="#17222D"/>
-    <line x1="946" y1="704" x2="1406" y2="704" class="divider"/>
-    <line x1="1018" y1="680" x2="1018" y2="786" class="divider"/>
-    <line x1="1088" y1="680" x2="1088" y2="786" class="divider"/>
-    <line x1="1158" y1="680" x2="1158" y2="786" class="divider"/>
-    <line x1="1256" y1="680" x2="1256" y2="786" class="divider"/>
-    <line x1="1334" y1="680" x2="1334" y2="786" class="divider"/>
-    <text x="958" y="696" class="microMono">Время</text>
-    <text x="1030" y="696" class="microMono">Аз.</text>
-    <text x="1100" y="696" class="microMono">Band</text>
-    <text x="1170" y="696" class="microMono">Частота</text>
-    <text x="1268" y="696" class="microMono">Ампл.</text>
-    <text x="1346" y="696" class="microMono">Статус</text>
+    <rect x="946" y="644" width="460" height="142" rx="4" fill="#0C1118" stroke="#25313D"/>
+    <rect x="946" y="644" width="460" height="24" rx="4" fill="#17222D"/>
+    <line x1="946" y1="668" x2="1406" y2="668" class="divider"/>
+    <line x1="1018" y1="644" x2="1018" y2="786" class="divider"/>
+    <line x1="1088" y1="644" x2="1088" y2="786" class="divider"/>
+    <line x1="1158" y1="644" x2="1158" y2="786" class="divider"/>
+    <line x1="1256" y1="644" x2="1256" y2="786" class="divider"/>
+    <line x1="1334" y1="644" x2="1334" y2="786" class="divider"/>
+    <text x="958" y="660" class="microMono">Время</text>
+    <text x="1030" y="660" class="microMono">Аз.</text>
+    <text x="1100" y="660" class="microMono">Band</text>
+    <text x="1170" y="660" class="microMono">Частота</text>
+    <text x="1268" y="660" class="microMono">Ампл.</text>
+    <text x="1346" y="660" class="microMono">Статус</text>
     <g class="mono">
-      <text x="958" y="721">18:24:02</text><text x="1030" y="721">034.1</text><text x="1100" y="721">B1</text><text x="1170" y="721">3.000</text><text x="1268" y="721">118</text><text x="1346" y="721">OK</text>
-      <text x="958" y="741">18:24:05</text><text x="1030" y="741">036.8</text><text x="1100" y="741">B3</text><text x="1170" y="741">8.250</text><text x="1268" y="741">124</text><text x="1346" y="741">OK</text>
-      <text x="958" y="761">18:24:11</text><text x="1030" y="761">031.7</text><text x="1100" y="761">B5</text><text x="1170" y="761">14.250</text><text x="1268" y="761">109</text><text x="1346" y="761">REC</text>
+      <text x="958" y="685">18:24:02</text><text x="1030" y="685">034.1</text><text x="1100" y="685">B1</text><text x="1170" y="685">3.000</text><text x="1268" y="685">118</text><text x="1346" y="685">OK</text>
+      <text x="958" y="711">18:24:05</text><text x="1030" y="711">036.8</text><text x="1100" y="711">B3</text><text x="1170" y="711">8.250</text><text x="1268" y="711">124</text><text x="1346" y="711">OK</text>
+      <text x="958" y="737">18:24:11</text><text x="1030" y="737">031.7</text><text x="1100" y="737">B5</text><text x="1170" y="737">14.250</text><text x="1268" y="737">109</text><text x="1346" y="737">REC</text>
+      <text x="958" y="763">18:24:18</text><text x="1030" y="763">040.2</text><text x="1100" y="763">B2</text><text x="1170" y="763">5.795</text><text x="1268" y="763">116</text><text x="1346" y="763">OK</text>
     </g>
   </g>
 

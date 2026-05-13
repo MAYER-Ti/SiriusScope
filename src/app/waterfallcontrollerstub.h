@@ -1,6 +1,6 @@
 /*!
  *  \file waterfallcontrollerstub.h
- *  \brief Stub controller generating waterfall rows for demo.
+ *  \brief Контроллер-заглушка, генерирующий демонстрационные строки Waterfall.
  */
 #ifndef WATERFALLCONTROLLERSTUB_H
 #define WATERFALLCONTROLLERSTUB_H
@@ -16,7 +16,7 @@ class WaterfallRingBuffer;
 
 /*!
  *  \class WaterfallControllerStub
- *  \brief Generates synthetic waterfall rows and handles viewport retune.
+ *  \brief Генерирует синтетические строки Waterfall и обрабатывает перестройку обзора.
  */
 class WaterfallControllerStub : public QObject
 {
@@ -25,16 +25,16 @@ class WaterfallControllerStub : public QObject
 
 public:
     /*!
-     *  \brief Creates a demo controller bound to a frequency viewport model.
-     *  \param[in] viewportModel Source of visible frequency-range changes.
-     *  \param[in] parent Optional Qt object parent.
+     *  \brief Создает демонстрационный контроллер, связанный с моделью обзора частот.
+     *  \param[in] viewportModel Источник изменений видимого частотного диапазона.
+     *  \param[in] parent Необязательный родительский объект Qt.
      */
     explicit WaterfallControllerStub(FrequencyViewportModel *viewportModel,
                                      QObject *parent = nullptr);
 
     /*!
-     *  \brief Returns the QObject wrapper for the shared waterfall ring buffer.
-     *  \return Ring buffer exposed to QML and WaterfallItem.
+     *  \brief Возвращает QObject-обертку общего кольцевого буфера Waterfall.
+     *  \return Кольцевой буфер, экспортируемый в QML и WaterfallItem.
      */
     QObject *ringBuffer() const;
 

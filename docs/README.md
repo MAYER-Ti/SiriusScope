@@ -80,7 +80,8 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 Read these documents before changing build scripts, tests, formatting, or developer workflow.
 
 - `development/build-and-test.md` — build, test, and QA commands.
-- `development/doxygen.md` - Doxygen source API documentation rules and generation workflow.
+- `development/doxygen.md` - правила Doxygen-документирования исходного API и процесс генерации.
+- `generate-doxygen.ps1` - генерация русскоязычной HTML-документации Doxygen.
 - `development/conan-migration-task.md` — Conan-first migration requirements and completion criteria.
 - `development/coding-style.md` — C++ and QML style rules.
 - `development/testing-strategy.md` — required test types and coverage expectations.
@@ -117,7 +118,7 @@ When adding or editing documentation:
 - link to related documents instead of copying their contents;
 - mark unknown protocol details as `TBD`;
 - separate current-version requirements from future extensions;
-- update Doxygen comments when changing public C++ contracts;
+- обновляйте Doxygen-комментарии при изменении публичных C++-контрактов;
 - update `docs/README.md` when adding, renaming, or removing documentation files.
 
 ## Rules for Codex

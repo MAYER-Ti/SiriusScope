@@ -2,7 +2,7 @@
 
 /*!
  * \file domain_constraints.h
- * \brief Current SiriusScope domain limits and runtime capability flags.
+ * \brief Доменные ограничения SiriusScope и флаги возможностей времени выполнения.
  */
 
 #include <cstdint>
@@ -10,67 +10,66 @@
 namespace siriusscope::core {
 
 /*!
- * \brief Runtime limits that can vary between product configurations.
+ * \brief Ограничения времени выполнения, зависящие от конфигурации изделия.
  *
- * The current iteration uses five bands and two active beams, while the
- * domain model keeps the maximum supported beam count explicit so that
- * future 8-beam support is not blocked by fixed UI assumptions.
+ * Текущая итерация использует пять полос и два активных луча. Максимальное
+ * поддерживаемое число лучей хранится явно, чтобы будущая поддержка 8 лучей
+ * не была заблокирована жесткими предположениями UI.
  */
 struct RuntimeCapabilities
 {
-    //! Number of configured BCO bands available to processing and UI models.
+    //! Количество настроенных полос BCO, доступных обработке и UI-моделям.
     int bandCount = 5;
-    //! Number of beam indices currently accepted in incoming samples.
+    //! Количество индексов лучей, принимаемых во входных отсчетах.
     int activeBeamCount = 2;
-    //! Upper bound supported by the current domain model and adapters.
+    //! Верхняя граница, поддерживаемая текущей доменной моделью и адаптерами.
     int maxSupportedBeamCount = 8;
 };
 
 /*!
- * \brief Product and current-iteration limits used by validation logic.
+ * \brief Ограничения изделия и текущей итерации, используемые валидацией.
  */
 namespace DomainConstraints {
 
-//! Minimum valid input amplitude. Zero is invalid input data.
+//! Минимальная допустимая входная амплитуда. Ноль является ошибочным входом.
 inline constexpr int minAmplitude = 1;
-//! Maximum valid input amplitude accepted from the BCO stream.
+//! Максимальная допустимая входная амплитуда из потока BCO.
 inline constexpr int maxAmplitude = 127;
 
-//! Number of BandItem objects in the current SiriusScope iteration.
+//! Количество объектов BandItem в текущей итерации SiriusScope.
 inline constexpr int currentBandCount = 5;
-//! Number of active beams in the current antenna model.
+//! Количество активных лучей в текущей модели антенны.
 inline constexpr int currentBeamCount = 2;
-//! Reserved upper bound for future 8-beam antenna support.
+//! Зарезервированная верхняя граница для будущей поддержки 8-лучевой антенны.
 inline constexpr int futureMaxBeamCount = 8;
 
-//! Lower edge of the full product frequency range, in hertz.
+//! Нижняя граница полного частотного диапазона изделия, Гц.
 inline constexpr std::int64_t minSystemFrequencyHz = 300'000'000LL;
-//! Upper edge of the full product frequency range, in hertz.
+//! Верхняя граница полного частотного диапазона изделия, Гц.
 inline constexpr std::int64_t maxSystemFrequencyHz = 18'000'000'000LL;
-//! Maximum width of one BCO band represented by a BandItem, in hertz.
+//! Максимальная ширина одной полосы BCO, представленной BandItem, Гц.
 inline constexpr std::int64_t maxBandWidthHz = 500'000'000LL;
-//! Maximum signed offset from a band center for a full-width band.
+//! Максимальное знаковое смещение от центра полосы полной ширины.
 inline constexpr std::int64_t maxFrequencyOffsetHz = maxBandWidthHz / 2;
 
-//! Default sample period used when protocol metadata has no better value.
+//! Период отсчета по умолчанию, если протокольные метаданные не задали другой.
 inline constexpr std::uint64_t defaultSamplePeriodNs = 320ULL;
 
-//! Inclusive lower azimuth bound, in degrees.
+//! Включительная нижняя граница азимута, градусы.
 inline constexpr double minAzimuthDeg = 0.0;
-//! Exclusive upper azimuth bound, in degrees.
+//! Исключительная верхняя граница азимута, градусы.
 inline constexpr double maxAzimuthDeg = 360.0;
-//! Lowest accepted normalized quality value.
+//! Минимальное допустимое нормализованное значение качества.
 inline constexpr double minQuality = 0.0;
-//! Highest accepted normalized quality value.
+//! Максимальное допустимое нормализованное значение качества.
 inline constexpr double maxQuality = 1.0;
 
 } // namespace DomainConstraints
 
 /*!
- * \brief Returns capabilities matching the current product iteration.
+ * \brief Возвращает возможности, соответствующие текущей итерации изделия.
  *
- * \return Five bands, two active beams, and reserved support for up to eight
- *         beams.
+ * \return Пять полос, два активных луча и резерв под поддержку до восьми лучей.
  */
 RuntimeCapabilities defaultRuntimeCapabilities() noexcept;
 

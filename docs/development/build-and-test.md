@@ -247,7 +247,7 @@ Required:
 Recommended:
 
 * check links and paths manually.
-* run `doxygen docs/Doxyfile` when Doxygen comments or Doxygen config changed and the tool is installed.
+* запустите `powershell -ExecutionPolicy Bypass -File .\docs\generate-doxygen.ps1`, если изменились Doxygen-комментарии или конфигурация Doxygen и инструмент установлен.
 
 ### QML-only visual change
 

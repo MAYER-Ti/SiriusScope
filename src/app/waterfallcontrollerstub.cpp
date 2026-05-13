@@ -1,6 +1,6 @@
 /*!
  *  \file waterfallcontrollerstub.cpp
- *  \brief Stub generator for waterfall data.
+ *  \brief Реализация генератора-заглушки данных Waterfall.
  */
 #include "waterfallcontrollerstub.h"
 

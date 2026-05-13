@@ -1,103 +1,111 @@
-# Doxygen Documentation Guide
+# Руководство по Doxygen-документации
 
-This document defines how SiriusScope uses Doxygen for source-level API documentation.
+Этот документ определяет, как SiriusScope использует Doxygen для документации API на уровне исходного кода.
 
-## Purpose
+## Назначение
 
-Doxygen comments describe public C++ contracts that are easier to understand near the code:
+Doxygen-комментарии описывают публичные C++-контракты, которые удобнее читать рядом с кодом:
 
-- domain model invariants;
-- validation rules and diagnostic codes;
-- units for frequencies, time values, azimuths, amplitudes, and quality values;
-- ownership of processing outputs such as Waterfall rows and bearing input frames;
-- QML-facing application models and signals.
+- инварианты доменных моделей;
+- правила валидации и коды диагностик;
+- единицы измерения для частот, времени, азимутов, амплитуд и качества;
+- владение результатами обработки, например строками Waterfall и входными кадрами пеленгации;
+- модели, свойства, сигналы и слоты, доступные со стороны QML.
 
-Project requirements, architecture rules, and product scope remain in `docs/`. Do not copy large parts of the technical assignment into Doxygen comments. Link or summarize the relevant contract instead.
+Требования проекта, архитектурные правила и границы текущей версии остаются в `docs/`. Не копируйте большие фрагменты технического задания в Doxygen-комментарии. В исходном коде достаточно кратко сформулировать контракт или сослаться на соответствующий документ проекта.
 
-## Documentation Scope
+## Область документирования
 
-Document these source-level elements:
+Документируйте следующие элементы исходного кода:
 
-- public headers in `src/core/`;
-- public processing contracts in `src/processing/`;
-- QML-facing C++ classes in `src/app/`;
-- enums, structs, public methods, signals, slots, and non-obvious public fields.
+- публичные заголовки в `src/core/`;
+- публичные контракты обработки в `src/processing/`;
+- C++-классы слоя приложения, открытые для QML, в `src/app/`;
+- перечисления, структуры, публичные методы, сигналы, слоты и нетривиальные публичные поля.
 
-Private helpers may be documented when they encode a domain rule or a nontrivial algorithm. Routine implementation details should stay undocumented or use a short regular comment when needed.
+Приватные вспомогательные функции стоит документировать, если они закрепляют доменное правило или нетривиальный алгоритм. Рутинные детали реализации не требуют Doxygen-комментариев; при необходимости используйте короткий обычный комментарий.
 
-QML files are documented through project UI documents unless a future task introduces a QML documentation workflow.
+QML-файлы описываются в документах по пользовательскому интерфейсу, пока отдельная задача не введет процесс документирования QML.
 
-## Comment Style
+## Стиль комментариев
 
-Use Doxygen comments in public headers:
+Используйте Doxygen-комментарии в публичных заголовках:
 
 ```cpp
 /*!
- * \brief Creates a validated signal sample.
+ * \brief Создает провалидированный сигнальный отсчет.
  *
- * \param[in] beamSample Beam-local input sample.
- * \param[in] bandConfig Band used to derive absolute frequency.
- * \return Created sample or validation issues.
+ * \param[in] beamSample Отсчет в координатах луча.
+ * \param[in] bandConfig Полоса для вычисления абсолютной частоты.
+ * \return Созданный отсчет или ошибки валидации.
  */
 static DomainResult<SignalSample> create(const BeamSample& beamSample,
                                          const BandConfig& bandConfig);
 ```
 
-Use `//!` for short field or enum descriptions:
+Используйте `//!` для коротких описаний полей и значений перечислений:
 
 ```cpp
-//! Original BCO sample index. It must be preserved by higher layers.
+//! Исходный индекс отсчета BCO. Должен сохраняться вышестоящими слоями.
 std::uint64_t sampleIndex = 0;
 ```
 
-Minimum expectations for public API comments:
+Минимальные требования к комментариям публичного API:
 
-- include `\brief` for files, classes, structs, and public functions;
-- include `\param[in]`, `\param[out]`, or `\param[in,out]` for meaningful parameters;
-- include `\return` when a function returns a value;
-- mention units explicitly, for example hertz, nanoseconds, or degrees;
-- mention whether invalid input is rejected, diagnosed, or preserved;
-- keep comments behavior-focused, not implementation-focused.
+- добавляйте `\brief` для файлов, классов, структур и публичных функций;
+- описывайте значимые параметры через `\param[in]`, `\param[out]` или `\param[in,out]`;
+- добавляйте `\return`, если функция возвращает значение;
+- явно указывайте единицы измерения, например герцы, наносекунды или градусы;
+- поясняйте, отклоняются, диагностируются или сохраняются некорректные входные данные;
+- описывайте поведение и контракт, а не детали реализации.
 
-## Layer Rules
+## Правила слоев
 
-Doxygen comments must reinforce the architecture:
+Doxygen-комментарии должны поддерживать архитектурные границы:
 
-- core/domain comments must not reference QML item state or concrete hardware protocols;
-- processing comments must describe UI-independent inputs and outputs;
-- application comments may describe QML-facing properties, signals, slots, and controller responsibilities;
-- hardware, infrastructure, and simulator comments must describe boundaries through interfaces when those layers are added.
+- комментарии core/domain не должны ссылаться на состояние QML-элементов или конкретные аппаратные протоколы;
+- комментарии processing должны описывать независимые от пользовательского интерфейса входы и выходы;
+- комментарии application могут описывать QML-свойства, сигналы, слоты и ответственность контроллеров;
+- комментарии hardware, infrastructure и simulator должны описывать границы через интерфейсы, когда эти слои будут добавлены.
 
-If a Doxygen comment needs to explain a broader rule, put the full rule in the relevant project document and keep the source comment concise.
+Если Doxygen-комментарию нужно объяснить широкое правило, полное правило должно находиться в соответствующем документе проекта, а комментарий в исходном коде должен оставаться кратким.
 
-## Generating HTML
+## Генерация HTML
 
-Doxygen output is a generated artifact and must stay under `build/`.
+Вывод Doxygen является генерируемым артефактом и должен оставаться внутри `build/`.
 
-From the repository root:
+Из корня репозитория:
 
-```bash
-doxygen docs/Doxyfile
+```powershell
+powershell -ExecutionPolicy Bypass -File .\docs\generate-doxygen.ps1
 ```
 
-Generated HTML:
+Сгенерированный HTML:
 
 ```text
 build/docs/doxygen/html/index.html
 ```
 
-Graphviz is optional. If installed, a future task may enable diagrams in `docs/Doxyfile`.
+Graphviz необязателен. Если он установлен, отдельная задача может включить диаграммы в `docs/Doxyfile`.
 
-## Verification
+В `docs/Doxyfile` установлен русский язык вывода:
 
-For documentation-only changes:
+```text
+OUTPUT_LANGUAGE = Russian
+```
 
-- run `doxygen docs/Doxyfile` when Doxygen is installed;
-- check that warnings point only to intentionally undocumented internal details;
-- no C++ build is required unless comments changed generated files, build scripts, or public declarations.
+Doxygen 1.17.0 предупреждает, что встроенный русский перевод генератора обновлен не полностью. Поэтому `docs/generate-doxygen.ps1` после генерации заменяет оставшиеся видимые англоязычные строки HTML-шаблона, которые не управляются исходными комментариями.
 
-For code tasks that change public C++ contracts:
+## Проверка
 
-- update nearby Doxygen comments in the same change;
-- keep generated Doxygen output uncommitted;
-- update `docs/README.md` when adding or moving documentation pages.
+Для изменений только в документации:
+
+- запускайте `powershell -ExecutionPolicy Bypass -File .\docs\generate-doxygen.ps1`, если Doxygen установлен;
+- проверяйте, что предупреждения относятся только к намеренно недокументированным внутренним деталям;
+- сборка C++ не требуется, если комментарии не меняли генерируемые файлы, скрипты сборки или публичные объявления.
+
+Для задач, меняющих публичные C++-контракты:
+
+- обновляйте соседние Doxygen-комментарии в той же правке;
+- не коммитьте сгенерированный вывод Doxygen;
+- обновляйте `docs/README.md` при добавлении или переносе страниц документации.

@@ -1,6 +1,6 @@
 /*!
  *  \file waterfallringbuffer.h
- *  \brief Ring buffer for waterfall rows, safe for UI reads.
+ *  \brief Кольцевой буфер строк Waterfall, безопасный для чтения из пользовательского интерфейса.
  */
 #ifndef WATERFALLRINGBUFFER_H
 #define WATERFALLRINGBUFFER_H
@@ -13,7 +13,7 @@
 
 /*!
  *  \class WaterfallRingBuffer
- *  \brief Stores waterfall rows in a ring buffer with atomic indices.
+ *  \brief Хранит строки Waterfall в кольцевом буфере с атомарными индексами.
  */
 class WaterfallRingBuffer : public QObject
 {
@@ -25,12 +25,12 @@ class WaterfallRingBuffer : public QObject
 
 public:
     /*!
-     *  \brief Creates a fixed-size ring buffer for waterfall rows.
-     *  \param[in] nbins Number of frequency bins per row.
-     *  \param[in] height Number of rows retained in memory.
-     *  \param[in] globalMinHz Lower global frequency bound, in hertz.
-     *  \param[in] globalMaxHz Upper global frequency bound, in hertz.
-     *  \param[in] parent Optional Qt object parent.
+     *  \brief Создает кольцевой буфер фиксированного размера для строк Waterfall.
+     *  \param[in] nbins Количество частотных бинов в строке.
+     *  \param[in] height Количество строк, сохраняемых в памяти.
+     *  \param[in] globalMinHz Нижняя глобальная граница частоты, Гц.
+     *  \param[in] globalMaxHz Верхняя глобальная граница частоты, Гц.
+     *  \param[in] parent Необязательный родительский объект Qt.
      */
     explicit WaterfallRingBuffer(int nbins,
                                  int height,
@@ -39,54 +39,54 @@ public:
                                  QObject *parent = nullptr);
 
     /*!
-     *  \brief Appends one row and advances the atomic write index.
-     *  \param[in] line Pointer to nbins amplitude/color values.
-     *  \param[in] nbins Number of values in line.
-     *  \param[in] generationId Viewport/data generation identifier for the row.
+     *  \brief Добавляет одну строку и продвигает атомарный индекс записи.
+     *  \param[in] line Указатель на nbins значений амплитуды/цвета.
+     *  \param[in] nbins Количество значений в line.
+     *  \param[in] generationId Идентификатор поколения обзора/данных для строки.
      */
     void pushLine(const uint16_t *line, int nbins, uint64_t generationId);
 
     /*!
-     *  \brief Returns the next write position as a monotonically increasing index.
-     *  \return Atomic write index.
+     *  \brief Возвращает следующую позицию записи как монотонно растущий индекс.
+     *  \return Атомарный индекс записи.
      */
     uint64_t writeIndex() const noexcept
     {
         return m_writeIndex.load(std::memory_order_acquire);
     }
     /*!
-     *  \brief Returns the most recent viewport/data generation identifier.
-     *  \return Atomic generation id.
+     *  \brief Возвращает последний идентификатор поколения обзора/данных.
+     *  \return Атомарный идентификатор поколения.
      */
     uint64_t generationId() const noexcept
     {
         return m_generationId.load(std::memory_order_acquire);
     }
     /*!
-     *  \brief Returns the number of frequency bins per row.
-     *  \return Row width in bins.
+     *  \brief Возвращает количество частотных бинов в строке.
+     *  \return Ширина строки в бинах.
      */
     int nbins() const noexcept { return m_nbins; }
     /*!
-     *  \brief Returns the number of retained rows.
-     *  \return Ring-buffer height in rows.
+     *  \brief Возвращает количество сохраняемых строк.
+     *  \return Высота кольцевого буфера в строках.
      */
     int height() const noexcept { return m_height; }
     /*!
-     *  \brief Returns the lower global frequency bound.
-     *  \return Frequency in hertz.
+     *  \brief Возвращает нижнюю глобальную границу частоты.
+     *  \return Частота, Гц.
      */
     double globalMinHz() const noexcept { return m_globalMinHz; }
     /*!
-     *  \brief Returns the upper global frequency bound.
-     *  \return Frequency in hertz.
+     *  \brief Возвращает верхнюю глобальную границу частоты.
+     *  \return Частота, Гц.
      */
     double globalMaxHz() const noexcept { return m_globalMaxHz; }
 
     /*!
-     *  \brief Returns a pointer to a retained row by physical row index.
-     *  \param[in] row Physical row index inside [0, height()).
-     *  \return Pointer to the first row value, or nullptr for an invalid row.
+     *  \brief Возвращает указатель на сохраненную строку по физическому индексу.
+     *  \param[in] row Физический индекс строки внутри [0, height()).
+     *  \return Указатель на первое значение строки или nullptr для неверной строки.
      */
     const uint16_t *linePtr(int row) const noexcept;
 

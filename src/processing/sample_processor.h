@@ -2,7 +2,7 @@
 
 /*!
  * \file sample_processor.h
- * \brief UI-independent sample validation, aggregation, and frame preparation.
+ * \brief Независимые от пользовательского интерфейса валидация, агрегация отсчетов и подготовка кадров.
  */
 
 #include "core/domain_models.h"
@@ -16,403 +16,403 @@
 namespace siriusscope::processing {
 
 /*!
- * \brief Stable processing diagnostic identifiers.
+ * \brief Стабильные идентификаторы диагностик обработки.
  */
 enum class ProcessingErrorCode
 {
-    None, //!< No processing issue.
-    InvalidSampleRejected, //!< Domain validation rejected an incoming sample.
-    MissingBeamSample, //!< A bearing candidate lacks a required beam.
-    DuplicateSample, //!< A batch contains the same sample identity more than once.
-    OutOfOrderSampleIndex, //!< A sample index is lower than an already accepted index.
-    AggregationWindowOverflow, //!< Batch size exceeded the configured processing window.
-    FrequencyBinOutOfRange, //!< A sample or frame cannot be mapped to a frequency bin.
-    InsufficientBearingData, //!< No complete bearing candidate is available.
-    EmptyBatch, //!< The processor received no samples.
-    MissingWaterfallData, //!< A waterfall row or cell has no sample data.
+    None, //!< Проблема обработки отсутствует.
+    InvalidSampleRejected, //!< Входной отсчет отклонен доменной валидацией.
+    MissingBeamSample, //!< В кандидате пеленгации отсутствует обязательный луч.
+    DuplicateSample, //!< Пакет содержит один и тот же идентификатор отсчета повторно.
+    OutOfOrderSampleIndex, //!< Индекс отсчета ниже уже принятого индекса.
+    AggregationWindowOverflow, //!< Размер пакета превысил настроенное окно обработки.
+    FrequencyBinOutOfRange, //!< Отсчет или кадр нельзя отнести к частотному бину.
+    InsufficientBearingData, //!< Нет полного кандидата для пеленгации.
+    EmptyBatch, //!< Обработчик получил пустой набор отсчетов.
+    MissingWaterfallData, //!< В строке или ячейке Waterfall нет данных отсчетов.
 };
 
 /*!
- * \brief Processing diagnostic severity for status and logs.
+ * \brief Уровень важности диагностики обработки для статуса и логов.
  */
 enum class ProcessingDiagnosticSeverity
 {
-    Info, //!< Informational diagnostic.
-    Warning, //!< Recoverable issue that may affect result quality.
-    Error, //!< Rejected input or unusable processing output.
+    Info, //!< Информационная диагностика.
+    Warning, //!< Восстановимая проблема, которая может повлиять на качество результата.
+    Error, //!< Отклоненный вход или непригодный результат обработки.
 };
 
 /*!
- * \brief Diagnostic emitted by validation, aggregation, or frame building.
+ * \brief Диагностика, выпущенная валидацией, агрегацией или построением кадров.
  */
 struct ProcessingDiagnostic
 {
-    //! Machine-readable diagnostic code.
+    //! Машиночитаемый код диагностики.
     ProcessingErrorCode code = ProcessingErrorCode::None;
-    //! Severity for status and technical logs.
+    //! Уровень важности для статуса и технических логов.
     ProcessingDiagnosticSeverity severity = ProcessingDiagnosticSeverity::Warning;
-    //! Developer-facing detail text.
+    //! Подробный текст для разработчика.
     std::string message;
-    //! Optional source sample index.
+    //! Необязательный индекс исходного отсчета.
     std::optional<std::uint64_t> sampleIndex;
-    //! Optional source band index.
+    //! Необязательный индекс исходной полосы.
     std::optional<int> bandIndex;
-    //! Optional source beam index.
+    //! Необязательный индекс исходного луча.
     std::optional<int> beamIndex;
-    //! Optional absolute frequency in hertz.
+    //! Необязательная абсолютная частота, Гц.
     std::optional<std::int64_t> frequencyHz;
-    //! Optional frequency bin index.
+    //! Необязательный индекс частотного бина.
     std::optional<std::size_t> frequencyBin;
-    //! Domain validation issues associated with the diagnostic.
+    //! Ошибки доменной валидации, связанные с диагностикой.
     std::vector<core::ValidationIssue> domainIssues;
 };
 
 /*!
- * \brief Tunable limits for sample aggregation and bearing input preparation.
+ * \brief Настраиваемые ограничения агрегации отсчетов и подготовки пеленгации.
  */
 struct AggregationWindow
 {
-    //! Frequency bin width in hertz.
+    //! Ширина частотного бина, Гц.
     std::int64_t frequencyBinWidthHz = 1'000'000LL;
-    //! Maximum samples expected in one processing batch before a warning is emitted.
+    //! Максимум отсчетов в одном пакете до выдачи предупреждения.
     std::size_t maxSamplesPerBatch = 1'000'000;
-    //! Beam indices required for a complete bearing candidate.
+    //! Индексы лучей, обязательные для полного кандидата пеленгации.
     std::vector<int> requiredBearingBeams = {0, 1};
-    //! Whether empty waterfall cells should carry informational diagnostics.
+    //! Признак добавления информационных диагностик в пустые ячейки Waterfall.
     bool diagnoseMissingWaterfallCells = true;
 };
 
 /*!
- * \brief Configuration required by SampleProcessor.
+ * \brief Конфигурация, необходимая SampleProcessor.
  */
 struct SampleProcessingConfig
 {
-    //! Band configurations accepted by this processing instance.
+    //! Конфигурации полос, принимаемые данным экземпляром обработки.
     std::vector<core::BandConfig> bands;
-    //! Runtime band and beam capabilities used for validation.
+    //! Возможности полос и лучей времени выполнения, используемые для валидации.
     core::RuntimeCapabilities capabilities = core::defaultRuntimeCapabilities();
-    //! Aggregation and frame-building limits.
+    //! Ограничения агрегации и построения кадров.
     AggregationWindow aggregationWindow;
 };
 
 /*!
- * \brief Batch of already parsed signal samples.
+ * \brief Пакет уже разобранных сигнальных отсчетов.
  */
 struct SampleBatch
 {
-    //! Samples to validate, aggregate, and transform.
+    //! Отсчеты для валидации, агрегации и преобразования.
     std::vector<core::SignalSample> samples;
 };
 
 /*!
- * \brief Accepted sample enriched with its aggregation bin.
+ * \brief Принятый отсчет, дополненный данными бина агрегации.
  */
 struct ProcessedSample
 {
-    //! Original validated signal sample.
+    //! Исходный провалидированный сигнальный отсчет.
     core::SignalSample sample;
-    //! Frequency bin index inside the sample band.
+    //! Индекс частотного бина внутри полосы отсчета.
     std::size_t frequencyBin = 0;
-    //! Inclusive frequency range represented by the bin.
+    //! Включительный частотный диапазон, представленный бином.
     core::FrequencyRange frequencyRange;
 };
 
 /*!
- * \brief Aggregated amplitude statistics for one beam in one frequency bin.
+ * \brief Агрегированная статистика амплитуды одного луча в одном частотном бине.
  */
 struct AggregatedBeamBin
 {
-    //! Beam index represented by this aggregate.
+    //! Индекс луча, представленный этой агрегацией.
     int beamIndex = 0;
-    //! Number of samples folded into the aggregate.
+    //! Количество отсчетов, включенных в агрегацию.
     std::size_t sampleCount = 0;
-    //! Minimum amplitude observed in the aggregate.
+    //! Минимальная амплитуда, встреченная в агрегации.
     int minAmplitude = 0;
-    //! Maximum amplitude observed in the aggregate.
+    //! Максимальная амплитуда, встреченная в агрегации.
     int maxAmplitude = 0;
-    //! Sum of amplitudes used to calculate averageAmplitude().
+    //! Сумма амплитуд для расчета averageAmplitude().
     std::uint64_t amplitudeSum = 0;
 
     /*!
-     * \brief Returns the mean amplitude for this beam bin.
+     * \brief Возвращает среднюю амплитуду для бина этого луча.
      *
-     * \return Average amplitude, or 0.0 when the bin has no samples.
+     * \return Средняя амплитуда или 0.0, если в бине нет отсчетов.
      */
     double averageAmplitude() const noexcept;
 };
 
 /*!
- * \brief Aggregated data for one band, sample index, and frequency bin.
+ * \brief Агрегированные данные для одной полосы, индекса отсчета и частотного бина.
  */
 struct AggregatedFrequencyBin
 {
-    //! Band index represented by this aggregate.
+    //! Индекс полосы, представленный этой агрегацией.
     int bandIndex = 0;
-    //! Source sample index represented by this aggregate.
+    //! Индекс исходного отсчета, представленный этой агрегацией.
     std::uint64_t sampleIndex = 0;
-    //! Frequency bin index inside the band frame.
+    //! Индекс частотного бина внутри кадра полосы.
     std::size_t frequencyBin = 0;
-    //! Frequency range covered by this bin.
+    //! Частотный диапазон, покрываемый этим бином.
     core::FrequencyRange frequencyRange;
-    //! Beam aggregates present in this bin.
+    //! Агрегации лучей, присутствующие в этом бине.
     std::vector<AggregatedBeamBin> beams;
-    //! Diagnostics attached to this bin.
+    //! Диагностики, привязанные к этому бину.
     std::vector<ProcessingDiagnostic> diagnostics;
 
     /*!
-     * \brief Finds aggregate data for a beam.
+     * \brief Находит агрегированные данные для луча.
      *
-     * \param[in] beamIndex Beam index to find.
-     * \return Pointer to the beam aggregate, or nullptr when absent.
+     * \param[in] beamIndex Индекс искомого луча.
+     * \return Указатель на агрегацию луча или nullptr, если она отсутствует.
      */
     const AggregatedBeamBin* beam(int beamIndex) const noexcept;
 };
 
 /*!
- * \brief Aggregated processing frame for one band over a sample-index interval.
+ * \brief Агрегированный кадр обработки одной полосы за интервал индексов отсчетов.
  */
 struct AggregatedBandFrame
 {
-    //! Band index represented by this frame.
+    //! Индекс полосы, представленный этим кадром.
     int bandIndex = 0;
-    //! First sample index included in this frame.
+    //! Первый индекс отсчета, включенный в кадр.
     std::uint64_t sampleIndexStart = 0;
-    //! Last sample index included in this frame.
+    //! Последний индекс отсчета, включенный в кадр.
     std::uint64_t sampleIndexEnd = 0;
-    //! Full band frequency range covered by the frame.
+    //! Полный частотный диапазон полосы, покрываемый кадром.
     core::FrequencyRange frequencyRange;
-    //! Aggregated frequency bins included in the frame.
+    //! Агрегированные частотные бины, включенные в кадр.
     std::vector<AggregatedFrequencyBin> bins;
-    //! Diagnostics attached to this frame.
+    //! Диагностики, привязанные к этому кадру.
     std::vector<ProcessingDiagnostic> diagnostics;
 };
 
 /*!
- * \brief Waterfall cell data quality state.
+ * \brief Состояние качества данных ячейки Waterfall.
  */
 enum class WaterfallCellStatus
 {
-    Valid, //!< Cell contains accepted sample data.
-    MissingData, //!< Cell has no sample data for the requested bin.
-    InvalidData, //!< Cell data was present but invalid.
+    Valid, //!< Ячейка содержит данные принятых отсчетов.
+    MissingData, //!< В ячейке нет данных отсчетов для запрошенного бина.
+    InvalidData, //!< Данные ячейки были получены, но оказались некорректными.
 };
 
 /*!
- * \brief UI-independent waterfall cell prepared from aggregated samples.
+ * \brief Независимая от пользовательского интерфейса ячейка Waterfall, подготовленная из агрегации.
  */
 struct WaterfallCell
 {
-    //! Frequency bin index inside the row.
+    //! Индекс частотного бина внутри строки.
     std::size_t frequencyBin = 0;
-    //! Frequency range covered by this cell.
+    //! Частотный диапазон, покрываемый этой ячейкой.
     core::FrequencyRange frequencyRange;
-    //! Maximum amplitude across all present beams.
+    //! Максимальная амплитуда среди всех присутствующих лучей.
     int maxAmplitude = 0;
-    //! Average amplitude across all samples and present beams.
+    //! Средняя амплитуда по всем отсчетам и присутствующим лучам.
     double averageAmplitude = 0.0;
-    //! Per-beam amplitude values indexed by beam index.
+    //! Амплитуды по лучам, индексированные индексом луча.
     std::vector<int> beamAmplitudes;
-    //! Per-beam presence flags indexed by beam index.
+    //! Флаги присутствия лучей, индексированные индексом луча.
     std::vector<bool> beamPresent;
-    //! Cell data status.
+    //! Состояние данных ячейки.
     WaterfallCellStatus status = WaterfallCellStatus::MissingData;
-    //! Diagnostics attached to this cell.
+    //! Диагностики, привязанные к этой ячейке.
     std::vector<ProcessingDiagnostic> diagnostics;
 };
 
 /*!
- * \brief One prepared waterfall row for a band and sample-index interval.
+ * \brief Одна подготовленная строка Waterfall для полосы и интервала отсчетов.
  */
 struct WaterfallRow
 {
-    //! Band index represented by this row.
+    //! Индекс полосы, представленный этой строкой.
     int bandIndex = 0;
-    //! First sample index represented by this row.
+    //! Первый индекс отсчета, представленный этой строкой.
     std::uint64_t sampleIndexStart = 0;
-    //! Last sample index represented by this row.
+    //! Последний индекс отсчета, представленный этой строкой.
     std::uint64_t sampleIndexEnd = 0;
-    //! Full frequency range represented by this row.
+    //! Полный частотный диапазон, представленный этой строкой.
     core::FrequencyRange frequencyRange;
-    //! Ordered waterfall cells by frequency bin.
+    //! Упорядоченные ячейки Waterfall по частотным бинам.
     std::vector<WaterfallCell> cells;
-    //! Diagnostics attached to this row.
+    //! Диагностики, привязанные к этой строке.
     std::vector<ProcessingDiagnostic> diagnostics;
 
     /*!
-     * \brief Checks whether at least one cell lacks valid data.
+     * \brief Проверяет, есть ли хотя бы одна ячейка без корректных данных.
      *
-     * \return true when a cell is MissingData or InvalidData.
+     * \return true, если ячейка находится в состоянии MissingData или InvalidData.
      */
     bool hasMissingData() const noexcept;
 };
 
 /*!
- * \brief Collection of prepared waterfall rows and global diagnostics.
+ * \brief Набор подготовленных строк Waterfall и общих диагностик.
  */
 struct WaterfallFrame
 {
-    //! Rows prepared for UI or storage handoff.
+    //! Строки, подготовленные для передачи в UI или хранилище.
     std::vector<WaterfallRow> rows;
-    //! Diagnostics that apply to the waterfall frame as a whole.
+    //! Диагностики, относящиеся к кадру Waterfall в целом.
     std::vector<ProcessingDiagnostic> diagnostics;
 };
 
 /*!
- * \brief Candidate input for a future bearing algorithm.
+ * \brief Кандидат входных данных для будущего алгоритма пеленгации.
  */
 struct BearingCandidate
 {
-    //! Band index represented by this candidate.
+    //! Индекс полосы, представленный этим кандидатом.
     int bandIndex = 0;
-    //! First source sample index.
+    //! Первый индекс исходного отсчета.
     std::uint64_t sampleIndexStart = 0;
-    //! Last source sample index.
+    //! Последний индекс исходного отсчета.
     std::uint64_t sampleIndexEnd = 0;
-    //! Frequency bin index inside the band.
+    //! Индекс частотного бина внутри полосы.
     std::size_t frequencyBin = 0;
-    //! Frequency range covered by this candidate.
+    //! Частотный диапазон, покрываемый этим кандидатом.
     core::FrequencyRange frequencyRange;
-    //! Per-beam amplitude values indexed by beam index.
+    //! Амплитуды по лучам, индексированные индексом луча.
     std::vector<int> beamAmplitudes;
-    //! Per-beam presence flags indexed by beam index.
+    //! Флаги присутствия лучей, индексированные индексом луча.
     std::vector<bool> beamPresent;
 
     /*!
-     * \brief Checks whether this candidate has data for the requested beam.
+     * \brief Проверяет, есть ли у кандидата данные для заданного луча.
      *
-     * \param[in] beamIndex Beam index to check.
-     * \return true when the beam is in range and present.
+     * \param[in] beamIndex Проверяемый индекс луча.
+     * \return true, если луч находится в диапазоне и присутствует.
      */
     bool hasBeam(int beamIndex) const noexcept;
 };
 
 /*!
- * \brief Intermediate bearing input frame prepared outside the bearing algorithm.
+ * \brief Промежуточный входной кадр пеленгации, подготовленный вне алгоритма.
  */
 struct BearingInputFrame
 {
-    //! Band index represented by this frame.
+    //! Индекс полосы, представленный этим кадром.
     int bandIndex = 0;
-    //! First sample index represented by this frame.
+    //! Первый индекс отсчета, представленный этим кадром.
     std::uint64_t sampleIndexStart = 0;
-    //! Last sample index represented by this frame.
+    //! Последний индекс отсчета, представленный этим кадром.
     std::uint64_t sampleIndexEnd = 0;
-    //! Candidates with all required beams present.
+    //! Кандидаты, у которых присутствуют все обязательные лучи.
     std::vector<BearingCandidate> candidates;
-    //! Diagnostics for missing beams or insufficient data.
+    //! Диагностики по отсутствующим лучам или недостаточным данным.
     std::vector<ProcessingDiagnostic> diagnostics;
 
     /*!
-     * \brief Checks whether the frame can be passed to bearing calculation.
+     * \brief Проверяет, можно ли передавать кадр в расчет пеленгации.
      *
-     * \return true when at least one candidate exists and no insufficient-data
-     *         diagnostic is attached to the frame.
+     * \return true, если есть хотя бы один кандидат и у кадра нет диагностики
+     *         недостаточных данных.
      */
     bool hasSufficientData() const noexcept;
 };
 
 /*!
- * \brief Full output of processing one sample or one batch.
+ * \brief Полный результат обработки одного отсчета или одного пакета.
  */
 struct SampleProcessingResult
 {
-    //! Accepted samples with frequency-bin metadata.
+    //! Принятые отсчеты с метаданными частотных бинов.
     std::vector<ProcessedSample> acceptedSamples;
-    //! Diagnostics collected across validation and frame building.
+    //! Диагностики, собранные при валидации и построении кадров.
     std::vector<ProcessingDiagnostic> diagnostics;
-    //! Aggregated frames grouped by band.
+    //! Агрегированные кадры, сгруппированные по полосам.
     std::vector<AggregatedBandFrame> aggregatedBandFrames;
-    //! Waterfall-ready frame.
+    //! Кадр, готовый для Waterfall.
     WaterfallFrame waterfallFrame;
-    //! Bearing-input frames grouped by band.
+    //! Входные кадры пеленгации, сгруппированные по полосам.
     std::vector<BearingInputFrame> bearingFrames;
 
     /*!
-     * \brief Checks whether at least one sample passed validation.
+     * \brief Проверяет, прошел ли валидацию хотя бы один отсчет.
      *
-     * \return true when acceptedSamples is not empty.
+     * \return true, если acceptedSamples не пуст.
      */
     bool hasAcceptedSamples() const noexcept;
     /*!
-     * \brief Searches all nested diagnostics for a code.
+     * \brief Ищет код во всех вложенных диагностиках.
      *
-     * \param[in] code Diagnostic code to find.
-     * \return true when the code exists anywhere in the result.
+     * \param[in] code Код диагностики для поиска.
+     * \return true, если код найден в любой части результата.
      */
     bool hasDiagnostic(ProcessingErrorCode code) const noexcept;
 };
 
 /*!
- * \brief Builds UI-independent waterfall rows from aggregated band frames.
+ * \brief Строит независимые от пользовательского интерфейса строки Waterfall из агрегированных кадров полос.
  */
 class WaterfallRowBuilder
 {
 public:
     /*!
-     * \brief Converts aggregated band frames into waterfall rows.
+     * \brief Преобразует агрегированные кадры полос в строки Waterfall.
      *
-     * \param[in] frames Aggregated input frames.
-     * \param[in] config Processing configuration and aggregation limits.
-     * \return Prepared waterfall frame.
+     * \param[in] frames Агрегированные входные кадры.
+     * \param[in] config Конфигурация обработки и ограничения агрегации.
+     * \return Подготовленный кадр Waterfall.
      */
     WaterfallFrame build(const std::vector<AggregatedBandFrame>& frames,
                          const SampleProcessingConfig& config) const;
 };
 
 /*!
- * \brief Builds intermediate bearing input frames from aggregated band frames.
+ * \brief Строит промежуточные входные кадры пеленгации из агрегированных кадров.
  */
 class BearingFrameBuilder
 {
 public:
     /*!
-     * \brief Extracts complete per-bin beam candidates for bearing calculation.
+     * \brief Извлекает полные кандидаты лучей по бинам для расчета пеленгации.
      *
-     * \param[in] frames Aggregated input frames.
-     * \param[in] config Processing configuration and required beam set.
-     * \return Bearing input frames grouped by band.
+     * \param[in] frames Агрегированные входные кадры.
+     * \param[in] config Конфигурация обработки и набор обязательных лучей.
+     * \return Входные кадры пеленгации, сгруппированные по полосам.
      */
     std::vector<BearingInputFrame> build(const std::vector<AggregatedBandFrame>& frames,
                                          const SampleProcessingConfig& config) const;
 };
 
 /*!
- * \brief Validates samples and prepares aggregation, waterfall, and bearing data.
+ * \brief Валидирует отсчеты и готовит данные агрегации, Waterfall и пеленгации.
  *
- * SampleProcessor belongs to the processing layer. It depends on core/domain
- * models only and must remain independent from QML, hardware sockets, and
- * storage implementations.
+ * SampleProcessor относится к слою обработки. Он зависит только от моделей
+ * core/domain и должен оставаться независимым от QML, аппаратных сокетов
+ * и реализаций хранилища.
  */
 class SampleProcessor
 {
 public:
     /*!
-     * \brief Creates a processor with immutable processing configuration.
+     * \brief Создает обработчик с неизменяемой конфигурацией обработки.
      *
-     * \param[in] config Band and aggregation configuration.
+     * \param[in] config Конфигурация полос и агрегации.
      */
     explicit SampleProcessor(SampleProcessingConfig config);
 
     /*!
-     * \brief Processes one signal sample.
+     * \brief Обрабатывает один сигнальный отсчет.
      *
-     * \param[in] sample Parsed domain sample.
-     * \return Processing result for a single-sample batch.
+     * \param[in] sample Разобранный доменный отсчет.
+     * \return Результат обработки пакета из одного отсчета.
      */
     SampleProcessingResult processSample(const core::SignalSample& sample);
     /*!
-     * \brief Processes a batch of signal samples.
+     * \brief Обрабатывает пакет сигнальных отсчетов.
      *
-     * Invalid samples are rejected diagnostically while valid samples continue
-     * through aggregation and frame building.
+     * Некорректные отсчеты отклоняются диагностически, а корректные продолжают
+     * проходить агрегацию и построение кадров.
      *
-     * \param[in] batch Samples to process.
-     * \return Full processing result.
+     * \param[in] batch Отсчеты для обработки.
+     * \return Полный результат обработки.
      */
     SampleProcessingResult processBatch(const SampleBatch& batch);
 
     /*!
-     * \brief Clears sequence tracking used for out-of-order diagnostics.
+     * \brief Сбрасывает отслеживание последовательности для диагностики порядка.
      */
     void resetSequenceTracking() noexcept;
 
