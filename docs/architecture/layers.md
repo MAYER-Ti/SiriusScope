@@ -143,7 +143,9 @@ When the user changes a `BandItem` setting:
 QML BandItem
     -> application controller
     -> validated BandConfig
-    -> RPU command adapter through interface
+    -> BCO control interface
+    -> BCO command adapter
+    -> BCO applies receiver configuration and controls RPU internally
 ```
 
 When the user starts sector scanning:
@@ -377,8 +379,7 @@ It is responsible for:
 
 * UDP reception from BCO;
 * TCP reception from antenna / rotating device;
-* RPU command formatting and sending;
-* BCO command formatting and sending;
+* BCO command formatting and sending, including receiver configuration that affects the RPU through the BCO;
 * antenna command formatting and sending;
 * protocol parsing;
 * protocol version handling;
@@ -391,12 +392,10 @@ Typical components:
 * `TcpAntennaClient`;
 * `ProtocolParserV1`;
 * `ProtocolParserV2`;
-* `RpuCommandAdapter`;
 * `BcoCommandAdapter`;
 * `AntennaCommandAdapter`;
 * `SimulatorBcoAdapter`;
-* `SimulatorAntennaAdapter`;
-* `SimulatorRpuAdapter`.
+* `SimulatorAntennaAdapter`.
 
 ### 8.2 Interface rule
 
@@ -408,11 +407,12 @@ Conceptual interface groups:
 
 * BCO sample source;
 * antenna azimuth source;
-* RPU control;
 * BCO control;
 * antenna control;
 * protocol version selection;
 * diagnostics source.
+
+There must be no separate SiriusScope-to-RPU control interface. The RPU is outside the direct software boundary and is controlled by the BCO.
 
 ### 8.3 Protocol rules
 

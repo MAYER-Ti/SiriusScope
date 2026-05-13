@@ -111,6 +111,8 @@ The current system expects two primary input streams:
 1. BCO signal samples over UDP.
 2. Antenna / rotating device azimuth over TCP.
 
+SiriusScope also sends reception configuration to the BCO. The BCO controls the RPU internally; SiriusScope must not connect to or command the RPU directly.
+
 BCO samples conceptually contain:
 
 * `sampleIndex`;
@@ -139,6 +141,8 @@ The current SiriusScope iteration uses:
 * each `BandItem` represents one BCO band;
 * each BCO band is up to 500 MHz wide;
 * total simultaneous observation width is up to 2500 MHz.
+
+The BCO control protocol is expected to support configuration of up to 8 frequency ranges, but the current SiriusScope UI and domain workflow use only 5 ranges.
 
 The current UI must not allow the operator to add or remove `BandItem` objects unless a future task explicitly changes the scope.
 
@@ -197,7 +201,7 @@ The UI must not replace the domain time model with ad hoc visual timestamps.
 
 `BandItem` is responsible for representing and editing settings for one frequency band.
 
-Band settings must be passed to application/controller logic first. QML must not directly create or send hardware commands.
+Band settings must be passed to application/controller logic first and then to the BCO control interface. QML must not directly create or send hardware commands. There is no SiriusScope-to-RPU control path.
 
 ### 3.10 WaterfallView
 
@@ -251,7 +255,8 @@ It should include:
 * program status;
 * BCO connection status;
 * antenna connection status;
-* RPU/control status;
+* BCO/control status;
+* reception-configuration status when reported by the BCO;
 * current azimuth;
 * recording status;
 * latest errors and diagnostic messages.
@@ -430,6 +435,7 @@ The following assumptions are valid until replaced by more precise documents or 
 * bearing calculation is performed per `BandItem`;
 * simulator is required for development and testing;
 * real hardware and simulator must share the same interfaces;
+* RPU is controlled by the BCO, not by SiriusScope;
 * QML is presentation only and must not contain domain-heavy logic.
 
 ## 7. Open questions
@@ -437,16 +443,15 @@ The following assumptions are valid until replaced by more precise documents or 
 The following items require future clarification:
 
 1. Exact BCO UDP packet format.
-2. Exact antenna TCP message format.
-3. Exact RPU command format.
-4. Exact BCO command format.
-5. Exact antenna command format.
-6. Exact bearing calculation model.
-7. Exact grouping model for samples, pulses, and signal batches.
-8. Target operating systems.
-9. Minimum hardware requirements.
-10. Final RGB values for WaterfallView and BandItem colors.
-11. Final archive binary formats.
-12. Final simulator protocol behavior.
+2. Exact BCO control protocol for reception configuration, including up to 8 ranges, dwell time, filters, polarization, attenuators, and diagnostics.
+3. Exact antenna TCP message format.
+4. Exact antenna command format.
+5. Exact bearing calculation model.
+6. Exact grouping model for samples, pulses, and signal batches.
+7. Target operating systems.
+8. Minimum hardware requirements.
+9. Final RGB values for WaterfallView and BandItem colors.
+10. Final archive binary formats.
+11. Final simulator protocol behavior.
 
 Until these questions are resolved, implementations must use isolated interfaces and avoid hardcoding assumptions into UI code.

@@ -146,7 +146,7 @@ Radio receiving device.
 
 Responsible for radio reception and primary analog/radio-frequency operations such as amplification and frequency conversion.
 
-In SiriusScope, `BandItem` settings conceptually correspond to RPU-related band settings.
+SiriusScope does not control the RPU directly. The BCO controls the RPU internally, and SiriusScope sends reception configuration only to the BCO.
 
 ### БЦО
 
@@ -154,11 +154,21 @@ In SiriusScope, `BandItem` settings conceptually correspond to RPU-related band 
 
 Digital processing unit.
 
-In the current SiriusScope model, the BCO sends discrete signal samples to the software over UDP.
+In the current SiriusScope model, the BCO accepts reception configuration from SiriusScope, controls the RPU internally, and sends discrete signal samples to the software over UDP.
+
+### Управляющая конфигурация БЦО
+
+A structured set of reception settings that SiriusScope sends to the BCO.
+
+It conceptually includes frequency ranges, dwell time, filter parameters, polarization, input/output attenuators, and other settings needed by the BCO to control reception and the RPU internally.
+
+The BCO protocol may support up to 8 configured ranges; the current SiriusScope iteration uses 5.
+
+Exact fields and binary/network representation are `TBD` until the dedicated BCO control protocol document is written.
 
 ### Аппаратная часть
 
-The real hardware components of изделие «Сириус», including antenna system, rotating device, RPU, BCO, and related control interfaces.
+The real hardware components of изделие «Сириус», including antenna system, rotating device, RPU, BCO, and related control interfaces. SiriusScope directly controls the BCO and antenna/rotating device, while RPU control is behind the BCO boundary.
 
 ### Simulator
 
@@ -219,7 +229,7 @@ It is used by `TimeBase` to compute local time and global display time.
 
 ### `frequencyOffsetHz`
 
-Frequency offset in hertz relative to the base frequency configured for the related RPU band.
+Frequency offset in hertz relative to the base frequency configured for the related BCO-controlled reception band.
 
 The absolute display frequency is computed from base frequency plus offset.
 
@@ -352,7 +362,7 @@ It controls the visible frequency range of `WaterfallView`.
 
 ### BandItem
 
-A frequency-band UI/domain object corresponding to one BCO band and related RPU settings.
+A frequency-band UI/domain object corresponding to one BCO-controlled reception band.
 
 Current iteration uses exactly 5 `BandItem` objects.
 
@@ -362,6 +372,8 @@ Each `BandItem`:
 * has a fixed color;
 * is used for bearing result color mapping;
 * must not directly send hardware commands from QML.
+
+The BCO protocol may support up to 8 configured ranges, but the current SiriusScope iteration exposes exactly 5 `BandItem` objects.
 
 ### WaterfallView
 
@@ -453,7 +465,6 @@ Layer responsible for hardware-facing clients and adapters:
 
 * UDP BCO receiver;
 * TCP antenna client;
-* RPU command adapter;
 * BCO command adapter;
 * antenna command adapter;
 * simulator adapters;

@@ -2,7 +2,7 @@
 
 This document describes the runtime data flow in SiriusScope.
 
-It explains how signal samples, antenna azimuth, bearing results, UI updates, storage operations, simulator data, and diagnostics move through the system.
+It explains how signal samples, BCO reception configuration, antenna azimuth, bearing results, UI updates, storage operations, simulator data, and diagnostics move through the system.
 
 ## 1. Data flow principles
 
@@ -13,19 +13,21 @@ SiriusScope must follow these principles:
 - protocol parsing is isolated in hardware adapter classes;
 - processing and storage must not block the GUI thread;
 - simulator and real hardware must use the same application-level interfaces;
+- SiriusScope sends receiver settings to the BCO only, never directly to the RPU;
 - domain data must preserve original hardware identifiers such as `sampleIndex`;
 - diagnostics must be propagated to `StatusBar` and technical logs.
 
 ## 2. Main runtime flows
 
-SiriusScope has six main runtime flows:
+SiriusScope has seven main runtime flows:
 
 1. BCO signal sample flow.
-2. Antenna azimuth flow.
-3. Sector scanning and bearing flow.
-4. Waterfall display flow.
-5. Storage and history loading flow.
-6. Diagnostics flow.
+2. BCO reception configuration flow.
+3. Antenna azimuth flow.
+4. Sector scanning and bearing flow.
+5. Waterfall display flow.
+6. Storage and history loading flow.
+7. Diagnostics flow.
 
 These flows are connected but must remain separated through explicit interfaces.
 
@@ -252,6 +254,31 @@ Rules:
 * data outside the current visible range may move outside the visible area;
 * heavy resampling or history loading must not block the GUI thread.
 
+### 6.6 Band configuration / BCO control flow
+
+`BandItem` edits produce reception configuration for the BCO.
+
+Flow:
+
+```text
+Operator edits BandItem settings
+    -> Application controller
+    -> validated BCO reception configuration
+    -> BcoCommandAdapter
+    -> BCO control protocol
+    -> BCO applies receiver settings and controls RPU internally
+    -> Diagnostics / StatusBar
+```
+
+Rules:
+
+* SiriusScope must not send commands to the RPU directly;
+* QML must not build BCO protocol payloads;
+* the BCO protocol may support up to 8 configured ranges;
+* the current SiriusScope workflow sends 5 ranges from the 5 `BandItem` objects;
+* dwell time, filter parameters, polarization, and attenuators belong to the BCO reception configuration;
+* exact BCO control protocol fields are `TBD` until the dedicated protocol document is written.
+
 ## 7. Storage flow
 
 ### 7.1 Purpose
@@ -331,7 +358,7 @@ The simulator flow allows SiriusScope to be developed and tested without real ha
 Simulator source
     -> same BCO sample source interface
     -> same antenna azimuth source interface
-    -> same RPU/BCO/antenna control interfaces
+    -> same BCO/antenna control interfaces
     -> Application / Processing / UI
 ```
 
@@ -340,7 +367,8 @@ Simulator source
 * simulator must not require special UI paths;
 * simulator must not bypass application/domain interfaces;
 * simulator must support testing of SpectrumView, WaterfallView, AntennaIndicator, storage, and bearing flow;
-* simulator data must be accepted by the same processing path as real data.
+* simulator data must be accepted by the same processing path as real data;
+* BCO simulator behavior must include reception-configuration handling and internal RPU-control imitation behind the BCO interface.
 
 ## 10. Replay flow
 
@@ -524,7 +552,8 @@ The following details are intentionally not finalized here:
 
 * exact BCO UDP packet layout;
 * exact antenna TCP message layout;
-* exact RPU/BCO/antenna command formats;
+* exact BCO control protocol, including reception ranges, dwell time, filters, polarization, attenuators, and diagnostics;
+* exact antenna command formats;
 * exact bearing algorithm;
 * exact archive binary layout;
 * final threading primitives.

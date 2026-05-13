@@ -76,7 +76,7 @@ Infrastructure layer
     Storage, settings, logging, binary formats, file rotation.
 
 Hardware adapter layer
-    UDP/TCP clients, protocol parsers, RPU/BCO/antenna command adapters, simulator adapters.
+    UDP/TCP clients, protocol parsers, BCO/antenna command adapters, simulator adapters.
 ```
 
 Dependency direction must remain stable:
@@ -138,6 +138,9 @@ Current iteration assumptions:
 * SiriusScope works with 5 `BandItem` objects.
 * Each `BandItem` represents one BCO band up to 500 MHz.
 * 5 bands provide up to 2500 MHz of simultaneous observation.
+* The BCO control protocol may support up to 8 configured frequency ranges; SiriusScope uses 5 in the current iteration.
+* SiriusScope does not interact with the RPU directly.
+* Frequency ranges, dwell time, filters, polarization, attenuators, and other receiver settings are sent to the BCO; the BCO controls the RPU internally.
 * Full product frequency range is 0.3–18 GHz.
 * Current antenna model uses 2 beams: `beamIndex = 0` and `beamIndex = 1`.
 * Future 8-beam support must not be made impossible.
@@ -168,7 +171,7 @@ Do not replace `sampleIndex` with UI time.
 
 `BandItem`:
 
-* represents RPU settings for one frequency band;
+* represents BCO reception settings for one frequency band;
 * must not directly send hardware commands from QML;
 * changes must go through application/controller layer.
 

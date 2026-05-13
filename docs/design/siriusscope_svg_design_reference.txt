@@ -1,0 +1,722 @@
+SiriusScope UI SVG DESIGN REFERENCE
+===================================
+
+Назначение файла
+----------------
+Этот файл описывает SVG-макет SiriusScope как дизайн-референс для разработки полноценного QML-интерфейса.
+Описание предназначено для ИИ-агента или разработчика, который будет дорабатывать существующий QML UI.
+
+Важно:
+- SVG не нужно напрямую конвертировать в основной QML UI.
+- SVG использовать как визуальную опору: цвета, пропорции, расположение, смысловые зоны, названия статусов, примерные размеры.
+- Предлагаемые имена компонентов ниже являются примерами, а не обязательными требованиями.
+- Динамические области должны быть живыми QML/C++ компонентами: спектр, waterfall, индикатор антенны, таблица событий, статусы.
+- Если описание расходится с SVG, визуальный приоритет имеет SVG-файл.
+
+Исходные параметры SVG
+----------------------
+Файл: siriusscope-ui-concept.svg
+Заголовок SVG: Operator workspace concept
+Описание SVG: Dark Qt desktop UI concept: spectrum, five band items, waterfall history, antenna indicator, result table, and status diagnostics.
+Базовый размер: 1440 x 900 px
+viewBox: 0 0 1440 900
+Соотношение сторон: 16:10
+Основная стилистика: тёмный операторский desktop UI, техническая панель управления, приборный интерфейс.
+
+Координатная система
+--------------------
+Все координаты ниже указаны в пикселях относительно SVG 1440x900.
+Для адаптивной QML-верстки использовать пропорции:
+
+normalizedX = x / 1440
+normalizedY = y / 900
+normalizedW = width / 1440
+normalizedH = height / 900
+
+Рекомендуемый подход:
+- На первом этапе можно использовать фиксированную базу 1440x900 и сверять с SVG.
+- Затем перейти на QtQuick.Layouts, anchors и пропорции.
+- Минимальная ширина для нормального вида интерфейса: около 1080 px.
+- При меньшей ширине правая колонка может сжиматься сильнее или переходить в отдельную вкладку/панель.
+
+Связь с существующим QML-проектом
+---------------------------------
+В текущей структуре SiriusScope уже есть QML-заготовка со следующими смысловыми частями:
+- Main.qml
+- MenuBarApp.qml
+- SpectrumView.qml
+- WaterfallView.qml
+- AntennaIndicator.qml
+- FooterDataView.qml
+- BandModel.qml
+
+SVG-макет следует использовать для визуального усиления этих компонентов:
+- MenuBarApp.qml -> top-chrome + меню Режим/Файл/Правка/Справка.
+- SpectrumView.qml -> spectrum-panel, spectrum-grid, spectrum-band-items, spectrum-axis.
+- WaterfallView.qml -> waterfall-panel, waterfall-history, band overlays, direction controls.
+- AntennaIndicator.qml -> antenna-panel, dial, bearing-markers, antenna-controls.
+- FooterDataView.qml -> status-bar / diagnostics strip.
+- Новый возможный компонент ResultTableView.qml -> result-table-panel.
+- Новый возможный компонент TopToolbar.qml -> toolbar, mode-segment, toolbar-status, viewport-control.
+
+Общая композиция экрана
+-----------------------
+Экран состоит из тёмного окна с верхней строкой меню, панелью управления, большой левой рабочей областью, правой колонкой управления антенной и таблицей событий, а также нижней статусной строкой.
+
+Главная структура:
+1. Оконная рамка / фон приложения.
+2. Верхнее меню.
+3. Верхняя панель инструментов.
+4. Левая основная панель:
+   - Верх: спектр.
+   - Низ: waterfall / история обнаружений.
+5. Правая верхняя панель:
+   - Индикатор антенны, круговая шкала, цели, сектор луча.
+   - Ручное управление наведением.
+6. Правая нижняя панель:
+   - Таблица последних событий/обнаружений.
+7. Нижняя статусная строка:
+   - Состояние программы, БКО, антенны, записи, диагностики.
+
+Основные зоны и координаты
+--------------------------
+Все названия компонентов являются примерными.
+
+| SVG id / зона                  | Пример QML-компонента        | x    | y   | w    | h   | x%     | y%     | w%     | h%     | Назначение |
+|--------------------------------|------------------------------|------|-----|------|-----|--------|--------|--------|--------|------------|
+| outer chrome/background         | AppBackground                | 8    | 8   | 1424 | 884 | 0.56%  | 0.89%  | 98.89% | 98.22% | Общий фон окна |
+| top-chrome                     | TopChrome / MenuStrip        | 8    | 8   | 1424 | 30  | 0.56%  | 0.89%  | 98.89% | 3.33%  | Верхняя строка окна и меню |
+| toolbar                        | TopToolbar                   | 16   | 48  | 1408 | 40  | 1.11%  | 5.33%  | 97.78% | 4.44%  | Режимы, статусы связи, диапазон, старт/стоп |
+| spectrum-panel                 | SpectrumWorkspacePanel       | 16   | 100 | 900  | 708 | 1.11%  | 11.11% | 62.50% | 78.67% | Левая панель спектра и waterfall |
+| spectrum plot area             | SpectrumPlot                 | 34   | 116 | 864  | 218 | 2.36%  | 12.89% | 60.00% | 24.22% | График амплитуды по частоте |
+| waterfall plot area            | WaterfallView                | 34   | 360 | 864  | 398 | 2.36%  | 40.00% | 60.00% | 44.22% | История сигналов по времени |
+| waterfall direction controls   | WaterfallDirectionControls   | 34   | 772 | 864  | 30  | 2.36%  | 85.78% | 60.00% | 3.33%  | Настройки directional waterfall |
+| antenna-panel                  | AntennaPanel                 | 928  | 100 | 496  | 510 | 64.44% | 11.11% | 34.44% | 56.67% | Правая панель антенны |
+| antenna status chips           | AntennaTelemetryHeader       | 946  | 112 | 458  | 24  | 65.69% | 12.44% | 31.81% | 2.67%  | Speed, Tracks, TTL, AZ |
+| antenna dial visual area       | AntennaDial                  | ~992 | ~170| ~368 | ~368| 68.89% | 18.89% | 25.56% | 40.89% | Круговая шкала антенны |
+| antenna controls               | AntennaManualControls        | 946  | 546 | 458  | 44  | 65.69% | 60.67% | 31.81% | 4.89%  | Кнопки -10, -1, stop, +1, +10 |
+| result-table-panel             | ResultTablePanel             | 928  | 624 | 496  | 184 | 64.44% | 69.33% | 34.44% | 20.44% | Таблица последних событий |
+| result table body              | ResultTableView              | 946  | 644 | 460  | 142 | 65.69% | 71.56% | 31.94% | 15.78% | Табличные данные |
+| status-bar                     | FooterStatusBar              | 16   | 820 | 1408 | 56  | 1.11%  | 91.11% | 97.78% | 6.22%  | Нижняя диагностическая строка |
+
+Рекомендуемые layout-пропорции для Main.qml
+-------------------------------------------
+Если собирать через QtQuick.Layouts:
+
+Главная вертикальная структура:
+- TopChrome: фиксированная высота 30 px или системный MenuBar.
+- TopToolbar: фиксированная высота 40 px.
+- Content area: занимает основную высоту.
+- FooterStatusBar: фиксированная высота 56 px.
+
+В content area:
+- Левая колонка: примерно 62.5% ширины экрана.
+- Правая колонка: примерно 34.4% ширины экрана.
+- Горизонтальный зазор между колонками: 12 px.
+- Внешние отступы: 16 px слева/справа, 12 px между toolbar и content.
+
+Левая колонка:
+- SpectrumPlot: около 31% высоты левой панели.
+- WaterfallView: около 56% высоты левой панели.
+- Direction controls / легенда: около 5% высоты.
+- Остальное: внутренние отступы и подписи осей.
+
+Правая колонка:
+- AntennaPanel: примерно 510 px из доступной высоты в SVG, около 56.7% экрана.
+- ResultTablePanel: примерно 184 px, около 20.4% экрана.
+- Между ними вертикальный зазор около 14 px.
+
+Ключевая палитра: основные цвета
+--------------------------------
+Эти цвета желательно вынести в Theme.qml или singleton DesignTokens.qml.
+
+| Роль | Цвет | Использование |
+|------|------|---------------|
+| app.background.deep | #070A0E | Самый тёмный внешний фон |
+| app.background.top | #151C24 | Верхний цвет chrome gradient |
+| app.background.bottom | #0A0E13 | Нижний цвет chrome gradient |
+| chrome.topBar | #121922 | Верхняя строка меню |
+| panel.gradient.top | #16202A | Верх панели |
+| panel.gradient.bottom | #10161E | Низ панели |
+| panel.border | #2D3945 | Основная граница панелей |
+| panel.border.soft | #25313D | Мягкая граница внутренних областей |
+| inset.background | #0C1118 | Внутренние поля, input/chip backgrounds |
+| chip.background | #17222D | Чипы статусов и небольшие кнопки |
+| plot.background.top | #101720 | Верх графика спектра |
+| plot.background.bottom | #090D13 | Низ графика спектра |
+| waterfall.background | #0B1016 | Фон waterfall |
+| grid.major | #22303B | Основная сетка |
+| grid.soft | #1A2630 | Мягкая сетка |
+| divider | #2D3945 | Разделители таблицы |
+| text.primary | #EEF4FB | Главный текст |
+| text.secondary | #AFC0CE | Вторичный mono-текст |
+| text.label | #9FAFBD | Подписи/label |
+| text.muted | #8393A3 | Мелкие подписи осей |
+| text.veryMuted | #627182 | Сильно приглушённый текст |
+
+Ключевая палитра: статусы и сигнальные цвета
+--------------------------------------------
+| Роль | Цвет | Использование |
+|------|------|---------------|
+| status.good | #35D07F | OK, активная связь, зелёный луч, B2 |
+| status.warn | #E5B84B | Предупреждение, запись, B3 |
+| status.bad | #F05D55 | Стоп/ошибка, красный сектор антенны |
+| signal.cyan | #4BB4FF | Основная линия спектра, B1, синий bearing |
+| signal.magenta | #E46BD4 | B4, magenta bearing |
+| signal.violet | #8A7CFF | B5, violet bearing |
+| signal.orange | #FF9C55 | Дополнительный оранжевый акцент |
+
+Ключевая палитра: диапазоны B1-B5
+---------------------------------
+| Band | Основной цвет | Border/handle | Текст | Пример порога | Пример частоты из SVG |
+|------|---------------|---------------|-------|---------------|-----------------------|
+| B1 | #4BB4FF | #7FCBFF | #DDF4FF | 180 | 3.000 GHz |
+| B2 | #35D07F | #7CF3A9 | #E3FFF0 | 160 | 5.795/5.80 GHz |
+| B3 | #E5B84B | #FFD671 | #FFF2C5 | 190 | 8.250/8.25 GHz |
+| B4 | #E46BD4 | #FF9AF0 | #FFE0FA | 140 | 9.55 GHz |
+| B5 | #8A7CFF | #B6AEFF | #ECE9FF | 170 | 14.250/14.25 GHz |
+
+Waterfall directional palette
+-----------------------------
+Цвета waterfall кодируют не только амплитуду, но и направление/луч.
+В SVG прямо указана логика: "Directional: яркость = амплитуда, оттенок = луч".
+
+| Роль | Low | Normal | High | Значение |
+|------|-----|--------|------|----------|
+| left beam dominant | #6F4146 | #B96C70 | #DF9A9A | Левый луч / красноватый оттенок |
+| neutral/dead zone | #343D47 | #747E88 | #B8C0C8 | Равные/нейтральные значения |
+| right beam dominant | #3B6549 | #6EBE80 | #A3E9AE | Правый луч / зелёный оттенок |
+
+Прочие цвета из SVG, которые могут понадобиться
+-----------------------------------------------
+#000000, #070A0E, #090D13, #0A0E13, #0B1016, #0C1118, #10161E, #101720,
+#121922, #151C24, #16202A, #17222D, #183B2A, #1A2630, #214B35, #22303B,
+#25313D, #27313C, #2A1E20, #2D3945, #343D47, #344353, #347552, #35D07F,
+#3A171A, #3A1D20, #3B6549, #3F5061, #4BB4FF, #56687A, #5A6D7F, #627182,
+#6EBE80, #6F4146, #747E88, #7CF3A9, #7FCBFF, #8393A3, #8A7CFF, #8EA1B4,
+#9FAFBD, #A3E9AE, #AFC0CE, #B6AEFF, #B8C0C8, #B96C70, #C9D4DF, #DDF4FF,
+#DDF8E9, #DF9A9A, #E3FFF0, #E46BD4, #E5B84B, #ECE9FF, #EEF4FB, #F05D55,
+#F4D7D7, #FF9AF0, #FF9C55, #FFD671, #FFE0FA, #FFF2C5
+
+Градиенты и эффекты
+-------------------
+chromeGrad:
+- vertical gradient from #151C24 to #0A0E13.
+- Использовать для общего фона окна или главной рабочей области.
+
+panelGrad:
+- vertical gradient from #16202A to #10161E.
+- Использовать для основных панелей Spectrum, Antenna, ResultTable.
+
+plotGrad:
+- diagonal/large gradient from #101720 to #090D13.
+- Использовать для фона графика спектра.
+
+dialFace:
+- gradient from #17222D to #0B1016.
+- Использовать для фона круговой шкалы антенны.
+
+panelShadow:
+- SVG filter: feDropShadow dx=0, dy=10, stdDeviation=15, color #000000, opacity 0.28.
+- В QML можно заменить на MultiEffect/DropShadow или временно не использовать.
+- Тень не является функционально критичной. Важнее сохранить границы, радиусы, контраст.
+
+Типографика
+-----------
+Основной UI font:
+- Inter, Arial, sans-serif.
+- Если Inter нет в приложении, использовать системный sans-serif или загрузить Inter как ресурс.
+
+Моноширинный font:
+- JetBrains Mono, Consolas, monospace.
+- Для телеметрии, частот, амплитуд, статусов, таблиц, числовых значений.
+
+CSS-классы из SVG:
+| Класс | Размер | Вес | Цвет | Роль |
+|-------|--------|-----|------|------|
+| windowText | 12 px | normal | #EEF4FB | Меню окна |
+| title | 18 px | 700 | #EEF4FB | Крупные заголовки, если нужны |
+| section | 12 px | 700 | #EEF4FB | Заголовки секций |
+| label | 11 px | 500 | #9FAFBD | Подписи в toolbar и панелях |
+| muted | 10 px | normal | #627182 | Приглушённые пояснения |
+| dialLabel | 10 px | normal | #9FAFBD | Метки шкалы антенны |
+| mono | 11 px | normal | #AFC0CE | Числа, статусы, телеметрия |
+| monoStrong | 11 px | 600 | #EEF4FB | Активные числовые значения и кнопки |
+| microMono | 9 px | normal | #8393A3 | Оси графиков, мелкие подписи |
+
+Радиусы и размеры
+-----------------
+| Элемент | Радиус |
+|---------|--------|
+| Внешнее окно/background | 8 px |
+| Основные панели | 6 px |
+| Внутренние графики/таблицы | 4 px |
+| Чипы и маленькие кнопки | 4 px |
+| Центральная stop-кнопка антенны | 5 px |
+
+Основные толщины линий:
+- Граница панели: 1 px.
+- Сетка графиков: 1 px.
+- Линия спектра: 1.7 px.
+- Слабая зелёная сглаженная линия спектра: 1 px, opacity 0.45.
+- Threshold dashed line: #E5B84B, dasharray 5 5, opacity 0.55.
+- Bearing markers на антенне: 5-6 px.
+
+Верхняя строка окна / меню
+--------------------------
+SVG id: top-chrome
+Пример QML: TopChrome.qml или использовать текущий MenuBarApp.qml.
+Координаты: x=8, y=8, w=1424, h=30.
+Фон: #121922.
+Нижнее продолжение: rect x=8, y=30, w=1424, h=8, fill #121922.
+
+Меню:
+- Режим: x=26, y=27
+- Файл: x=82, y=27
+- Правка: x=131, y=27
+- Справка: x=194, y=27
+
+Window controls справа:
+- minimize: x=1294, w=46
+- maximize: x=1340, w=46
+- close: x=1386, w=46, background #3A171A, cross #F4D7D7
+
+Рекомендация:
+- Если приложение использует системный MenuBar, сохранить текущий функционал MenuBarApp.qml.
+- Если нужен кастомный chrome, визуально повторить SVG, но не обязательно реализовывать window controls на первом этапе.
+
+Toolbar
+-------
+SVG id: toolbar
+Пример QML: TopToolbar.qml
+Координаты: x=16, y=48, w=1408, h=40.
+Фон: #10161E.
+Граница: #2D3945.
+Радиус: 6.
+
+Содержимое toolbar слева направо:
+1. Mode segment:
+   - container: x=30, y=57, w=232, h=22, bg #0C1118, border #2D3945.
+   - active mode: x=32, y=59, w=74, h=18, bg #214B35.
+   - labels: Тест, Боевой, Контроль.
+   - Активный пример: Тест.
+
+2. Status chips:
+   - SIMULATOR: x=286, y=57, w=130, h=22; dot good #35D07F.
+   - BCO UDP: x=426, y=57, w=118, h=22; dot good #35D07F.
+   - ANT TCP: x=554, y=57, w=142, h=22; dot good #35D07F.
+   - REC 00:18: x=706, y=57, w=124, h=22; dot warn #E5B84B.
+
+3. Viewport control:
+   - label: "Диапазон наблюдения", x=970, y=72.
+   - value chip/input: x=1114, y=57, w=160, h=22, text "0.30-18.00 GHz".
+   - Start button: x примерно 1298, text "Старт".
+   - Stop button: x примерно 1370, text "Стоп".
+
+Рекомендация:
+- Не смешивать toolbar с MenuBarApp.
+- Toolbar должен быть отдельным компонентом с состояниями:
+  mode, simulatorOnline, bcoOnline, antennaOnline, recording, recordingTime, viewportMinGHz, viewportMaxGHz.
+
+Spectrum panel
+--------------
+SVG id: spectrum-panel
+Пример QML: SpectrumWorkspacePanel.qml или расширение существующего SpectrumView.qml.
+Координаты панели: x=16, y=100, w=900, h=708.
+Фон панели: panelGrad.
+Граница: #2D3945.
+Радиус: 6.
+
+Spectrum plot:
+- x=34, y=116, w=864, h=218.
+- background: plotGrad #101720 -> #090D13.
+- border: #25313D.
+- radius: 4.
+- Вертикальная сетка: x=178, 322, 466, 610, 754.
+- Горизонтальная мягкая сетка: y=158, 200, 242, 284.
+
+Оси спектра:
+- Амплитуда: 500, 250, 0.
+- Частота: 0.30, 3.00, 5.80, 8.25, 9.55, 14.25, 18.00 GHz.
+- Текст осей: microMono, #8393A3, 9 px.
+
+Линии спектра:
+- Основная линия: #4BB4FF, stroke-width 1.7.
+- Сглаженная/вторичная линия: #35D07F, stroke-width 1, opacity 0.45.
+- Пороговая линия: #E5B84B, dashed 5 5, opacity 0.55.
+
+Band overlays в SpectrumPlot
+----------------------------
+В SVG группа spectrum-band-items имеет transform translate(0 -38).
+Фактическая визуальная область band overlays совпадает с plot y=116..334.
+
+| Band | x | y | w | h | Fill | Opacity | Border/handles | Label |
+|------|---|---|---|---|------|---------|----------------|-------|
+| B1 | 154 | 116 | 84 | 218 | #4BB4FF | 0.20 | #7FCBFF | B1 180 |
+| B2 | 286 | 116 | 70 | 218 | #35D07F | 0.17 | #7CF3A9 | B2 160 |
+| B3 | 414 | 116 | 86 | 218 | #E5B84B | 0.18 | #FFD671 | B3 190 |
+| B4 | 482 | 116 | 84 | 218 | #E46BD4 | 0.17 | #FF9AF0 | B4 140 |
+| B5 | 720 | 116 | 86 | 218 | #8A7CFF | 0.18 | #B6AEFF | B5 170 |
+
+Важная логика:
+- Band overlay должен быть интерактивным, если в приложении уже есть BandItem.qml.
+- Левая и правая ручки диапазона имеют ширину 8 px.
+- Label внутри диапазона показывает band id + threshold amplitude.
+- Цвета band должны быть синхронны между SpectrumView и WaterfallView.
+
+Waterfall panel
+---------------
+SVG id: waterfall-panel
+Пример QML: WaterfallView.qml.
+Внутри общей левой панели spectrum-panel.
+Координаты: x=34, y=360, w=864, h=398.
+Фон: #0B1016.
+Граница: #25313D.
+Радиус: 4.
+
+Сетка:
+- Вертикальные линии: x=178, 322, 466, 610, 754.
+- Горизонтальные линии: y=438, 516, 594, 672, 740.
+- Основные линии grid #22303B, мягкие #1A2630 с opacity 0.78.
+
+Time axis:
+- +00:00 at y=377
+- +00:05 at y=455
+- +00:10 at y=533
+- +00:15 at y=611
+- +00:20 at y=689
+- +00:25 at y=747
+
+Band overlays в WaterfallView
+-----------------------------
+Эти overlays должны совпадать по x и width с диапазонами спектра.
+
+| Band | x | y | w | h | Fill | Opacity |
+|------|---|---|---|---|------|---------|
+| B1 | 154 | 360 | 84 | 398 | #4BB4FF | 0.10 |
+| B2 | 286 | 360 | 70 | 398 | #35D07F | 0.10 |
+| B3 | 414 | 360 | 86 | 398 | #E5B84B | 0.09 |
+| B4 | 482 | 360 | 84 | 398 | #E46BD4 | 0.09 |
+| B5 | 720 | 360 | 86 | 398 | #8A7CFF | 0.10 |
+
+Waterfall direction controls
+----------------------------
+SVG id: waterfall-direction-controls
+Пример QML: WaterfallLegendBar.qml или встроенная нижняя строка WaterfallView.
+Позиция: примерно x=34, y=772, h=30.
+
+Текст:
+- "Directional: яркость = амплитуда, оттенок = луч"
+- DIR ON
+- γ .7
+- D .10
+- левый / равно / правый
+- UTC 18:24:13
+
+Смысл:
+- DIR ON показывает, что directional coloring включён.
+- γ .7 вероятно параметр gamma/яркости.
+- D .10 вероятно dead-zone/delta/direction threshold.
+- Легенда цветов: левый = красноватый, равно = серый, правый = зелёный.
+
+Рекомендация:
+- Не рисовать waterfall в QML как много Rectangle/Line для production.
+- Использовать C++ WaterfallItem / texture, а QML оставить для overlays, осей, легенды и band highlights.
+
+Antenna panel
+-------------
+SVG id: antenna-panel
+Пример QML: AntennaPanel.qml или развитие существующего AntennaIndicator.qml.
+Координаты: x=928, y=100, w=496, h=510.
+Фон: panelGrad.
+Граница: #2D3945.
+Радиус: 6.
+
+Верхняя telemetry строка:
+- Speed 5°/s: x=946, y=112, w=112, h=24.
+- Tracks 5: x=1068, y=112, w=98, h=24.
+- TTL 12s: x=1176, y=112, w=86, h=24.
+- AZ 034.7°: x=1272, y=112, w=132, h=24.
+
+Antenna dial
+------------
+SVG id: dial
+Пример QML: AntennaDial.qml.
+Центр: cx=1176, cy=354.
+Базовый радиус SVG: r=194, но группа масштабирована scale(0.95).
+Визуальный радиус: примерно 184 px.
+Фон: dialFace gradient #17222D -> #0B1016.
+Outer stroke: #344353.
+Inner circle: r=60, stroke #56687A, opacity 0.82.
+Center dot: r=4.5, fill #AFC0CE.
+
+Ticks:
+- Малые dot/tick через stroke-dasharray на окружности r=184.
+- 10-degree ticks: stroke #5A6D7F, width 1.4, opacity 0.82.
+- Major ticks each 30°: stroke #8EA1B4, width 2.2.
+- Labels: 0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330.
+
+Направление:
+- 0° расположен сверху.
+- 90° справа.
+- 180° снизу.
+- 270° слева.
+- QML rotation должен соответствовать этой системе: visualAngle = azimuthDeg, если исходная метка/стрелка направлена вверх.
+
+Antenna beam
+------------
+SVG id: antenna-beam
+Группа повернута на 35° вокруг центра 1176,354.
+Сектор состоит из двух половин:
+- зелёная половина: #35D07F, opacity 0.48.
+- красная половина: #F05D55, opacity 0.48.
+- outline: #25313D, opacity 0.7.
+
+Смысл:
+- Сектор показывает текущую диаграмму/зону обзора антенны.
+- Цвета можно трактовать как правый/левый луч или относительное направление.
+- Центральный азимут из telemetry: AZ 034.7°.
+
+Bearing markers
+---------------
+SVG id: bearing-markers
+Пример данных для QML:
+- 12° color #E46BD4 width 5
+- 26° color #4BB4FF width 6
+- 41° color #35D07F width 5
+- 63° color #E5B84B width 5
+- 141° color #8A7CFF width 5
+
+Смысл:
+- Маркеры показывают обнаруженные bearing/цели.
+- Цвета желательно согласовать с band colors или типами сигналов.
+- В QML лучше реализовать через Repeater по модели targetAzimuths / targetBearings.
+
+Antenna manual controls
+-----------------------
+SVG id: antenna-controls
+Пример QML: AntennaManualControls.qml.
+Container: x=946, y=546, w=458, h=44, bg #0C1118, border #2D3945, radius 6.
+
+Кнопки:
+- -10°: x=956, y=554, w=78, h=28.
+- -1°: x=1044, y=554, w=78, h=28.
+- Stop/manual center: x=1132, y=552, w=86, h=32, bg #2A1E20, border #F05D55, red square #F05D55.
+- +1°: x=1228, y=554, w=78, h=28.
+- +10°: x=1316, y=554, w=78, h=28.
+- подпись: "ручное наведение".
+
+Рекомендация:
+- В существующем AntennaIndicator.qml сейчас есть кнопки left/stop/right; визуально можно заменить на пять кнопок -10/-1/stop/+1/+10.
+- Логику поворота оставить через свойства turnDirection, turnSpeedPerSec или добавить discrete commands.
+
+Result table panel
+------------------
+SVG id: result-table-panel
+Пример QML: ResultTablePanel.qml или DetectionTable.qml.
+Координаты: x=928, y=624, w=496, h=184.
+Фон: panelGrad.
+Граница: #2D3945.
+Радиус: 6.
+
+Внутренняя таблица:
+- x=946, y=644, w=460, h=142.
+- Background: #0C1118.
+- Header background: #17222D, height 24.
+- Границы и разделители: #2D3945.
+
+Колонки:
+| Column | x | Пример ширины | Header |
+|--------|---|---------------|--------|
+| time | 958 | 72 px | Время |
+| azimuth | 1030 | 70 px | Аз. |
+| band | 1100 | 70 px | Band |
+| frequency | 1170 | 98 px | Частота |
+| amplitude | 1268 | 78 px | Ампл. |
+| status | 1346 | 72 px | Статус |
+
+Пример строк:
+1. 18:24:02 | 034.1 | B1 | 3.000 | 118 | OK
+2. 18:24:05 | 036.8 | B3 | 8.250 | 124 | OK
+3. 18:24:11 | 031.7 | B5 | 14.250 | 109 | REC
+4. 18:24:18 | 040.2 | B2 | 5.795 | 116 | OK
+
+Рекомендация:
+- Для маленькой таблицы можно использовать ListView с Row delegate.
+- Для масштабируемой таблицы использовать TableView + QAbstractTableModel.
+- Таблица должна быть отдельным компонентом, не смешанным с AntennaIndicator.
+
+Status bar
+----------
+SVG id: status-bar
+Пример QML: FooterStatusBar.qml или развитие FooterDataView.qml.
+Координаты: x=16, y=820, w=1408, h=56.
+Фон: #10161E.
+Граница: #2D3945.
+Радиус: 6.
+
+Status chips:
+1. Программа: OK, dot good #35D07F.
+2. БКО: связь, dot good #35D07F.
+3. Антенна: 034.7°, dot good #35D07F.
+4. Запись: активна, dot warn #E5B84B.
+5. Диагностика: 2 dropped rows, storage lag 18 ms, dot warn #E5B84B.
+6. sampleIndex preserved, dot good #35D07F.
+
+Рекомендация:
+- FooterDataView.qml сейчас может стать именно этой диагностической строкой.
+- Чипы лучше реализовать единым компонентом StatusChip.qml.
+- При нехватке ширины длинную диагностику сокращать ellipsis.
+
+Примерные QML-компоненты
+------------------------
+Названия являются примерами, а не обязательным требованием.
+
+Theme.qml / DesignTokens.qml
+- Цвета, шрифты, радиусы, размеры, opacity.
+
+Panel.qml
+- Универсальная панель с gradient, border, radius.
+
+StatusChip.qml
+- Маленький статусный чип: dot + text + state color.
+
+TopToolbar.qml
+- Режимы, состояние соединений, запись, диапазон, старт/стоп.
+
+SpectrumWorkspacePanel.qml
+- Контейнер левой панели.
+- Внутри SpectrumView и WaterfallView.
+
+SpectrumView.qml
+- Уже существует.
+- Добавить визуальную стилистику из SVG: background, grid, axis, band overlays, threshold line.
+
+BandItem.qml
+- Уже существует.
+- Синхронизировать цвета B1-B5 и handles 8 px.
+
+WaterfallView.qml
+- Уже существует.
+- Сохранить C++/WaterfallItem для данных.
+- Добавить overlays, time axis, direction legend.
+
+WaterfallLegendBar.qml
+- DIR ON, gamma, D/dead-zone, left/equal/right legend, UTC.
+
+AntennaIndicator.qml
+- Уже существует.
+- Можно разделить на AntennaPanel + AntennaDial + AntennaManualControls.
+
+AntennaDial.qml
+- Круговая шкала, ticks, labels, beam sector, bearing markers.
+
+ResultTablePanel.qml
+- Таблица последних обнаружений.
+
+FooterStatusBar.qml
+- Статусы и диагностика.
+
+Данные и свойства, которые желательно предусмотреть
+---------------------------------------------------
+TopToolbar:
+- mode: enum/string Test/Combat/Control.
+- simulatorOnline: bool.
+- bcoOnline: bool.
+- antennaOnline: bool.
+- recording: bool.
+- recordingElapsedText: string.
+- viewportMinGHz: real.
+- viewportMaxGHz: real.
+- startRequested(), stopRequested() signals.
+
+SpectrumView:
+- viewMinHz, viewMaxHz.
+- amplitudeMin, amplitudeMax.
+- spectrumSamples / decimatedMinMax.
+- bands model: bandId, centerHz, widthHz, thresholdAmplitude, enabled, color.
+- showThresholds: bool.
+
+WaterfallView:
+- ringBuffer / texture provider.
+- viewMinHz, viewMaxHz.
+- bands model.
+- directionalEnabled: bool.
+- gamma: real.
+- directionThreshold: real.
+- currentUtcText: string.
+- retuning: bool.
+
+AntennaPanel:
+- azimuthDeg: real.
+- turnSpeedPerSec: real.
+- tracksCount: int.
+- ttlSeconds: int.
+- targetBearings: array/model.
+- beamAzimuthDeg: real.
+- beamWidthDeg: real.
+- manualControlEnabled: bool.
+- commands: turnMinus10(), turnMinus1(), stop(), turnPlus1(), turnPlus10().
+
+ResultTablePanel:
+- detections model:
+  time, azimuthDeg, bandId, frequencyGHz, amplitude, status.
+- maxRows visible: about 4 rows in SVG.
+
+FooterStatusBar:
+- programStatus.
+- bcoStatus.
+- antennaStatus.
+- recordingStatus.
+- diagnosticsText.
+- sampleIndexStatus.
+
+QML implementation guidance
+---------------------------
+1. Сделать Theme.qml / DesignTokens.qml в первую очередь.
+2. Создать повторно используемые компоненты Panel и StatusChip.
+3. Не копировать SVG path в QML для всего интерфейса.
+4. Спектр и waterfall должны оставаться data-driven.
+5. Антенную шкалу лучше рисовать Repeater/Canvas/Shape, а не статичным SVG.
+6. Таблицу реализовать как модель + delegate/TableView.
+7. Использовать SVG как overlay в debug-режиме для сверки layout.
+8. При переносе в существующий Main.qml сохранить текущую архитектуру RowLayout/ColumnLayout, но привести визуальные пропорции к SVG.
+9. Все цвета band должны быть едиными между SpectrumView, WaterfallView, Antenna markers и таблицей.
+10. Все числовые значения и телеметрию выводить моноширинным шрифтом.
+
+Debug overlay idea
+------------------
+Для сверки QML с макетом можно добавить временный overlay:
+
+Image {
+    source: "qrc:/design/siriusscope-ui-concept.svg"
+    anchors.fill: parent
+    fillMode: Image.PreserveAspectFit
+    opacity: 0.25
+    visible: debugDesignOverlay
+    z: 999
+}
+
+Порядок разработки по этому описанию
+------------------------------------
+Шаг 1. Создать Theme.qml с палитрой из этого файла.
+Шаг 2. Стилизовать Main.qml: фон, spacing, отступы, общий тёмный вид.
+Шаг 3. Стилизовать SpectrumView: панель, график, сетка, оси, bands.
+Шаг 4. Стилизовать WaterfallView: фон, overlays, legend controls.
+Шаг 5. Переработать AntennaIndicator в визуальный вид SVG.
+Шаг 6. Добавить ResultTablePanel, если его ещё нет в текущей QML-структуре.
+Шаг 7. Превратить FooterDataView в FooterStatusBar.
+Шаг 8. Подключить реальные данные C++ backend через properties/models.
+
+Критерии визуального совпадения
+-------------------------------
+- Общий фон: почти чёрный, без светлых областей.
+- Панели имеют тонкие сине-серые границы и лёгкий gradient.
+- Верхний toolbar компактный, высота около 40 px.
+- Левая рабочая область визуально доминирует.
+- Спектр занимает верхнюю часть левой области, waterfall — нижнюю большую часть.
+- Правая панель антенны должна быть приборной, с крупной круговой шкалой.
+- Таблица событий компактная, не должна визуально конкурировать с антенной.
+- Статусная строка снизу должна выглядеть как диагностическая полоса с chip-элементами.
+- Цвета B1-B5 и статусы должны быть консистентными во всех местах интерфейса.
+

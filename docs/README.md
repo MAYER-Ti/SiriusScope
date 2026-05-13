@@ -62,6 +62,7 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 
 - `hardware/interfaces-and-protocols.md` — hardware adapter boundaries, protocol-version rules, and simulator compatibility.
 - `hardware/bco-udp-protocol.md` — BCO UDP data stream format. May contain `TBD` sections until the real protocol is finalized.
+- `hardware/bco-control-protocol.md` — BCO control protocol for reception ranges, dwell time, filters, polarization, attenuators, diagnostics, and BCO-side RPU control. Planned; use `TBD` sections until the protocol is provided.
 - `hardware/antenna-tcp-protocol.md` — antenna / rotating device TCP messages. May contain `TBD` sections until the real protocol is finalized.
 - `hardware/simulator.md` — requirements for the software simulator.
 
