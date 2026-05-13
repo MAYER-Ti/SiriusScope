@@ -24,27 +24,70 @@ class WaterfallRingBuffer : public QObject
     Q_PROPERTY(double globalMaxHz READ globalMaxHz CONSTANT)
 
 public:
+    /*!
+     *  \brief Creates a fixed-size ring buffer for waterfall rows.
+     *  \param[in] nbins Number of frequency bins per row.
+     *  \param[in] height Number of rows retained in memory.
+     *  \param[in] globalMinHz Lower global frequency bound, in hertz.
+     *  \param[in] globalMaxHz Upper global frequency bound, in hertz.
+     *  \param[in] parent Optional Qt object parent.
+     */
     explicit WaterfallRingBuffer(int nbins,
                                  int height,
                                  double globalMinHz = 0.0,
                                  double globalMaxHz = 0.0,
                                  QObject *parent = nullptr);
 
+    /*!
+     *  \brief Appends one row and advances the atomic write index.
+     *  \param[in] line Pointer to nbins amplitude/color values.
+     *  \param[in] nbins Number of values in line.
+     *  \param[in] generationId Viewport/data generation identifier for the row.
+     */
     void pushLine(const uint16_t *line, int nbins, uint64_t generationId);
 
+    /*!
+     *  \brief Returns the next write position as a monotonically increasing index.
+     *  \return Atomic write index.
+     */
     uint64_t writeIndex() const noexcept
     {
         return m_writeIndex.load(std::memory_order_acquire);
     }
+    /*!
+     *  \brief Returns the most recent viewport/data generation identifier.
+     *  \return Atomic generation id.
+     */
     uint64_t generationId() const noexcept
     {
         return m_generationId.load(std::memory_order_acquire);
     }
+    /*!
+     *  \brief Returns the number of frequency bins per row.
+     *  \return Row width in bins.
+     */
     int nbins() const noexcept { return m_nbins; }
+    /*!
+     *  \brief Returns the number of retained rows.
+     *  \return Ring-buffer height in rows.
+     */
     int height() const noexcept { return m_height; }
+    /*!
+     *  \brief Returns the lower global frequency bound.
+     *  \return Frequency in hertz.
+     */
     double globalMinHz() const noexcept { return m_globalMinHz; }
+    /*!
+     *  \brief Returns the upper global frequency bound.
+     *  \return Frequency in hertz.
+     */
     double globalMaxHz() const noexcept { return m_globalMaxHz; }
 
+    /*!
+     *  \brief Returns a pointer to a retained row by physical row index.
+     *  \param[in] row Physical row index inside [0, height()).
+     *  \return Pointer to the first row value, or nullptr for an invalid row.
+     */
     const uint16_t *linePtr(int row) const noexcept;
 
 private:

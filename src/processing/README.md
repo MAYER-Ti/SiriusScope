@@ -1,10 +1,19 @@
 # Processing layer
 
-Processing layer scaffold for SiriusScope.
+Processing layer for SiriusScope.
 
 Responsibilities:
-- sample validation;
-- aggregation and row preparation;
-- bearing-related calculations built on core contracts.
+- accept Core/Domain `SignalSample` values;
+- validate samples through Core/Domain rules;
+- reject invalid input diagnostically;
+- aggregate accepted samples by band, beam, frequency bin, and `sampleIndex`;
+- prepare UI-independent Waterfall rows;
+- prepare intermediate two-beam bearing input frames.
 
-This file is a placeholder for architectural stage 1.1.
+Dependency direction:
+
+```text
+Processing -> Core
+```
+
+This layer must not depend on QML, Qt Quick, UI components, hardware adapters, protocol parsers, or storage implementations.

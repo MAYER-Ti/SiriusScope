@@ -1,0 +1,46 @@
+PROJECT_NAME           = "SiriusScope"
+PROJECT_BRIEF          = "Qt/C++ desktop application for the Sirius radio-technical reconnaissance system"
+OUTPUT_DIRECTORY       = build/docs/doxygen
+CREATE_SUBDIRS         = NO
+
+INPUT                  = src/core \
+                         src/processing \
+                         src/app \
+                         docs/development/doxygen.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h \
+                         *.md
+USE_MDFILE_AS_MAINPAGE = docs/development/doxygen.md
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+HTML_OUTPUT            = html
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+BUILTIN_STL_SUPPORT    = YES
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_AS_ERROR          = NO
+QUIET                  = YES
+
+STRIP_FROM_PATH        = .
+FULL_PATH_NAMES        = YES
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = YES
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = Q_OBJECT= \
+                         "Q_PROPERTY(x)=" \
+                         "Q_ENUM(x)=" \
+                         Q_INVOKABLE= \
+                         FINAL=

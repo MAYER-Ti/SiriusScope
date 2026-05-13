@@ -24,9 +24,18 @@ class WaterfallControllerStub : public QObject
     Q_PROPERTY(QObject *ringBuffer READ ringBuffer CONSTANT)
 
 public:
+    /*!
+     *  \brief Creates a demo controller bound to a frequency viewport model.
+     *  \param[in] viewportModel Source of visible frequency-range changes.
+     *  \param[in] parent Optional Qt object parent.
+     */
     explicit WaterfallControllerStub(FrequencyViewportModel *viewportModel,
                                      QObject *parent = nullptr);
 
+    /*!
+     *  \brief Returns the QObject wrapper for the shared waterfall ring buffer.
+     *  \return Ring buffer exposed to QML and WaterfallItem.
+     */
     QObject *ringBuffer() const;
 
 private slots:

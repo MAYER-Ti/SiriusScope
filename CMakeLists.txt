@@ -33,7 +33,17 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
 )
 
 set(SIRIUSSCOPE_CORE_SOURCES
+    src/core/domain_constraints.h
+    src/core/domain_constraints.cpp
+    src/core/domain_models.h
+    src/core/domain_models.cpp
+    src/core/domain_validation.h
     src/core/layer_placeholder.cpp
+)
+
+set(SIRIUSSCOPE_PROCESSING_SOURCES
+    src/processing/sample_processor.h
+    src/processing/sample_processor.cpp
 )
 
 add_library(siriusscope_core STATIC
@@ -44,7 +54,34 @@ target_compile_features(siriusscope_core
     PUBLIC cxx_std_20
 )
 
+target_include_directories(siriusscope_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+add_library(siriusscope_processing STATIC
+    ${SIRIUSSCOPE_PROCESSING_SOURCES}
+)
+
+target_compile_features(siriusscope_processing
+    PUBLIC cxx_std_20
+)
+
+target_include_directories(siriusscope_processing
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(siriusscope_processing
+    PUBLIC
+        siriusscope_core
+)
+
 add_library(siriusscope_processing_iface INTERFACE)
+target_link_libraries(siriusscope_processing_iface
+    INTERFACE
+        siriusscope_processing
+)
 add_library(siriusscope_infrastructure_iface INTERFACE)
 add_library(siriusscope_hardware_iface INTERFACE)
 
@@ -118,3 +155,8 @@ install(TARGETS appSiriusScope
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

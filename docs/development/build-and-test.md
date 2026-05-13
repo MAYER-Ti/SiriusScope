@@ -247,6 +247,7 @@ Required:
 Recommended:
 
 * check links and paths manually.
+* run `doxygen docs/Doxyfile` when Doxygen comments or Doxygen config changed and the tool is installed.
 
 ### QML-only visual change
 
