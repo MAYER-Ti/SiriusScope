@@ -1,0 +1,12 @@
+[settings]
+os=Windows
+arch=x86_64
+compiler=gcc
+compiler.version=13
+compiler.libcxx=libstdc++11
+compiler.cppstd=gnu20
+build_type=Debug
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
+tools.build:compiler_executables={"c": "C:/Qt/Tools/mingw1310_64/bin/gcc.exe", "cpp": "C:/Qt/Tools/mingw1310_64/bin/g++.exe"}
