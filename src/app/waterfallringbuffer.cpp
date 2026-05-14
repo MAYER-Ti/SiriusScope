@@ -4,8 +4,11 @@
  */
 #include "waterfallringbuffer.h"
 
+#include "waterfallstorage.h"
+
 #include <algorithm>
 #include <cstring>
+#include <QMutexLocker>
 
 WaterfallRingBuffer::WaterfallRingBuffer(int nbins,
                                          int height,
@@ -35,12 +38,63 @@ void WaterfallRingBuffer::pushLine(const uint16_t *line, int nbins, uint64_t gen
         return;
     }
 
-    m_generationId.store(generationId, std::memory_order_release);
+    {
+        QMutexLocker locker(&m_mutex);
 
-    const uint64_t index = m_writeIndex.load(std::memory_order_relaxed);
-    const int row = static_cast<int>(index % static_cast<uint64_t>(m_height));
-    uint16_t *dest = m_data.data() + static_cast<qsizetype>(row) * m_nbins;
-    std::memcpy(dest, line, static_cast<size_t>(m_nbins) * sizeof(uint16_t));
+        if (m_height > 1) {
+            std::memmove(m_data.data() + m_nbins,
+                         m_data.constData(),
+                         static_cast<size_t>(m_nbins) * static_cast<size_t>(m_height - 1)
+                             * sizeof(uint16_t));
+        }
 
-    m_writeIndex.store(index + 1, std::memory_order_release);
+        uint16_t *dest = m_data.data();
+        std::memcpy(dest, line, static_cast<size_t>(m_nbins) * sizeof(uint16_t));
+
+        const int populatedRows = std::min(m_height, m_populatedRows.load(std::memory_order_relaxed) + 1);
+        m_populatedRows.store(populatedRows, std::memory_order_release);
+        m_generationId.store(generationId, std::memory_order_release);
+        m_writeIndex.fetch_add(1, std::memory_order_release);
+    }
+
+    emit contentsChanged();
+}
+
+void WaterfallRingBuffer::replaceRows(const QVector<WaterfallRow>& rows, uint64_t generationId)
+{
+    {
+        QMutexLocker locker(&m_mutex);
+
+        std::fill(m_data.begin(), m_data.end(), uint16_t{0});
+
+        const int rowCount = std::min(m_height, static_cast<int>(rows.size()));
+        for (int row = 0; row < rowCount; ++row) {
+            const auto& source = rows.at(row).bins;
+            if (source.isEmpty()) {
+                continue;
+            }
+
+            const int binsToCopy = std::min(m_nbins, static_cast<int>(source.size()));
+            uint16_t *dest = m_data.data() + static_cast<qsizetype>(row) * m_nbins;
+            std::memcpy(dest, source.constData(), static_cast<size_t>(binsToCopy) * sizeof(uint16_t));
+        }
+
+        m_populatedRows.store(rowCount, std::memory_order_release);
+        m_generationId.store(generationId, std::memory_order_release);
+        m_writeIndex.fetch_add(1, std::memory_order_release);
+    }
+
+    emit contentsChanged();
+}
+
+bool WaterfallRingBuffer::copyLine(int row, uint16_t *destination, int nbins) const
+{
+    if (!destination || nbins != m_nbins || row < 0 || row >= m_height || m_nbins <= 0) {
+        return false;
+    }
+
+    QMutexLocker locker(&m_mutex);
+    const uint16_t *src = m_data.constData() + static_cast<qsizetype>(row) * m_nbins;
+    std::memcpy(destination, src, static_cast<size_t>(m_nbins) * sizeof(uint16_t));
+    return true;
 }

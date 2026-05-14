@@ -1,0 +1,108 @@
+#ifndef QMLSINGLETONS_H
+#define QMLSINGLETONS_H
+
+#include "appstate.h"
+#include "frequencyviewportmodel.h"
+#include "spectrumcontrollerstub.h"
+#include "spectrumdecimator.h"
+#include "waterfallcontrollerstub.h"
+
+#include <QJSEngine>
+#include <QQmlEngine>
+#include <QtQml/qqmlregistration.h>
+
+namespace siriusscope::app {
+
+struct AppStateQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(AppState)
+    QML_NAMED_ELEMENT(AppState)
+    QML_SINGLETON
+
+public:
+    inline static AppState *instance = nullptr;
+
+    static AppState *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct FrequencyViewportModelQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(FrequencyViewportModel)
+    QML_NAMED_ELEMENT(FrequencyViewportModel)
+    QML_SINGLETON
+
+public:
+    inline static FrequencyViewportModel *instance = nullptr;
+
+    static FrequencyViewportModel *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct SpectrumControllerQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(SpectrumControllerStub)
+    QML_NAMED_ELEMENT(SpectrumController)
+    QML_SINGLETON
+
+public:
+    inline static SpectrumControllerStub *instance = nullptr;
+
+    static SpectrumControllerStub *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct SpectrumDecimatorQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(SpectrumDecimator)
+    QML_NAMED_ELEMENT(SpectrumDecimator)
+    QML_SINGLETON
+
+public:
+    inline static SpectrumDecimator *instance = nullptr;
+
+    static SpectrumDecimator *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct WaterfallControllerQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(WaterfallControllerStub)
+    QML_NAMED_ELEMENT(WaterfallController)
+    QML_SINGLETON
+
+public:
+    inline static WaterfallControllerStub *instance = nullptr;
+
+    static WaterfallControllerStub *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+} // namespace siriusscope::app
+
+#endif // QMLSINGLETONS_H

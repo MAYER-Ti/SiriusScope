@@ -2,16 +2,18 @@
  *  \brief Точка входа приложения и регистрация типов QML.
  */
 #include <QGuiApplication>
+#include <QFile>
+#include <QDebug>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 
 #include "appstate.h"
 #include "frequencyviewportmodel.h"
+#include "qmlsingletons.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "waterfallcontrollerstub.h"
-#include "waterfallitem.h"
 
 /*! \brief Инициализирует Qt/QML и запускает цикл обработки событий.
  *  \param[in] argc Количество аргументов командной строки.
@@ -20,9 +22,29 @@
  */
 int main(int argc, char *argv[])
 {
+    qputenv("QT_QUICK_CONTROLS_STYLE", QByteArrayLiteral("Basic"));
+
     QGuiApplication app(argc, argv);
 
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
+
+    FrequencyViewportModel viewportModel;
+    SpectrumControllerStub spectrumController;
+    SpectrumDecimator spectrumDecimator;
+    WaterfallControllerStub waterfallController(&viewportModel);
+
+    siriusscope::app::AppStateQmlSingleton::instance = &AppState::instance();
+    siriusscope::app::FrequencyViewportModelQmlSingleton::instance = &viewportModel;
+    siriusscope::app::SpectrumControllerQmlSingleton::instance = &spectrumController;
+    siriusscope::app::SpectrumDecimatorQmlSingleton::instance = &spectrumDecimator;
+    siriusscope::app::WaterfallControllerQmlSingleton::instance = &waterfallController;
+
+#ifdef QT_DEBUG
+    qDebug() << "waterfall.vert.qsb exists"
+             << QFile(QStringLiteral(":/SiriusScope/shaders/waterfall.vert.qsb")).exists();
+    qDebug() << "waterfall.frag.qsb exists"
+             << QFile(QStringLiteral(":/SiriusScope/shaders/waterfall.frag.qsb")).exists();
+#endif
 
     QQmlApplicationEngine engine;
     QObject::connect(
@@ -31,52 +53,6 @@ int main(int argc, char *argv[])
         &app,
         []() { QCoreApplication::exit(-1); },
         Qt::QueuedConnection);
-
-    qmlRegisterSingletonInstance(
-        "SiriusScope",
-        1, 0,
-        "AppState",
-        &AppState::instance()
-        );
-
-    qmlRegisterType<WaterfallItem>(
-        "SiriusScope",
-        1, 0,
-        "WaterfallItem"
-        );
-
-    FrequencyViewportModel viewportModel;
-    SpectrumControllerStub spectrumController;
-    SpectrumDecimator spectrumDecimator;
-    WaterfallControllerStub waterfallController(&viewportModel);
-
-    qmlRegisterSingletonInstance(
-        "SiriusScope",
-        1, 0,
-        "FrequencyViewportModel",
-        &viewportModel
-        );
-
-    qmlRegisterSingletonInstance(
-        "SiriusScope",
-        1, 0,
-        "SpectrumController",
-        &spectrumController
-        );
-
-    qmlRegisterSingletonInstance(
-        "SiriusScope",
-        1, 0,
-        "SpectrumDecimator",
-        &spectrumDecimator
-        );
-
-    qmlRegisterSingletonInstance(
-        "SiriusScope",
-        1, 0,
-        "WaterfallController",
-        &waterfallController
-        );
 
     engine.loadFromModule("SiriusScope", "Main");
 

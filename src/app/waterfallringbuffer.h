@@ -6,10 +6,13 @@
 #define WATERFALLRINGBUFFER_H
 
 #include <QObject>
+#include <QMutex>
 #include <QVector>
 
 #include <atomic>
 #include <cstdint>
+
+struct WaterfallRow;
 
 /*!
  *  \class WaterfallRingBuffer
@@ -46,6 +49,8 @@ public:
      */
     void pushLine(const uint16_t *line, int nbins, uint64_t generationId);
 
+    void replaceRows(const QVector<WaterfallRow>& rows, uint64_t generationId);
+
     /*!
      *  \brief Возвращает следующую позицию записи как монотонно растущий индекс.
      *  \return Атомарный индекс записи.
@@ -72,6 +77,10 @@ public:
      *  \return Высота кольцевого буфера в строках.
      */
     int height() const noexcept { return m_height; }
+    int populatedRows() const noexcept
+    {
+        return m_populatedRows.load(std::memory_order_acquire);
+    }
     /*!
      *  \brief Возвращает нижнюю глобальную границу частоты.
      *  \return Частота, Гц.
@@ -89,11 +98,17 @@ public:
      *  \return Указатель на первое значение строки или nullptr для неверной строки.
      */
     const uint16_t *linePtr(int row) const noexcept;
+    bool copyLine(int row, uint16_t *destination, int nbins) const;
+
+signals:
+    void contentsChanged();
 
 private:
     QVector<uint16_t> m_data;
     std::atomic<uint64_t> m_writeIndex{0};
     std::atomic<uint64_t> m_generationId{0};
+    std::atomic<int> m_populatedRows{0};
+    mutable QMutex m_mutex;
     int m_nbins = 0;
     int m_height = 0;
     double m_globalMinHz = 0.0;
