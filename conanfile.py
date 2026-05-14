@@ -8,27 +8,14 @@ class SiriusScopeConan(ConanFile):
     package_type = "application"
 
     settings = "os", "compiler", "build_type", "arch"
-    
-    default_options = {
-        "qt/*:qtdeclarative": True,
-        "qt/*:qtshadertools": True,
-        "qt/*:gui": True,
-        "qt/*:widgets": True,
-        "qt/*:opengl": "desktop",
-        "qt/*:with_x11": True,
-    }
-
-    def requirements(self):
-        self.requires("qt/6.10.1")
-
-    def build_requirements(self):
-        self.tool_requires("cmake/3.31.10")
-        self.tool_requires("ninja/1.12.1")
 
     def layout(self):
         cmake_layout(self)
 
     def generate(self):
+        # Qt, CMake, Ninja, and MinGW are intentionally provided by the local
+        # Qt Installer / QtCreator kit. Conan only generates dependency and
+        # toolchain metadata for third-party libraries managed by Conan.
         deps = CMakeDeps(self)
         deps.generate()
 

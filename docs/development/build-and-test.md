@@ -19,19 +19,15 @@ Target stack:
 - CTest;
 - Qt Test or Catch2 for unit tests.
 
-Target development version:
-
-```text
-Qt 6.10.1
-```
-
-Minimum acceptable Qt version for development may be:
+Minimum required Qt version:
 
 ```text
 Qt 6.8+
 ```
 
-provided that the code remains compatible with the target Qt version and required Qt Quick features.
+Qt, CMake, Ninja, and MinGW are local/system tools for the current Windows
+developer workflow. They are expected under `C:/Qt` from the standard Qt
+installer. Conan must not download or build these tools.
 
 ## 2. Expected repository layout
 
@@ -60,7 +56,7 @@ Rules:
 
 * keep generated files under `build/`;
 * create concrete CMake build trees as subdirectories of `build/`, not as the repository-root `build` directory itself;
-* use `build/build-codex` for Codex-assisted local verification unless a task requires a different build tree;
+* use `build/win-mingw-debug` for Windows MinGW verification unless a task requires a different build tree;
 * do not commit local build directories;
 * do not commit generated CMake cache files;
 * do not commit temporary IDE output unless explicitly required.
@@ -69,77 +65,66 @@ The repository-root `build/` directory is an umbrella directory for generated bu
 
 ## 3. Configure
 
-Default local verification build directory:
+Default Windows MinGW verification build directory:
 
 ```text
-build/build-codex
+build/win-mingw-debug
 ```
 
-Conan-first workflow is mandatory for all supported local and CI builds. Direct configure without Conan is a legacy-only fallback for emergency diagnostics and is not supported for regular development.
+The current supported Windows developer kit is QtCreator MinGW 13 with Ninja and
+a locally installed Qt 6.8+ from the standard Qt installer. The repository preset
+uses these default paths:
 
-### Debug build (mandatory Conan-first)
-
-```bash
-conan remote remove conancenter || true
-conan remote add conancenter https://center2.conan.io
-conan install . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug -c tools.system.package_manager:mode=install -c tools.system.package_manager:sudo=True --build=missing
-cmake --preset conan-debug
+```text
+C:/Qt/6.11.1/mingw_64
+C:/Qt/Tools/mingw1310_64
+C:/Qt/Tools/CMake_64
+C:/Qt/Tools/Ninja
 ```
 
-The provided Conan profiles in `conan/profiles/` define `compiler.cppstd=gnu20` to satisfy Qt package validation on ConanCenter.
-
-For reproducible dependency graphs, generate/update lockfile when updating dependencies:
+### Windows MinGW debug build
 
 ```bash
-conan lock create . -of build/build-codex/conan -pr:h conan/profiles/linux-gcc-debug -pr:b conan/profiles/linux-gcc-debug --lockfile-out=conan.lock
+cmake --preset qt-win-mingw-debug
+```
+
+Build and test:
+
+```bash
+cmake --build build/win-mingw-debug
+ctest --test-dir build/win-mingw-debug --output-on-failure
+```
+
+Inside QtCreator 19, open the project and select the `Qt 6.11.1 MinGW 13 Debug`
+CMake preset. If QtCreator has cached old targets, close the project and remove
+the local `.qtcreator/CMakeLists.txt.user` file before reopening.
+
+Conan is not required for the current no-third-party dependency graph. When a
+Conan-managed dependency is added later, generate/update lockfiles with the
+Windows MinGW profile:
+
+```bash
+conan lock create . -of build/win-mingw-debug/conan -pr:h conan/profiles/windows-mingw13-debug -pr:b conan/profiles/windows-mingw13-debug --lockfile-out=conan.lock
 ```
 
 The repository root `conanfile.py` is the Conan entry point and the only supported place for external dependency declaration.
 
-### Release build
-
-```bash
-conan install . -of build/build-release/conan -pr:h conan/profiles/linux-gcc-release -pr:b conan/profiles/linux-gcc-release -c tools.system.package_manager:mode=install -c tools.system.package_manager:sudo=True --build=missing
-cmake --preset conan-release
-```
-
-### Multi-config generators
-
-For generators such as Visual Studio or Ninja Multi-Config:
-
-```bash
-cmake -S . -B build/build-codex
-```
-
-Then specify configuration at build time:
-
-```bash
-cmake --build build/build-codex --config Debug
-cmake --build build/build-codex --config Release
-```
-
 If CMake reports `could not load cache`, the selected build tree is not configured. Run the configure command for that exact build directory before building.
 
-If CMake or Ninja fails during compiler detection because temporary files under `CMakeFiles/CMakeScratch` cannot be removed, retry with a fresh subdirectory under `build/`, for example `build/build-codex`. Do not create ad hoc build directories at repository root.
+If CMake or Ninja fails during compiler detection because temporary files under `CMakeFiles/CMakeScratch` cannot be removed, retry with a fresh subdirectory under `build/`, for example `build/win-mingw-debug`. Do not create ad hoc build directories at repository root.
 
 ## 4. Build
 
 ### Default build
 
 ```bash
-cmake --build build/build-codex
+cmake --build build/win-mingw-debug
 ```
 
 ### Parallel build
 
 ```bash
-cmake --build build/build-codex -j
-```
-
-### Release build with multi-config generator
-
-```bash
-cmake --build build/build-codex --config Release
+cmake --build build/win-mingw-debug -j
 ```
 
 ## 5. Run
@@ -152,23 +137,10 @@ appSiriusScope
 
 The exact runtime path depends on generator and platform.
 
-Typical Linux path:
-
-```bash
-./build/build-codex/appSiriusScope
-```
-
-For multi-config generators, the executable may be under a configuration subdirectory, for example:
-
-```bash
-./build/build-codex/Debug/appSiriusScope
-./build/build-codex/Release/appSiriusScope
-```
-
-On Windows with the current Ninja/MSYS-style build, the executable is expected at:
+On Windows with the current Ninja/MinGW build, the executable is expected at:
 
 ```text
-build/build-codex/appSiriusScope.exe
+build/win-mingw-debug/appSiriusScope.exe
 ```
 
 If the executable location differs, inspect the CMake build output or target properties.
@@ -178,22 +150,13 @@ If the executable location differs, inspect the CMake build output or target pro
 ### Run all tests
 
 ```bash
-ctest --test-dir build/build-codex --output-on-failure
+ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
 ### Run tests with verbose output
 
 ```bash
-ctest --test-dir build/build-codex --output-on-failure --verbose
-```
-
-### Run tests for a specific configuration
-
-For multi-config generators:
-
-```bash
-ctest --test-dir build/build-codex -C Debug --output-on-failure
-ctest --test-dir build/build-codex -C Release --output-on-failure
+ctest --test-dir build/win-mingw-debug --output-on-failure --verbose
 ```
 
 If CTest prints `No tests were found!!!`, the command itself succeeded but the current project configuration does not define test targets yet.
@@ -267,8 +230,8 @@ Recommended:
 Required:
 
 ```bash
-cmake --build build/build-codex
-ctest --test-dir build/build-codex --output-on-failure
+cmake --build build/win-mingw-debug
+ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
 Also required:
@@ -315,23 +278,14 @@ Required:
 Required:
 
 ```bash
-cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/build-codex
-ctest --test-dir build/build-codex --output-on-failure
-```
-
-For Conan-related changes or after third-party dependencies are introduced, also verify:
-
-```bash
-conan install . -of build/build-codex/conan -s build_type=Debug --build=missing
-cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=build/build-codex/conan/conan_toolchain.cmake
-cmake --build build/build-codex
-ctest --test-dir build/build-codex --output-on-failure
+cmake --preset qt-win-mingw-debug
+cmake --build build/win-mingw-debug
+ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
 Recommended:
 
-* also test Release configuration if the change affects compiler flags, optimization, packaging, or target properties.
+* also test Release configuration when a supported Release preset is added or when the change affects optimization or packaging.
 
 ## 10. UI manual smoke test
 
@@ -487,7 +441,7 @@ Do not add large dependencies for small utilities.
 Boost is part of the target development stack, but it must not be linked to a target before code actually uses it. On first real Boost usage:
 
 * pin a concrete Boost version in `conanfile.py`, for example `requires = "boost/<version>"`;
-* configure through `conan install` and `CMAKE_TOOLCHAIN_FILE`;
+* configure through Conan only when the dependency is actually introduced;
 * use `find_package(Boost REQUIRED COMPONENTS ...)` in CMake;
 * link only the required Boost components to the specific target that needs them.
 
@@ -528,8 +482,8 @@ Changed:
 - tests/domain/tst_timebase.cpp
 
 Checked:
-- cmake --build build/build-codex
-- ctest --test-dir build/build-codex --output-on-failure
+- cmake --build build/win-mingw-debug
+- ctest --test-dir build/win-mingw-debug --output-on-failure
 
 Notes:
 - Protocol timestamp integration remains TBD.
@@ -554,13 +508,7 @@ When Codex works on the repository:
 
 ## 10. Troubleshooting (Conan/CMake)
 
-- `Could not find package configuration file provided by Qt6`: run `conan install` for the same profile/build type and configure via the preset with Conan toolchain.
-- `CMAKE_TOOLCHAIN_FILE` points to missing file: verify `-of` path and preset path alignment (`build/.../conan/build/<Config>/generators/conan_toolchain.cmake`).
+- `Could not find package configuration file provided by Qt6`: verify that `C:/Qt/6.11.1/mingw_64/lib/cmake/Qt6/Qt6Config.cmake` exists, or update `CMAKE_PREFIX_PATH` in `CMakePresets.json` for the installed Qt version.
+- CMake uses MSYS2 instead of Qt Installer tools: remove the stale build directory or rerun configure with `--fresh`, then verify `CMAKE_CXX_COMPILER`, `CMAKE_MAKE_PROGRAM`, and `Qt6_DIR` in `CMakeCache.txt`.
 - Dependency drift between machines: regenerate and commit `conan.lock` after intentional dependency updates.
-- CI fails guard step: ensure configure uses `cmake --preset conan-debug` and cache contains `conan_toolchain.cmake`.
-
-- `opengl/system` fails with missing `libgl-dev`/`libgl1-mesa-dev`: install OS package (`sudo apt-get install -y libgl1-mesa-dev`) before `conan install`, or enable Conan system package installation mode.
-
-- `xorg/system` fails because many `libx*` and `libxcb*` dev packages are missing: run `conan install` with `-c tools.system.package_manager:mode=install` (CI default), or preinstall required X11/XCB development packages manually.
-
-- `apt-get update` fails with `/var/lib/apt/lists/lock` permission denied during Conan system requirements: add `-c tools.system.package_manager:sudo=True` to `conan install` (CI default), or run pre-install steps with elevated privileges.
+- CI fails guard step: ensure configure uses `cmake --preset qt-win-mingw-debug` and the cache points to `C:/Qt/Tools/mingw1310_64`, `C:/Qt/Tools/Ninja`, and `C:/Qt/6.11.1/mingw_64`.

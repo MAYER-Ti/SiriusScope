@@ -36,7 +36,6 @@ SiriusScope — настольное приложение на Qt/C++ для и�
 - C++20
 - Boost
 - Qt 6 с Qt Quick / QML
-- целевая версия Qt: 6.10.1
 - минимально допустимая версия Qt для разработки: 6.8+
 - CMake
 - Conan
@@ -74,14 +73,14 @@ Hardware Adapter Layer
 Стандартная локальная debug-сборка:
 
 ```bash
-cmake -S . -B build/build-debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/build-debug
+cmake --preset qt-win-mingw-debug
+cmake --build build/win-mingw-debug
 ```
 
-В Windows при текущей сборке через Ninja/MSYS исполняемый файл ожидается здесь:
+В Windows при текущей сборке через Qt Installer MinGW/Ninja исполняемый файл ожидается здесь:
 
 ```text
-build/build-debug/appSiriusScope.exe
+build/win-mingw-debug/appSiriusScope.exe
 ```
 
 ## Тесты
@@ -89,7 +88,7 @@ build/build-debug/appSiriusScope.exe
 Запуск CTest из настроенной директории сборки:
 
 ```bash
-ctest --test-dir build/build-debug --output-on-failure
+ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
 ## Документация
