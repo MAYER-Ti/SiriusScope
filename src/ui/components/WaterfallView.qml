@@ -112,7 +112,7 @@ Item {
                         readonly property real clampedMaxHz: Math.min(bandMaxHz, root.viewMaxHz)
                         readonly property real bandWidth: Math.max(0, clampedMaxHz - clampedMinHz)
 
-                        visible: model.enabled && bandWidth > 0
+                        visible: bandWidth > 0
                         x: root.xForHz(clampedMinHz)
                         y: 0
                         width: Math.max(0, root.xForHz(clampedMaxHz) - root.xForHz(clampedMinHz))

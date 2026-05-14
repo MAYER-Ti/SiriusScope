@@ -11,7 +11,6 @@ Item {
     property real centerHz: 0
     property real widthHz: 0
     property real thresholdAmplitude: 180
-    property bool enabled: true
     property color bandColor: Theme.bandColor(bandId)
     property color bandBorderColor: Theme.bandBorderColor(bandId)
     property color bandTextColor: Theme.bandTextColor(bandId)
@@ -19,26 +18,17 @@ Item {
     property real viewMaxHz: 0
     property real globalMinHz: 0
     property real globalMaxHz: 0
-    property real minWidthHz: 100e6
-    property real maxWidthHz: 500e6
-    property real minAmplitude: 0
-    property real maxAmplitude: 500
+    property bool settingsWindowOpen: false
     property bool panModifierActive: false
 
-    signal bandEdited(real centerHz, real widthHz, bool isFinal)
-    signal thresholdEdited(real thresholdAmplitude, bool isFinal)
-    signal enabledEdited(bool enabled, bool isFinal)
+    signal configureRequested(int bandId)
+    signal bandPreviewMoved(int bandId, real centerHz, real widthHz)
 
     readonly property real viewSpanHz: Math.max(1.0, viewMaxHz - viewMinHz)
     readonly property real bandMinHz: centerHz - widthHz * 0.5
     readonly property real bandMaxHz: centerHz + widthHz * 0.5
     readonly property real visibleMinHz: Math.max(viewMinHz, bandMinHz)
     readonly property real visibleMaxHz: Math.min(viewMaxHz, bandMaxHz)
-
-    property real _pendingCenterHz: centerHz
-    property real _pendingWidthHz: widthHz
-    property real _pendingThresholdAmplitude: thresholdAmplitude
-    property point _lastRootPoint: Qt.point(0, 0)
 
     anchors.fill: parent
     visible: visibleMaxHz > visibleMinHz
@@ -49,26 +39,26 @@ Item {
         width: Math.max(1, (visibleMaxHz - visibleMinHz) / viewSpanHz * parent.width)
         height: parent.height
         z: 2
-        color: enabled ? root.bandColor : "#444B55"
-        opacity: enabled ? 0.18 : 0.12
-        border.color: enabled ? root.bandBorderColor : "#5A6A74"
-        border.width: 1
+        color: root.bandColor
+        opacity: root.settingsWindowOpen ? 0.24 : 0.18
+        border.color: root.bandBorderColor
+        border.width: root.settingsWindowOpen ? 2 : 1
 
         Rectangle {
-            id: leftHandle
-            width: 8
+            id: leftEdge
+            width: 3
             height: parent.height
-            color: enabled ? root.bandBorderColor : "#5A6A74"
-            opacity: 1.0
+            color: root.bandBorderColor
+            opacity: 0.9
         }
 
         Rectangle {
-            id: rightHandle
-            width: 8
+            id: rightEdge
+            width: 3
             height: parent.height
             anchors.right: parent.right
-            color: enabled ? root.bandBorderColor : "#5A6A74"
-            opacity: 1.0
+            color: root.bandBorderColor
+            opacity: 0.9
         }
 
         Text {
@@ -78,7 +68,7 @@ Item {
             anchors.top: parent.top
             anchors.topMargin: 4
             text: "B" + (bandId + 1) + " " + thresholdAmplitude.toFixed(0)
-            color: enabled ? root.bandTextColor : Theme.textMuted
+            color: root.bandTextColor
             font.family: root.monoFontFamily
             font.pixelSize: 10
             font.weight: Font.DemiBold
@@ -89,24 +79,28 @@ Item {
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             hoverEnabled: true
-            enabled: !leftResize.containsMouse && !rightResize.containsMouse
 
             property bool dragging: false
             property real startRootX: 0
             property real startCenterHz: 0
 
             onPressed: (mouse) => {
-                if (mouse.button === Qt.LeftButton && panModifierActive) {
+                if (mouse.button === Qt.RightButton) {
+                    contextMenu.x = mouse.x
+                    contextMenu.y = mouse.y
+                    contextMenu.open()
+                    return
+                }
+
+                if (mouse.button !== Qt.LeftButton || panModifierActive || !settingsWindowOpen) {
+                    dragging = false
                     mouse.accepted = false
                     return
                 }
-                if (mouse.button === Qt.RightButton) {
-                    openThresholdPopupAt(bodyDrag, mouse.x, mouse.y)
-                    return
-                }
+
                 dragging = true
-                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
-                startRootX = _lastRootPoint.x
+                var rootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                startRootX = rootPoint.x
                 startCenterHz = centerHz
             }
 
@@ -114,10 +108,10 @@ Item {
                 if (!dragging) {
                     return
                 }
-                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
-                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
+                var rootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                var deltaHz = (rootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
-                scheduleBandChange(nextCenter, widthHz, false)
+                bandPreviewMoved(bandId, nextCenter, widthHz)
             }
 
             onReleased: (mouse) => {
@@ -125,229 +119,55 @@ Item {
                     return
                 }
                 dragging = false
-                _lastRootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
-                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
+                var rootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
+                var deltaHz = (rootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
-                scheduleBandChange(nextCenter, widthHz, true)
+                bandPreviewMoved(bandId, nextCenter, widthHz)
             }
         }
 
-        MouseArea {
-            id: leftResize
-            width: leftHandle.width
-            height: parent.height
-            anchors.left: parent.left
-            acceptedButtons: Qt.LeftButton
-            hoverEnabled: true
-            cursorShape: Qt.SizeHorCursor
-            z: 3
+        Popup {
+            id: contextMenu
+            width: 132
+            height: 34
+            padding: 2
+            modal: false
+            focus: true
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-            property bool resizing: false
-            property real startRootX: 0
-            property real startMinHz: 0
-            property real startMaxHz: 0
-
-            onPressed: (mouse) => {
-                if (panModifierActive) {
-                    mouse.accepted = false
-                    return
-                }
-                resizing = true
-                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
-                startRootX = _lastRootPoint.x
-                startMinHz = bandMinHz
-                startMaxHz = bandMaxHz
+            background: Rectangle {
+                color: Theme.panelBottom
+                border.color: Theme.panelBorder
+                radius: Theme.radiusInset
             }
 
-            onPositionChanged: (mouse) => {
-                if (!resizing) {
-                    return
-                }
-                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
-                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
-                var nextMin = startMinHz + deltaHz
-                var result = clampEdges(nextMin, startMaxHz)
-                scheduleBandChange(result.centerHz, result.widthHz, false)
-            }
+            contentItem: Rectangle {
+                color: configureMouse.containsMouse ? Theme.chipBackground : Theme.panelBottom
+                radius: Theme.radiusInset
 
-            onReleased: (mouse) => {
-                if (!resizing) {
-                    return
-                }
-                resizing = false
-                _lastRootPoint = root.mapFromItem(leftResize, mouse.x, mouse.y)
-                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
-                var nextMin = startMinHz + deltaHz
-                var result = clampEdges(nextMin, startMaxHz)
-                scheduleBandChange(result.centerHz, result.widthHz, true)
-            }
-        }
-
-        MouseArea {
-            id: rightResize
-            width: rightHandle.width
-            height: parent.height
-            anchors.right: parent.right
-            acceptedButtons: Qt.LeftButton
-            hoverEnabled: true
-            cursorShape: Qt.SizeHorCursor
-            z: 3
-
-            property bool resizing: false
-            property real startRootX: 0
-            property real startMinHz: 0
-            property real startMaxHz: 0
-
-            onPressed: (mouse) => {
-                if (panModifierActive) {
-                    mouse.accepted = false
-                    return
-                }
-                resizing = true
-                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
-                startRootX = _lastRootPoint.x
-                startMinHz = bandMinHz
-                startMaxHz = bandMaxHz
-            }
-
-            onPositionChanged: (mouse) => {
-                if (!resizing) {
-                    return
-                }
-                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
-                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
-                var nextMax = startMaxHz + deltaHz
-                var result = clampEdges(startMinHz, nextMax)
-                scheduleBandChange(result.centerHz, result.widthHz, false)
-            }
-
-            onReleased: (mouse) => {
-                if (!resizing) {
-                    return
-                }
-                resizing = false
-                _lastRootPoint = root.mapFromItem(rightResize, mouse.x, mouse.y)
-                var deltaHz = (_lastRootPoint.x - startRootX) / root.width * viewSpanHz
-                var nextMax = startMaxHz + deltaHz
-                var result = clampEdges(startMinHz, nextMax)
-                scheduleBandChange(result.centerHz, result.widthHz, true)
-            }
-        }
-    }
-
-    Timer {
-        id: bandPreviewTimer
-        interval: 80
-        repeat: false
-        onTriggered: {
-            SpectrumController.setBand(bandId, _pendingCenterHz, _pendingWidthHz, false)
-        }
-    }
-
-    Timer {
-        id: thresholdPreviewTimer
-        interval: 80
-        repeat: false
-        onTriggered: {
-            SpectrumController.setBandThreshold(bandId, _pendingThresholdAmplitude, false)
-        }
-    }
-
-    Popup {
-        id: thresholdPopup
-        modal: false
-        focus: true
-        width: 200
-        height: 120
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        background: Rectangle {
-            color: Theme.panelBottom
-            border.color: Theme.panelBorder
-            radius: Theme.radiusInset
-        }
-
-        Column {
-            anchors.fill: parent
-            anchors.margins: 8
-            spacing: 8
-
-            Text {
-                text: qsTr("Порог амплитуды")
-                color: Theme.textPrimary
-                font.family: root.monoFontFamily
-                font.pixelSize: 10
-            }
-
-            Slider {
-                id: thresholdSlider
-                from: minAmplitude
-                to: maxAmplitude
-                value: thresholdAmplitude
-                onMoved: {
-                    scheduleThresholdChange(value, false)
-                }
-                onPressedChanged: {
-                    if (!pressed) {
-                        scheduleThresholdChange(value, true)
-                    }
-                }
-            }
-
-            Row {
-                spacing: 6
-                CheckBox {
-                    id: enabledCheck
-                    checked: enabled
-                    text: qsTr("Включено")
-                    onCheckedChanged: {
-                        enabledEdited(checked, true)
-                        SpectrumController.setBandEnabled(bandId, checked)
-                    }
-                }
                 Text {
-                    text: thresholdAmplitude.toFixed(0)
-                    color: Theme.textSecondary
-                    font.family: root.monoFontFamily
-                    font.pixelSize: 10
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    text: qsTr("Настроить")
+                    color: Theme.textPrimary
+                    font.family: Theme.monoFontFamily
+                    font.pixelSize: 12
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+
+                MouseArea {
+                    id: configureMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                        contextMenu.close()
+                        root.configureRequested(root.bandId)
+                    }
                 }
             }
         }
-    }
-
-    function scheduleBandChange(nextCenter, nextWidth, isFinal) {
-        _pendingCenterHz = nextCenter
-        _pendingWidthHz = nextWidth
-        bandEdited(nextCenter, nextWidth, isFinal)
-        if (isFinal) {
-            SpectrumController.setBand(bandId, nextCenter, nextWidth, true)
-        } else {
-            bandPreviewTimer.restart()
-        }
-    }
-
-    function scheduleThresholdChange(nextThresholdAmplitude, isFinal) {
-        _pendingThresholdAmplitude = nextThresholdAmplitude
-        thresholdEdited(nextThresholdAmplitude, isFinal)
-        if (isFinal) {
-            SpectrumController.setBandThreshold(bandId, nextThresholdAmplitude, true)
-        } else {
-            thresholdPreviewTimer.restart()
-        }
-    }
-
-    function clampedPopupCoordinate(value, popupSize, availableSize) {
-        if (availableSize <= popupSize) {
-            return 0
-        }
-        return Math.max(0, Math.min(value, availableSize - popupSize))
-    }
-
-    function openThresholdPopupAt(sourceItem, sourceX, sourceY) {
-        var clickPoint = root.mapFromItem(sourceItem, sourceX, sourceY)
-        thresholdPopup.x = clampedPopupCoordinate(clickPoint.x + 8, thresholdPopup.width, root.width)
-        thresholdPopup.y = clampedPopupCoordinate(clickPoint.y + 8, thresholdPopup.height, root.height)
-        thresholdPopup.open()
     }
 
     function clampCenter(nextCenter, currentWidth) {
@@ -358,28 +178,5 @@ Item {
             return (globalMinHz + globalMaxHz) * 0.5
         }
         return Math.min(maxCenter, Math.max(minCenter, nextCenter))
-    }
-
-    function clampEdges(nextMin, nextMax) {
-        var minHz = Math.min(nextMin, nextMax)
-        var maxHz = Math.max(nextMin, nextMax)
-
-        var width = maxHz - minHz
-        width = Math.max(minWidthHz, Math.min(maxWidthHz, width))
-
-        maxHz = minHz + width
-        if (minHz < globalMinHz) {
-            minHz = globalMinHz
-            maxHz = minHz + width
-        }
-        if (maxHz > globalMaxHz) {
-            maxHz = globalMaxHz
-            minHz = maxHz - width
-        }
-
-        return {
-            centerHz: (minHz + maxHz) * 0.5,
-            widthHz: width
-        }
     }
 }

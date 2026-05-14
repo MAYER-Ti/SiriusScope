@@ -8,7 +8,9 @@ ListModel {
         centerHz: 3.0e9
         widthHz: 5.0e8
         thresholdAmplitude: 180
-        enabled: true
+        inputAttenuatorDb: 0
+        outputAttenuatorDb: 0
+        settingsWindowOpen: false
         color: "#4BB4FF"
         borderColor: "#7FCBFF"
         textColor: "#DDF4FF"
@@ -18,7 +20,9 @@ ListModel {
         centerHz: 5.795e9
         widthHz: 4.10e8
         thresholdAmplitude: 160
-        enabled: true
+        inputAttenuatorDb: 0
+        outputAttenuatorDb: 0
+        settingsWindowOpen: false
         color: "#35D07F"
         borderColor: "#7CF3A9"
         textColor: "#E3FFF0"
@@ -28,7 +32,9 @@ ListModel {
         centerHz: 8.25e9
         widthHz: 5.0e8
         thresholdAmplitude: 190
-        enabled: true
+        inputAttenuatorDb: 0
+        outputAttenuatorDb: 0
+        settingsWindowOpen: false
         color: "#E5B84B"
         borderColor: "#FFD671"
         textColor: "#FFF2C5"
@@ -38,7 +44,9 @@ ListModel {
         centerHz: 9.55e9
         widthHz: 5.0e8
         thresholdAmplitude: 140
-        enabled: true
+        inputAttenuatorDb: 0
+        outputAttenuatorDb: 0
+        settingsWindowOpen: false
         color: "#E46BD4"
         borderColor: "#FF9AF0"
         textColor: "#FFE0FA"
@@ -48,7 +56,9 @@ ListModel {
         centerHz: 1.425e10
         widthHz: 5.0e8
         thresholdAmplitude: 170
-        enabled: true
+        inputAttenuatorDb: 0
+        outputAttenuatorDb: 0
+        settingsWindowOpen: false
         color: "#8A7CFF"
         borderColor: "#B6AEFF"
         textColor: "#ECE9FF"

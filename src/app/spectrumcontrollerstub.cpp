@@ -7,6 +7,8 @@
 #include <QtMath>
 #include <QDebug>
 
+#include <cmath>
+
 //! \brief Конструирует заглушку контроллера.
 SpectrumControllerStub::SpectrumControllerStub(QObject *parent)
     : QObject(parent)
@@ -72,6 +74,36 @@ void SpectrumControllerStub::setBandEnabled(int bandId, bool enabled)
                .arg(bandId)
                .arg(enabled);
     emit bandStateChanged(bandId, 0.0, 0.0, 0.0, enabled);
+}
+
+void SpectrumControllerStub::applyBandSettings(int bandId,
+                                               double centerHz,
+                                               double widthHz,
+                                               double thresholdAmplitude,
+                                               int inputAttenuatorDb,
+                                               int outputAttenuatorDb)
+{
+    if (bandId < 0 || !std::isfinite(centerHz) || !std::isfinite(widthHz)
+        || !std::isfinite(thresholdAmplitude) || widthHz <= 0.0) {
+        qWarning().noquote()
+            << QStringLiteral("applyBandSettings rejected invalid input id=%1 centerHz=%2 widthHz=%3 threshold=%4")
+                   .arg(bandId)
+                   .arg(centerHz, 0, 'f', 2)
+                   .arg(widthHz, 0, 'f', 2)
+                   .arg(thresholdAmplitude, 0, 'f', 1);
+        return;
+    }
+
+    qInfo().noquote()
+        << QStringLiteral("applyBandSettings id=%1 centerHz=%2 widthHz=%3 threshold=%4 inputAtt=%5 outputAtt=%6")
+               .arg(bandId)
+               .arg(centerHz, 0, 'f', 2)
+               .arg(widthHz, 0, 'f', 2)
+               .arg(thresholdAmplitude, 0, 'f', 1)
+               .arg(inputAttenuatorDb)
+               .arg(outputAttenuatorDb);
+
+    emit bandStateChanged(bandId, centerHz, widthHz, thresholdAmplitude, true);
 }
 
 /*!

@@ -136,6 +136,7 @@ qt6_add_qml_module(appSiriusScope
         src/ui/components/TopToolbar.qml
         src/ui/components/SpectrumView/SpectrumView.qml
         src/ui/components/SpectrumView/BandItem.qml
+        src/ui/components/SpectrumView/BandSettingsDialog.qml
         src/ui/components/AntennaIndicator/Indicator.qml
         src/ui/components/AntennaIndicator/TargetTracker.qml
         src/ui/components/AntennaIndicator/AntennaIndicator.qml

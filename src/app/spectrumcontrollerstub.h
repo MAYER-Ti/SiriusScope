@@ -48,6 +48,21 @@ public slots:
      *  \param[in] enabled Включена ли полоса.
      */
     void setBandEnabled(int bandId, bool enabled);
+    /*!
+     *  \brief Принимает полную конфигурацию полосы от прикладного UI-сценария.
+     *  \param[in] bandId Идентификатор полосы.
+     *  \param[in] centerHz Центральная частота, Гц.
+     *  \param[in] widthHz Ширина полосы, Гц.
+     *  \param[in] thresholdAmplitude Амплитудный фильтр.
+     *  \param[in] inputAttenuatorDb Входной аттенюатор, дБ.
+     *  \param[in] outputAttenuatorDb Выходной аттенюатор, дБ.
+     */
+    void applyBandSettings(int bandId,
+                           double centerHz,
+                           double widthHz,
+                           double thresholdAmplitude,
+                           int inputAttenuatorDb,
+                           int outputAttenuatorDb);
 
 signals:
     /*!
