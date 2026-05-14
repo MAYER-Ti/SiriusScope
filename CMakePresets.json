@@ -5,51 +5,121 @@
     "minor": 23,
     "patch": 0
   },
+
   "configurePresets": [
     {
-      "name": "conan-debug",
-      "displayName": "Conan Debug",
-      "generator": "Ninja",
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja"
+    },
+
+    {
+      "name": "conan-debug-linux",
+      "inherits": "base",
+      "displayName": "Conan Debug Linux",
       "binaryDir": "${sourceDir}/build/build-codex",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/build-codex/conan/build/Debug/generators/conan_toolchain.cmake"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
       }
     },
+
     {
-      "name": "conan-release",
-      "displayName": "Conan Release",
-      "generator": "Ninja",
+      "name": "conan-release-linux",
+      "inherits": "base",
+      "displayName": "Conan Release Linux",
       "binaryDir": "${sourceDir}/build/build-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/build-release/conan/build/Release/generators/conan_toolchain.cmake"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+
+    {
+      "name": "qt-win-mingw-debug",
+      "inherits": "base",
+      "displayName": "Qt 6.11.1 MinGW 13 Debug",
+      "cmakeExecutable": "C:/Qt/Tools/CMake_64/bin/cmake.exe",
+      "binaryDir": "${sourceDir}/build/win-mingw-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/mingw_64",
+        "CMAKE_MAKE_PROGRAM": "C:/Qt/Tools/Ninja/ninja.exe",
+        "CMAKE_CXX_COMPILER": "C:/Qt/Tools/mingw1310_64/bin/g++.exe"
+      },
+      "environment": {
+        "PATH": "C:/Qt/Tools/mingw1310_64/bin;$penv{PATH}"
+      },
+      "vendor": {
+        "qt.io/QtCreator/1.0": {
+          "debugger": {
+            "DisplayName": "GNU gdb for Qt MinGW 13 64-bit",
+            "Abis": ["x86-windows-msys-pe-64bit"],
+            "Binary": "C:/Qt/Tools/mingw1310_64/bin/gdb.exe",
+            "EngineType": 1,
+            "Version": "13.1.0"
+          }
+        }
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
       }
     }
   ],
+
   "buildPresets": [
     {
       "name": "build-debug",
-      "configurePreset": "conan-debug"
-    },
-    {
-      "name": "build-release",
-      "configurePreset": "conan-release"
-    }
-  ],
-  "testPresets": [
-    {
-      "name": "test-debug",
-      "configurePreset": "conan-debug",
-      "output": {
-        "outputOnFailure": true
+      "configurePreset": "conan-debug-linux",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
       }
     },
     {
-      "name": "test-release",
-      "configurePreset": "conan-release",
+      "name": "build-release",
+      "configurePreset": "conan-release-linux",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "build-qt-win-mingw-debug",
+      "configurePreset": "qt-win-mingw-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+
+  "testPresets": [
+    {
+      "name": "test-qt-win-mingw-debug",
+      "configurePreset": "qt-win-mingw-debug",
       "output": {
         "outputOnFailure": true
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
       }
     }
   ]

@@ -240,25 +240,25 @@ For UI-only changes, run the application and manually verify the affected view.
 Configure debug build:
 
 ```bash
-cmake -S . -B build/build-codex -DCMAKE_BUILD_TYPE=Debug
+cmake --preset qt-win-mingw-debug
 ```
 
 Build:
 
 ```bash
-cmake --build build/build-codex
+cmake --build build/win-mingw-debug
 ```
 
 Run tests:
 
 ```bash
-ctest --test-dir build/build-codex --output-on-failure
+ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
 Keep concrete CMake build trees under `build/`; do not use the repository-root `build/` directory itself as the build tree. See `docs/development/build-and-test.md` for detailed build and test workflow.
 
 Use Qt 6.8+ with Qt Quick.
-The target development version is Qt 6.9.3.
+For the current Windows developer workflow, Qt, CMake, Ninja, and MinGW are installed locally through the standard Qt installer under `C:/Qt` and are selected by the `qt-win-mingw-debug` CMake preset, not downloaded by Conan.
 
 ## Change discipline
 
