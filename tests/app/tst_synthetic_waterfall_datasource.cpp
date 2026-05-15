@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
+
 class TestRunner
 {
 public:
@@ -26,11 +28,20 @@ private:
     int m_failed = 0;
 };
 
-SyntheticWaterfallDataSource makeSource(double directionBias)
+SyntheticWaterfallDataSource makeSource(double directionBias,
+                                        double directionPeriodSec = 0.0,
+                                        double directionPhaseRad = 0.0)
 {
     SyntheticWaterfallSourceConfig config;
     config.binCount = 101;
-    config.emitters = {SyntheticEmitter{0.5, 0.12, 0.8, directionBias, 0.0, 0.0}};
+    SyntheticEmitter emitter;
+    emitter.relativePosition = 0.5;
+    emitter.widthFraction = 0.12;
+    emitter.amplitude = 0.8;
+    emitter.directionBias = directionBias;
+    emitter.directionPeriodSec = directionPeriodSec;
+    emitter.directionPhaseRad = directionPhaseRad;
+    config.emitters = {emitter};
     return SyntheticWaterfallDataSource(config);
 }
 
@@ -160,6 +171,39 @@ void testZeroBiasGivesEqualBeams(TestRunner& test)
                  "zero bias gives equal left/right amplitudes");
 }
 
+void testDynamicBiasMovesFromLeftToRight(TestRunner& test)
+{
+    constexpr double kPeriodSec = 20.0;
+    const SyntheticWaterfallDataSource source = makeSource(0.0, kPeriodSec, -kPi * 0.5);
+    const QVector<SyntheticBandRange> bands = {SyntheticBandRange{50.0, 40.0}};
+
+    const WaterfallRow leftRow = source.nextRow(0, 0.0, 100.0, bands);
+    const WaterfallRow rightRow = source.nextRow(static_cast<qint64>(kPeriodSec * 500.0),
+                                                 0.0,
+                                                 100.0,
+                                                 bands);
+    const int leftStrongest = strongestIndex(leftRow);
+    const int rightStrongest = strongestIndex(rightRow);
+
+    test.require(leftStrongest >= 0
+                     && leftRow.bins.at(leftStrongest).left > leftRow.bins.at(leftStrongest).right,
+                 "dynamic bias starts with left dominance at negative sine phase");
+    test.require(rightStrongest >= 0
+                     && rightRow.bins.at(rightStrongest).right > rightRow.bins.at(rightStrongest).left,
+                 "dynamic bias moves to right dominance half a period later");
+}
+
+void testDynamicZeroPhaseStartsNeutral(TestRunner& test)
+{
+    const SyntheticWaterfallDataSource source = makeSource(-0.8, 20.0, 0.0);
+    const QVector<SyntheticBandRange> bands = {SyntheticBandRange{50.0, 40.0}};
+    const WaterfallRow row = source.nextRow(0, 0.0, 100.0, bands);
+    const int strongest = strongestIndex(row);
+
+    test.require(strongest >= 0 && row.bins.at(strongest).left == row.bins.at(strongest).right,
+                 "dynamic zero phase starts with neutral equal beams");
+}
+
 } // namespace
 
 int main()
@@ -174,6 +218,8 @@ int main()
     testNegativeBiasGivesLeftDominance(test);
     testPositiveBiasGivesRightDominance(test);
     testZeroBiasGivesEqualBeams(test);
+    testDynamicBiasMovesFromLeftToRight(test);
+    testDynamicZeroPhaseStartsNeutral(test);
 
     return test.result();
 }

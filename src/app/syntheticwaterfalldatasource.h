@@ -19,6 +19,8 @@ struct SyntheticEmitter
     double directionBias = 0.0;
     double wobbleFraction = 0.0;
     double phaseOffset = 0.0;
+    double directionPeriodSec = 0.0;
+    double directionPhaseRad = 0.0;
 };
 
 struct SyntheticWaterfallSourceConfig

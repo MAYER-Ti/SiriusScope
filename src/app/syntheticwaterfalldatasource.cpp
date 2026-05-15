@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iterator>
 #include <utility>
 
 namespace {
+
+constexpr double kTwoPi = 6.28318530717958647692;
+constexpr double kDirectionalStrength = 0.75;
 
 double bandMin(const SyntheticBandRange& band)
 {
@@ -32,19 +34,16 @@ int findBandIndex(double frequencyHz, const QVector<SyntheticBandRange>& bands)
 
 uint16_t toAmplitude(double normalized)
 {
-    return static_cast<uint16_t>(std::clamp(std::lround(std::clamp(normalized, 0.0, 1.0) * 65535.0),
-                                            0L,
-                                            65535L));
+    return static_cast<uint16_t>(std::clamp(normalized, 0.0, 1.0) * 65535.0);
 }
 
 WaterfallBeamBin splitByDirection(double amplitude, double directionBias)
 {
     const double bias = std::clamp(directionBias, -1.0, 1.0);
-    const double skew = 0.45 * std::abs(bias);
-    const double leftScale = bias < 0.0 ? 1.0 + skew : 1.0 - skew;
-    const double rightScale = bias > 0.0 ? 1.0 + skew : 1.0 - skew;
-    return WaterfallBeamBin{toAmplitude(amplitude * leftScale),
-                            toAmplitude(amplitude * rightScale)};
+    const double leftFactor = 1.0 - kDirectionalStrength * bias;
+    const double rightFactor = 1.0 + kDirectionalStrength * bias;
+    return WaterfallBeamBin{toAmplitude(amplitude * leftFactor),
+                            toAmplitude(amplitude * rightFactor)};
 }
 
 void addBin(WaterfallBeamBin& destination, const WaterfallBeamBin& source)
@@ -59,23 +58,30 @@ SyntheticWaterfallSourceConfig defaultConfig()
 {
     SyntheticWaterfallSourceConfig config;
     config.emitters = {
-        SyntheticEmitter{0.5, 0.035, 0.86, -0.70, 0.0, 0.0},
-        SyntheticEmitter{0.5, 0.035, 0.82, 0.60, 0.0, 0.0},
-        SyntheticEmitter{0.5, 0.035, 0.78, 0.0, 0.0, 0.0},
-        SyntheticEmitter{0.5, 0.035, 0.74, -0.45, 0.0, 0.0},
-        SyntheticEmitter{0.5, 0.035, 0.70, 0.45, 0.0, 0.0}
+        SyntheticEmitter{0.5, 0.035, 0.86, -0.70, 0.0, 0.0, 22.0, -1.57079632679489661923},
+        SyntheticEmitter{0.5, 0.035, 0.82, 0.60, 0.0, 0.0, 28.0, -0.45},
+        SyntheticEmitter{0.5, 0.035, 0.78, 0.0, 0.0, 0.0, 34.0, 0.85},
+        SyntheticEmitter{0.5, 0.035, 0.74, -0.45, 0.0, 0.0, 39.0, 1.80},
+        SyntheticEmitter{0.5, 0.035, 0.70, 0.45, 0.0, 0.0, 25.0, 2.70}
     };
     return config;
 }
 
-double directionBiasForBand(int bandIndex)
+double directionBiasForEmitter(const SyntheticEmitter& emitter, qint64 utcMs)
 {
-    constexpr double kBiases[] = {-0.70, 0.60, 0.0, -0.45, 0.45};
-    constexpr int kBiasCount = static_cast<int>(std::size(kBiases));
-    if (bandIndex < 0) {
-        return 0.0;
+    if (emitter.directionPeriodSec <= 0.0 || !std::isfinite(emitter.directionPeriodSec)) {
+        return emitter.directionBias;
     }
-    return kBiases[bandIndex % kBiasCount];
+
+    double timeInPeriodSec = std::fmod(static_cast<double>(utcMs) / 1000.0,
+                                       emitter.directionPeriodSec);
+    if (timeInPeriodSec < 0.0) {
+        timeInPeriodSec += emitter.directionPeriodSec;
+    }
+
+    const double phase = kTwoPi * timeInPeriodSec / emitter.directionPeriodSec
+        + emitter.directionPhaseRad;
+    return std::sin(phase);
 }
 
 } // namespace
@@ -145,9 +151,7 @@ WaterfallRow SyntheticWaterfallDataSource::nextRow(qint64 utcMs,
         const double centerHz = band ? band->centerHz : minHz + 0.5 * bandWidthHz;
         const double widthHz = std::max(1.0, emitter.widthFraction * bandWidthHz);
         const double peak = qExp(-qPow((frequencyHz - centerHz) / widthHz, 2.0));
-        const double directionBias = bandIndex >= 0 && bandIndex < m_config.emitters.size()
-            ? emitter.directionBias
-            : directionBiasForBand(bandIndex);
+        const double directionBias = directionBiasForEmitter(emitter, utcMs);
         addBin(row.bins[i], splitByDirection(peak * emitter.amplitude, directionBias));
     }
 

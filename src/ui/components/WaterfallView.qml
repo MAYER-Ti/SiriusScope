@@ -95,13 +95,13 @@ Item {
                 Rectangle {
                     anchors.fill: plotArea
                     color: Sirius.Theme.waterfallBackground
-                    z: -1
+                    z: 0
                 }
 
                 Canvas {
                     id: waterfallGrid
                     anchors.fill: plotArea
-                    z: 0
+                    z: 1
                     opacity: 0.9
 
                     onPaint: {
@@ -155,7 +155,7 @@ Item {
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
 
                     onWheel: (event) => {
-                        const steps = event.angleDelta.y / 120
+                        const steps = -event.angleDelta.y / 120
                         if (steps !== 0) {
                             Sirius.WaterfallController.scrollHistory(steps)
                         }
@@ -185,7 +185,7 @@ Item {
                         width: Math.max(0, root.xForHz(clampedMaxHz) - root.xForHz(clampedMinHz))
                         height: plotArea.height
                         opacity: 0.10
-                        z: 1
+                        z: 2
 
                         Rectangle {
                             anchors.fill: bandOverlayDelegate
@@ -319,8 +319,8 @@ Item {
             waterfallGrid.requestPaint()
         }
         function onHeightChanged() {
-            waterfallGrid.requestPaint()
             root.refreshTimeTicks()
+            waterfallGrid.requestPaint()
         }
     }
 
@@ -337,7 +337,7 @@ Item {
 
     Component.onCompleted: {
         root.retuning = !waterfall.freshData
-        waterfallGrid.requestPaint()
         root.refreshTimeTicks()
+        waterfallGrid.requestPaint()
     }
 }
