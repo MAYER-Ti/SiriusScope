@@ -7,14 +7,23 @@
 #include "frequencyviewportmodel.h"
 #include "waterfallringbuffer.h"
 
+#include <QDateTime>
 #include <QRandomGenerator>
+#include <QVariantMap>
 #include <QtMath>
+
+#include <cstdlib>
+#include <limits>
 
 namespace {
 constexpr int kDefaultBins = 1024;
 constexpr int kDefaultRows = 360;
-constexpr int kLineIntervalMs = 33;
+constexpr int kWaterfallLineIntervalMs = 1000;
 constexpr int kRetuneDelayMs = 160;
+constexpr int kRowsPerWheelStep = 5;
+constexpr int kMaxLoadedRows = 2400;
+constexpr qint64 kOneSecondMs = 1000;
+constexpr qint64 kOneDayMs = 24 * 60 * 60 * kOneSecondMs;
 }
 
 WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewportModel,
@@ -22,6 +31,8 @@ WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewpor
     : QObject(parent)
     , m_viewportModel(viewportModel)
     , m_ringBuffer(new WaterfallRingBuffer(kDefaultBins, kDefaultRows, 300e6, 18e9, this))
+    , m_storage(std::make_unique<InMemoryWaterfallStorage>())
+    , m_historyModel(kDefaultRows)
 {
     if (m_viewportModel) {
         connect(m_viewportModel,
@@ -33,12 +44,15 @@ WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewpor
     }
 
     m_lineBuffer.resize(m_ringBuffer->nbins());
+    seedSyntheticHistory();
+    reloadHistoryFromStorage();
+    updateRenderBuffer();
 
     m_retuneTimer.setInterval(kRetuneDelayMs);
     m_retuneTimer.setSingleShot(true);
     connect(&m_retuneTimer, &QTimer::timeout, this, &WaterfallControllerStub::commitViewport);
 
-    m_lineTimer.setInterval(kLineIntervalMs);
+    m_lineTimer.setInterval(kWaterfallLineIntervalMs);
     m_lineTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_lineTimer, &QTimer::timeout, this, &WaterfallControllerStub::pushSyntheticLine);
     m_lineTimer.start();
@@ -47,6 +61,72 @@ WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewpor
 QObject *WaterfallControllerStub::ringBuffer() const
 {
     return m_ringBuffer;
+}
+
+bool WaterfallControllerStub::liveMode() const noexcept
+{
+    return m_historyModel.liveMode();
+}
+
+QString WaterfallControllerStub::currentUtcText() const
+{
+    return m_historyModel.currentUtcText();
+}
+
+QVariantList WaterfallControllerStub::visibleTimeTicks(int pixelHeight) const
+{
+    QVariantList result;
+    const auto ticks = m_historyModel.visibleTimeTicks(pixelHeight);
+    result.reserve(ticks.size());
+
+    for (const auto& tick : ticks) {
+        QVariantMap item;
+        item.insert(QStringLiteral("y"), tick.y);
+        item.insert(QStringLiteral("label"), tick.label);
+        item.insert(QStringLiteral("major"), tick.major);
+        result.push_back(item);
+    }
+
+    return result;
+}
+
+void WaterfallControllerStub::scrollHistory(int wheelSteps)
+{
+    if (wheelSteps == 0) {
+        return;
+    }
+
+    const int rows = std::abs(wheelSteps) * kRowsPerWheelStep;
+    const int signedRows = wheelSteps > 0 ? rows : -rows;
+    const bool previousLiveMode = liveMode();
+    const QString previousUtcText = currentUtcText();
+
+    if (wheelSteps > 0) {
+        setHistoryLoading(true);
+        QMetaObject::invokeMethod(this, [this, signedRows, previousLiveMode, previousUtcText]() {
+            reloadHistoryFromStorage();
+            m_historyModel.scrollRows(signedRows);
+            updateRenderBuffer();
+            notifyPresentationChanged(previousLiveMode, previousUtcText);
+            setHistoryLoading(false);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    m_historyModel.scrollRows(signedRows);
+    updateRenderBuffer();
+    notifyPresentationChanged(previousLiveMode, previousUtcText);
+}
+
+void WaterfallControllerStub::jumpToLive()
+{
+    const bool previousLiveMode = liveMode();
+    const QString previousUtcText = currentUtcText();
+
+    reloadHistoryFromStorage();
+    m_historyModel.jumpToLive();
+    updateRenderBuffer();
+    notifyPresentationChanged(previousLiveMode, previousUtcText);
 }
 
 void WaterfallControllerStub::onViewportChanged(double minHz, double maxHz, const QString &)
@@ -66,6 +146,7 @@ void WaterfallControllerStub::commitViewport()
 {
     ++m_generationId;
     m_retuning = false;
+    updateRenderBuffer();
 }
 
 void WaterfallControllerStub::pushSyntheticLine()
@@ -76,11 +157,21 @@ void WaterfallControllerStub::pushSyntheticLine()
     if (m_retuning) {
         return;
     }
-    buildLine(m_viewMinHz, m_viewMaxHz);
-    m_ringBuffer->pushLine(m_lineBuffer.constData(), m_lineBuffer.size(), m_generationId);
+    const bool previousLiveMode = liveMode();
+    const QString previousUtcText = currentUtcText();
+    const WaterfallRow row = buildLine(m_viewMinHz,
+                                       m_viewMaxHz,
+                                       QDateTime::currentMSecsSinceEpoch());
+    m_storage->appendRow(row);
+    m_historyModel.appendLiveRow(row);
+
+    if (m_historyModel.liveMode()) {
+        updateRenderBuffer();
+    }
+    notifyPresentationChanged(previousLiveMode, previousUtcText);
 }
 
-void WaterfallControllerStub::buildLine(double minHz, double maxHz)
+WaterfallRow WaterfallControllerStub::buildLine(double minHz, double maxHz, qint64 utcMs)
 {
     const double span = qMax(1.0, maxHz - minHz);
     const int bins = m_lineBuffer.size();
@@ -101,4 +192,80 @@ void WaterfallControllerStub::buildLine(double minHz, double maxHz)
         value = qBound(0.0, value, 1.0);
         m_lineBuffer[i] = static_cast<uint16_t>(value * 65535.0);
     }
+
+    WaterfallRow row;
+    row.utcMs = utcMs;
+    row.firstSampleIndex = m_nextSampleIndex;
+    row.lastSampleIndex = m_nextSampleIndex;
+    row.viewMinHz = minHz;
+    row.viewMaxHz = maxHz;
+    row.bins = m_lineBuffer;
+    ++m_nextSampleIndex;
+    return row;
+}
+
+void WaterfallControllerStub::reloadHistoryFromStorage()
+{
+    if (!m_storage) {
+        return;
+    }
+
+    const auto rows = m_storage->loadRows(0,
+                                          std::numeric_limits<qint64>::max(),
+                                          kMaxLoadedRows);
+    m_historyModel.setRows(rows);
+}
+
+void WaterfallControllerStub::setHistoryLoading(bool loading)
+{
+    if (m_historyLoading == loading) {
+        return;
+    }
+    m_historyLoading = loading;
+    emit historyLoadingChanged();
+}
+
+void WaterfallControllerStub::updateRenderBuffer()
+{
+    if (!m_ringBuffer) {
+        return;
+    }
+
+    m_ringBuffer->replaceRows(m_historyModel.visibleRows(), ++m_generationId);
+    ++m_timeTicksVersion;
+    emit timeTicksChanged();
+}
+
+void WaterfallControllerStub::notifyPresentationChanged(bool previousLiveMode,
+                                                        const QString& previousUtcText)
+{
+    if (previousLiveMode != liveMode()) {
+        emit liveModeChanged();
+    }
+    if (previousUtcText != currentUtcText()) {
+        emit currentUtcTextChanged();
+    }
+}
+
+void WaterfallControllerStub::seedSyntheticHistory()
+{
+    if (!m_storage) {
+        return;
+    }
+
+    QVector<WaterfallRow> seedRows;
+    seedRows.reserve(500);
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 currentStart = now - 419 * kOneSecondMs;
+    const qint64 oldSessionStart = now - kOneDayMs - 79 * kOneSecondMs;
+
+    for (int i = 0; i < 80; ++i) {
+        seedRows.push_back(buildLine(m_viewMinHz, m_viewMaxHz, oldSessionStart + i * kOneSecondMs));
+    }
+    for (int i = 0; i < 420; ++i) {
+        seedRows.push_back(buildLine(m_viewMinHz, m_viewMaxHz, currentStart + i * kOneSecondMs));
+    }
+
+    m_storage->appendRows(seedRows);
 }

@@ -11,25 +11,18 @@ find_package(Qt6 REQUIRED COMPONENTS
     Gui
     Quick
     Qml
+    QuickControls2
     ShaderTools
 )
 qt_standard_project_setup(REQUIRES 6.8)
 
 set(SIRIUSSCOPE_APPLICATION_SOURCES
-    src/app/appstate.h
-    src/app/appstate.cpp
-    src/app/frequencyviewportmodel.h
-    src/app/frequencyviewportmodel.cpp
-    src/app/spectrumcontrollerstub.h
-    src/app/spectrumcontrollerstub.cpp
-    src/app/spectrumdecimator.h
-    src/app/spectrumdecimator.cpp
-    src/app/waterfallcontrollerstub.h
-    src/app/waterfallcontrollerstub.cpp
-    src/app/waterfallitem.h
-    src/app/waterfallitem.cpp
+    src/app/waterfallhistorymodel.h
+    src/app/waterfallhistorymodel.cpp
     src/app/waterfallringbuffer.h
     src/app/waterfallringbuffer.cpp
+    src/app/waterfallstorage.h
+    src/app/waterfallstorage.cpp
 )
 
 set(SIRIUSSCOPE_CORE_SOURCES
@@ -95,6 +88,7 @@ target_link_libraries(siriusscope_application
         Qt6::Gui
         Qt6::Quick
         Qt6::Qml
+        Qt6::QuickControls2
         siriusscope_core
         siriusscope_processing_iface
         siriusscope_infrastructure_iface
@@ -114,6 +108,11 @@ target_link_libraries(appSiriusScope
         siriusscope_application
 )
 
+target_include_directories(appSiriusScope
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+)
+
 set_source_files_properties(
     src/ui/BandModel.qml
     src/ui/Theme.qml
@@ -123,6 +122,22 @@ set_source_files_properties(
 qt6_add_qml_module(appSiriusScope
     URI SiriusScope
     VERSION 1.0
+    DEPENDENCIES
+        QtQuick
+    SOURCES
+        src/app/appstate.h
+        src/app/appstate.cpp
+        src/app/frequencyviewportmodel.h
+        src/app/frequencyviewportmodel.cpp
+        src/app/qmlsingletons.h
+        src/app/spectrumcontrollerstub.h
+        src/app/spectrumcontrollerstub.cpp
+        src/app/spectrumdecimator.h
+        src/app/spectrumdecimator.cpp
+        src/app/waterfallcontrollerstub.h
+        src/app/waterfallcontrollerstub.cpp
+        src/app/waterfallitem.h
+        src/app/waterfallitem.cpp
     QML_FILES
         src/ui/Main.qml
         src/ui/BandModel.qml
@@ -145,6 +160,10 @@ qt6_add_qml_module(appSiriusScope
 qt6_add_shaders(appSiriusScope "waterfall_shaders"
     PREFIX "/SiriusScope/shaders"
     BASE "src/ui/shaders"
+    BATCHABLE
+    HLSL 50
+    GLSL "100es,120,150"
+    MSL 12
     FILES
         src/ui/shaders/waterfall.vert
         src/ui/shaders/waterfall.frag

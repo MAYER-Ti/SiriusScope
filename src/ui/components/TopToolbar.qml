@@ -151,6 +151,10 @@ Rectangle {
                 color: "#183B2A"
                 border.color: Theme.statusGood
             }
+            onClicked: {
+                // TODO: route through SessionController.startListening() when session control exists.
+                WaterfallController.jumpToLive()
+            }
         }
 
         Button {

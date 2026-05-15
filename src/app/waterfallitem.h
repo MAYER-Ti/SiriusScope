@@ -5,8 +5,9 @@
 #ifndef WATERFALLITEM_H
 #define WATERFALLITEM_H
 
+#include <QMetaObject>
 #include <QQuickItem>
-#include <QTimer>
+#include <QtQml/qqmlregistration.h>
 
 class WaterfallRingBuffer;
 
@@ -17,6 +18,7 @@ class WaterfallRingBuffer;
 class WaterfallItem : public QQuickItem
 {
     Q_OBJECT
+    QML_ELEMENT
     Q_PROPERTY(QObject *ringBuffer READ ringBuffer WRITE setRingBuffer NOTIFY ringBufferChanged)
     Q_PROPERTY(bool freshData READ freshData NOTIFY freshDataChanged)
     Q_PROPERTY(qulonglong activeGenerationId READ activeGenerationId NOTIFY activeGenerationIdChanged)
@@ -73,9 +75,9 @@ protected:
 
 private:
     WaterfallRingBuffer *m_ringBuffer = nullptr;
+    QMetaObject::Connection m_ringBufferConnection;
     bool m_freshData = false;
     qulonglong m_activeGenerationId = 0;
-    QTimer m_updateTimer;
 };
 
 #endif // WATERFALLITEM_H

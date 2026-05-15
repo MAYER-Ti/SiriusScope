@@ -51,6 +51,7 @@ QtObject {
     readonly property int pageMargin: 16
     readonly property int panelPadding: 18
     readonly property int compactPadding: 10
+    readonly property int leftAxisWidth: 72
     readonly property int rowSpacing: 12
     readonly property string monoFontFamily: "JetBrains Mono, Consolas, monospace"
 

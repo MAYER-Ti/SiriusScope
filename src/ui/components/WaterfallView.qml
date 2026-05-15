@@ -1,32 +1,43 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
-import SiriusScope 1.0
+import SiriusScope 1.0 as Sirius
 
 Item {
     id: root
 
-    property real viewMinHz: FrequencyViewportModel.viewMinHz
-    property real viewMaxHz: FrequencyViewportModel.viewMaxHz
-    property real globalMinHz: FrequencyViewportModel.globalMinHz
-    property real globalMaxHz: FrequencyViewportModel.globalMaxHz
-    property var ringBuffer: WaterfallController.ringBuffer
+    property real viewMinHz: Sirius.FrequencyViewportModel.viewMinHz
+    property real viewMaxHz: Sirius.FrequencyViewportModel.viewMaxHz
+    property real globalMinHz: Sirius.FrequencyViewportModel.globalMinHz
+    property real globalMaxHz: Sirius.FrequencyViewportModel.globalMaxHz
+    property var ringBuffer: Sirius.WaterfallController.ringBuffer
     property bool retuning: true
     property bool directionalEnabled: true
     property real gamma: 0.7
     property real directionThreshold: 0.10
-    property string currentUtcText: "UTC 18:24:13"
+    property string currentUtcText: Sirius.WaterfallController.currentUtcText
+    property var timeTicks: []
+    property var timeTicksVersion: Sirius.WaterfallController.timeTicksVersion
 
     function spanHz() {
-        return Math.max(1.0, viewMaxHz - viewMinHz)
+        return Math.max(1.0, root.viewMaxHz - root.viewMinHz)
     }
 
     function xForHz(hz) {
-        return (hz - viewMinHz) / spanHz() * plotArea.width
+        return (hz - root.viewMinHz) / root.spanHz() * plotArea.width
+    }
+
+    function refreshTimeTicks() {
+        if (plotArea.height <= 0) {
+            timeTicks = []
+            return
+        }
+        root.timeTicks = Sirius.WaterfallController.visibleTimeTicks(plotArea.height)
     }
 
     ColumnLayout {
-        anchors.fill: parent
+        anchors.fill: root
         spacing: 8
 
         Rectangle {
@@ -34,46 +45,67 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 220
-            radius: Theme.radiusInset
-            color: Theme.waterfallBackground
-            border.color: Theme.panelBorderSoft
+            radius: Sirius.Theme.radiusInset
+            color: Sirius.Theme.waterfallBackground
+            border.color: Sirius.Theme.panelBorderSoft
             clip: true
 
-            readonly property int timeGutterWidth: Math.max(38, Math.min(46, width * 0.038))
+            readonly property int timeScaleWidth: Sirius.Theme.leftAxisWidth
 
             Rectangle {
-                id: timeGutter
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: plotFrame.timeGutterWidth
+                id: timeScale
+                anchors.left: plotFrame.left
+                anchors.top: plotFrame.top
+                anchors.bottom: plotFrame.bottom
+                width: plotFrame.timeScaleWidth
                 color: "#0A0F15"
-                border.color: Theme.panelBorderSoft
+                border.color: Sirius.Theme.panelBorderSoft
+
+                Repeater {
+                    model: root.timeTicks
+
+                    Text {
+                        id: timeTickLabel
+
+                        required property var modelData
+
+                        x: 5
+                        y: Math.max(4, Math.min(timeScale.height - timeTickLabel.height - 4,
+                                                timeTickLabel.modelData.y - timeTickLabel.height / 2))
+                        width: timeScale.width - 8
+                        text: timeTickLabel.modelData.label
+                        color: timeTickLabel.modelData.major ? Sirius.Theme.textSecondary : Sirius.Theme.textMuted
+                        font.family: Sirius.Theme.monoFontFamily
+                        font.pixelSize: timeTickLabel.modelData.major ? 9 : 8
+                        elide: Text.ElideRight
+                        z: 5
+                    }
+                }
             }
 
             Item {
                 id: plotArea
-                anchors.left: timeGutter.right
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
+                anchors.left: timeScale.right
+                anchors.right: plotFrame.right
+                anchors.top: plotFrame.top
+                anchors.bottom: plotFrame.bottom
                 clip: true
 
                 Rectangle {
-                    anchors.fill: parent
-                    color: Theme.waterfallBackground
+                    anchors.fill: plotArea
+                    color: Sirius.Theme.waterfallBackground
                 }
 
-                WaterfallItem {
+                Sirius.WaterfallItem {
                     id: waterfall
-                    anchors.fill: parent
+                    anchors.fill: plotArea
                     ringBuffer: root.ringBuffer
                     z: 1
                 }
 
                 Canvas {
                     id: waterfallGrid
-                    anchors.fill: parent
+                    anchors.fill: plotArea
                     z: 2
                     opacity: 0.9
 
@@ -84,7 +116,7 @@ Item {
                         ctx.lineWidth = 1
                         for (var i = 1; i < 6; i++) {
                             var x = i / 6 * width
-                            ctx.strokeStyle = String(Theme.gridMajor)
+                            ctx.strokeStyle = String(Sirius.Theme.gridMajor)
                             ctx.beginPath()
                             ctx.moveTo(x, 0)
                             ctx.lineTo(x, height)
@@ -93,7 +125,7 @@ Item {
 
                         for (var j = 1; j < 6; j++) {
                             var y = j / 6 * height
-                            ctx.strokeStyle = String(Theme.gridSoft)
+                            ctx.strokeStyle = String(Sirius.Theme.gridSoft)
                             ctx.beginPath()
                             ctx.moveTo(0, y)
                             ctx.lineTo(width, y)
@@ -102,12 +134,32 @@ Item {
                     }
                 }
 
+                WheelHandler {
+                    id: historyWheelHandler
+                    target: plotArea
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+
+                    onWheel: (event) => {
+                        const steps = event.angleDelta.y / 120
+                        if (steps !== 0) {
+                            Sirius.WaterfallController.scrollHistory(steps)
+                        }
+                        event.accepted = true
+                    }
+                }
+
                 Repeater {
-                    model: BandModel
-                    delegate: Rectangle {
-                        readonly property real halfWidth: model.widthHz * 0.5
-                        readonly property real bandMinHz: model.centerHz - halfWidth
-                        readonly property real bandMaxHz: model.centerHz + halfWidth
+                    model: Sirius.BandModel
+                    delegate: Item {
+                        id: bandOverlayDelegate
+
+                        required property real centerHz
+                        required property real widthHz
+                        required property color color
+
+                        readonly property real halfWidth: bandOverlayDelegate.widthHz * 0.5
+                        readonly property real bandMinHz: bandOverlayDelegate.centerHz - bandOverlayDelegate.halfWidth
+                        readonly property real bandMaxHz: bandOverlayDelegate.centerHz + bandOverlayDelegate.halfWidth
                         readonly property real clampedMinHz: Math.max(bandMinHz, root.viewMinHz)
                         readonly property real clampedMaxHz: Math.min(bandMaxHz, root.viewMaxHz)
                         readonly property real bandWidth: Math.max(0, clampedMaxHz - clampedMinHz)
@@ -117,54 +169,42 @@ Item {
                         y: 0
                         width: Math.max(0, root.xForHz(clampedMaxHz) - root.xForHz(clampedMinHz))
                         height: plotArea.height
-                        color: model.color
                         opacity: 0.10
                         z: 3
+
+                        Rectangle {
+                            anchors.fill: bandOverlayDelegate
+                            color: bandOverlayDelegate.color
+                        }
                     }
                 }
 
                 Rectangle {
                     id: retuningOverlay
-                    anchors.fill: parent
+                    anchors.fill: plotArea
                     color: "#0B0E13"
                     opacity: 0.32
                     visible: root.retuning
                     z: 8
 
                     Rectangle {
-                        anchors.centerIn: parent
-                        width: Math.min(parent.width - 28, 150)
+                        id: retuningLabel
+                        anchors.centerIn: retuningOverlay
+                        width: Math.min(retuningOverlay.width - 28, 150)
                         height: 34
-                        radius: Theme.radiusInset
-                        color: Theme.chipBackground
-                        border.color: Theme.panelBorder
+                        radius: Sirius.Theme.radiusInset
+                        color: Sirius.Theme.chipBackground
+                        border.color: Sirius.Theme.panelBorder
 
                         Text {
-                            anchors.centerIn: parent
+                            anchors.centerIn: retuningLabel
                             text: "RETUNING"
-                            color: Theme.textPrimary
-                            font.family: Theme.monoFontFamily
+                            color: Sirius.Theme.textPrimary
+                            font.family: Sirius.Theme.monoFontFamily
                             font.pixelSize: 13
                             font.weight: Font.DemiBold
                         }
                     }
-                }
-            }
-
-            Repeater {
-                model: ["+00:00", "+00:05", "+00:10", "+00:15", "+00:20", "+00:25"]
-
-                Text {
-                    x: 5
-                    y: Math.min(plotFrame.height - height - 4,
-                                Math.max(4, index / 5 * plotFrame.height - height / 2))
-                    width: timeGutter.width - 8
-                    text: modelData
-                    color: Theme.textMuted
-                    font.family: Theme.monoFontFamily
-                    font.pixelSize: 8
-                    elide: Text.ElideRight
-                    z: 5
                 }
             }
         }
@@ -175,20 +215,20 @@ Item {
             Layout.preferredHeight: 30
             Layout.minimumHeight: 28
             Layout.maximumHeight: 34
-            radius: Theme.radiusInset
-            color: Theme.insetBackground
-            border.color: Theme.panelBorderSoft
+            radius: Sirius.Theme.radiusInset
+            color: Sirius.Theme.insetBackground
+            border.color: Sirius.Theme.panelBorderSoft
 
             RowLayout {
-                anchors.fill: parent
+                anchors.fill: directionControls
                 anchors.leftMargin: 12
                 anchors.rightMargin: 12
                 spacing: 12
 
                 Text {
                     text: root.directionalEnabled ? "DIR ON" : "DIR OFF"
-                    color: root.directionalEnabled ? Theme.statusGood : Theme.textMuted
-                    font.family: Theme.monoFontFamily
+                    color: root.directionalEnabled ? Sirius.Theme.statusGood : Sirius.Theme.textMuted
+                    font.family: Sirius.Theme.monoFontFamily
                     font.pixelSize: 10
                     font.weight: Font.DemiBold
                     Layout.alignment: Qt.AlignVCenter
@@ -196,16 +236,16 @@ Item {
 
                 Text {
                     text: "\u03B3 " + root.gamma.toFixed(1)
-                    color: Theme.textSecondary
-                    font.family: Theme.monoFontFamily
+                    color: Sirius.Theme.textSecondary
+                    font.family: Sirius.Theme.monoFontFamily
                     font.pixelSize: 10
                     Layout.alignment: Qt.AlignVCenter
                 }
 
                 Text {
                     text: "D " + root.directionThreshold.toFixed(2)
-                    color: Theme.textSecondary
-                    font.family: Theme.monoFontFamily
+                    color: Sirius.Theme.textSecondary
+                    font.family: Sirius.Theme.monoFontFamily
                     font.pixelSize: 10
                     Layout.alignment: Qt.AlignVCenter
                 }
@@ -217,18 +257,18 @@ Item {
                 Row {
                     Layout.alignment: Qt.AlignVCenter
                     spacing: 6
-                    Rectangle { width: 24; height: 8; radius: 2; color: Theme.waterfallLeftHigh }
-                    Text { text: qsTr("левый"); color: Theme.textMuted; font.pixelSize: 10 }
-                    Rectangle { width: 24; height: 8; radius: 2; color: Theme.waterfallNeutralHigh }
-                    Text { text: qsTr("равно"); color: Theme.textMuted; font.pixelSize: 10 }
-                    Rectangle { width: 24; height: 8; radius: 2; color: Theme.waterfallRightHigh }
-                    Text { text: qsTr("правый"); color: Theme.textMuted; font.pixelSize: 10 }
+                    Rectangle { width: 24; height: 8; radius: 2; color: Sirius.Theme.waterfallLeftHigh }
+                    Text { text: qsTr("левый"); color: Sirius.Theme.textMuted; font.pixelSize: 10 }
+                    Rectangle { width: 24; height: 8; radius: 2; color: Sirius.Theme.waterfallNeutralHigh }
+                    Text { text: qsTr("равно"); color: Sirius.Theme.textMuted; font.pixelSize: 10 }
+                    Rectangle { width: 24; height: 8; radius: 2; color: Sirius.Theme.waterfallRightHigh }
+                    Text { text: qsTr("правый"); color: Sirius.Theme.textMuted; font.pixelSize: 10 }
                 }
 
                 Text {
                     text: root.currentUtcText
-                    color: Theme.textSecondary
-                    font.family: Theme.monoFontFamily
+                    color: Sirius.Theme.textSecondary
+                    font.family: Sirius.Theme.monoFontFamily
                     font.pixelSize: 10
                     Layout.alignment: Qt.AlignVCenter
                 }
@@ -237,7 +277,7 @@ Item {
     }
 
     Connections {
-        target: FrequencyViewportModel
+        target: Sirius.FrequencyViewportModel
         function onViewportChanged() {
             root.retuning = true
         }
@@ -246,6 +286,11 @@ Item {
     Connections {
         target: waterfall
         function onFreshDataChanged() {
+            if (waterfall.freshData) {
+                root.retuning = false
+            }
+        }
+        function onActiveGenerationIdChanged() {
             if (waterfall.freshData) {
                 root.retuning = false
             }
@@ -259,11 +304,23 @@ Item {
         }
         function onHeightChanged() {
             waterfallGrid.requestPaint()
+            root.refreshTimeTicks()
+        }
+    }
+
+    Connections {
+        target: Sirius.WaterfallController
+        function onTimeTicksChanged() {
+            root.refreshTimeTicks()
+        }
+        function onCurrentUtcTextChanged() {
+            root.currentUtcText = Sirius.WaterfallController.currentUtcText
         }
     }
 
     Component.onCompleted: {
         root.retuning = !waterfall.freshData
         waterfallGrid.requestPaint()
+        root.refreshTimeTicks()
     }
 }

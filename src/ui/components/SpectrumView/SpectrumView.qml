@@ -263,145 +263,178 @@ Item {
         clip: true
 
         Item {
-            id: plotArea
+            id: spectrumLayout
             anchors.fill: parent
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
             anchors.topMargin: 10
             anchors.bottomMargin: 8
 
             Canvas {
-                id: plot
-                anchors.fill: parent
+                id: amplitudeAxis
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: Theme.leftAxisWidth
 
                 onPaint: {
                     var ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
-
-                    var background = ctx.createLinearGradient(0, 0, 0, height)
-                    background.addColorStop(0, String(Theme.plotBackgroundTop))
-                    background.addColorStop(1, String(Theme.plotBackgroundBottom))
-                    ctx.fillStyle = background
+                    ctx.fillStyle = String(Theme.plotBackgroundBottom)
                     ctx.fillRect(0, 0, width, height)
 
-                    var spanHz = Math.max(1.0, viewMaxHz - viewMinHz)
-                    var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
-
-                    ctx.strokeStyle = String(Theme.gridSoft)
+                    ctx.strokeStyle = String(Theme.panelBorderSoft)
                     ctx.lineWidth = 1
+                    ctx.beginPath()
+                    ctx.moveTo(width - 0.5, 0)
+                    ctx.lineTo(width - 0.5, height)
+                    ctx.stroke()
 
-                    var tickCountX = 5
+                    var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
                     var tickCountY = 5
-
-                    for (var i = 0; i < tickCountX; i++) {
-                        var x = (i / (tickCountX - 1)) * width
-                        ctx.strokeStyle = i === 0 || i === tickCountX - 1 ? String(Theme.gridMajor) : String(Theme.gridSoft)
-                        ctx.beginPath()
-                        ctx.moveTo(x, 0)
-                        ctx.lineTo(x, height)
-                        ctx.stroke()
-                    }
-
-                    for (var j = 0; j < tickCountY; j++) {
-                        var y = (j / (tickCountY - 1)) * height
-                        ctx.strokeStyle = j === 0 || j === tickCountY - 1 ? String(Theme.gridMajor) : String(Theme.gridSoft)
-                        ctx.beginPath()
-                        ctx.moveTo(0, y)
-                        ctx.lineTo(width, y)
-                        ctx.stroke()
-                    }
 
                     ctx.fillStyle = String(Theme.textMuted)
                     ctx.font = "10px " + root.monoFontFamily
-                    ctx.textAlign = "center"
-                    ctx.textBaseline = "bottom"
-
-                    for (var t = 0; t < tickCountX; t++) {
-                        var fx = viewMinHz + (t / (tickCountX - 1)) * spanHz
-                        var label = formatHz(fx)
-                        var lx = (t / (tickCountX - 1)) * width
-                        ctx.fillText(label, lx, height - 2)
-                    }
-
-                    ctx.textAlign = "left"
+                    ctx.textAlign = "right"
                     ctx.textBaseline = "middle"
+
                     for (var ty = 0; ty < tickCountY; ty++) {
                         var amplitude = amplitudeMax - (ty / (tickCountY - 1)) * amplitudeSpan
                         var ly = (ty / (tickCountY - 1)) * height
-                        ctx.fillText(amplitude.toFixed(0), 4, ly)
-                    }
-
-                    ctx.save()
-                    ctx.setLineDash([5, 5])
-                    ctx.globalAlpha = 0.55
-                    ctx.strokeStyle = String(Theme.statusWarn)
-                    ctx.lineWidth = 1
-                    for (var b = 0; b < BandModel.count; b++) {
-                        var thresholdBand = BandModel.get(b)
-                        var bandMin = thresholdBand.centerHz - thresholdBand.widthHz * 0.5
-                        var bandMax = thresholdBand.centerHz + thresholdBand.widthHz * 0.5
-                        var clippedMin = Math.max(viewMinHz, bandMin)
-                        var clippedMax = Math.min(viewMaxHz, bandMax)
-                        if (clippedMax <= clippedMin) {
-                            continue
-                        }
-                        var thresholdY = height - (thresholdBand.thresholdAmplitude - amplitudeMin) / amplitudeSpan * height
-                        var thresholdX0 = (clippedMin - viewMinHz) / spanHz * width
-                        var thresholdX1 = (clippedMax - viewMinHz) / spanHz * width
-                        ctx.beginPath()
-                        ctx.moveTo(thresholdX0, thresholdY)
-                        ctx.lineTo(thresholdX1, thresholdY)
-                        ctx.stroke()
-                    }
-                    ctx.restore()
-
-                    if (decimatedMinMax.length < 2) {
-                        return
-                    }
-
-                    ctx.strokeStyle = String(Theme.signalCyan)
-                    ctx.lineWidth = 1.6
-
-                    for (var px = 0; px < width; px++) {
-                        var idx = px * 2
-                        if (idx + 1 >= decimatedMinMax.length) {
-                            break
-                        }
-                        var minVal = decimatedMinMax[idx]
-                        var maxVal = decimatedMinMax[idx + 1]
-                        var freqHz = viewMinHz + (px / width) * spanHz
-                        var bandThreshold = thresholdForHz(freqHz)
-
-                        if (bandThreshold > -1e8) {
-                            if (maxVal < bandThreshold) {
-                                continue
-                            }
-                            if (minVal < bandThreshold) {
-                                minVal = bandThreshold
-                            }
-                        }
-
-                        minVal = clampAmplitude(minVal)
-                        maxVal = clampAmplitude(maxVal)
-
-                        var yMin = height - (minVal - amplitudeMin) / amplitudeSpan * height
-                        var yMax = height - (maxVal - amplitudeMin) / amplitudeSpan * height
-
-                        ctx.beginPath()
-                        ctx.moveTo(px + 0.5, yMin)
-                        ctx.lineTo(px + 0.5, yMax)
-                        ctx.stroke()
+                        ctx.fillText(amplitude.toFixed(0), width - 8, ly)
                     }
                 }
             }
 
-            MouseArea {
-                id: interactionArea
-                anchors.fill: parent
-                acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-                hoverEnabled: false
-                preventStealing: true
-                z: 0
+            Item {
+                id: plotArea
+                anchors.left: amplitudeAxis.right
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+
+                Canvas {
+                    id: plot
+                    anchors.fill: parent
+
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+
+                        var background = ctx.createLinearGradient(0, 0, 0, height)
+                        background.addColorStop(0, String(Theme.plotBackgroundTop))
+                        background.addColorStop(1, String(Theme.plotBackgroundBottom))
+                        ctx.fillStyle = background
+                        ctx.fillRect(0, 0, width, height)
+
+                        var spanHz = Math.max(1.0, viewMaxHz - viewMinHz)
+                        var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
+
+                        ctx.strokeStyle = String(Theme.gridSoft)
+                        ctx.lineWidth = 1
+
+                        var tickCountX = 5
+                        var tickCountY = 5
+
+                        for (var i = 0; i < tickCountX; i++) {
+                            var x = (i / (tickCountX - 1)) * width
+                            ctx.strokeStyle = i === 0 || i === tickCountX - 1 ? String(Theme.gridMajor) : String(Theme.gridSoft)
+                            ctx.beginPath()
+                            ctx.moveTo(x, 0)
+                            ctx.lineTo(x, height)
+                            ctx.stroke()
+                        }
+
+                        for (var j = 0; j < tickCountY; j++) {
+                            var y = (j / (tickCountY - 1)) * height
+                            ctx.strokeStyle = j === 0 || j === tickCountY - 1 ? String(Theme.gridMajor) : String(Theme.gridSoft)
+                            ctx.beginPath()
+                            ctx.moveTo(0, y)
+                            ctx.lineTo(width, y)
+                            ctx.stroke()
+                        }
+
+                        ctx.fillStyle = String(Theme.textMuted)
+                        ctx.font = "10px " + root.monoFontFamily
+                        ctx.textAlign = "center"
+                        ctx.textBaseline = "bottom"
+
+                        for (var t = 0; t < tickCountX; t++) {
+                            var fx = viewMinHz + (t / (tickCountX - 1)) * spanHz
+                            var label = formatHz(fx)
+                            var lx = (t / (tickCountX - 1)) * width
+                            ctx.fillText(label, lx, height - 2)
+                        }
+
+                        ctx.save()
+                        ctx.setLineDash([5, 5])
+                        ctx.globalAlpha = 0.55
+                        ctx.strokeStyle = String(Theme.statusWarn)
+                        ctx.lineWidth = 1
+                        for (var b = 0; b < BandModel.count; b++) {
+                            var thresholdBand = BandModel.get(b)
+                            var bandMin = thresholdBand.centerHz - thresholdBand.widthHz * 0.5
+                            var bandMax = thresholdBand.centerHz + thresholdBand.widthHz * 0.5
+                            var clippedMin = Math.max(viewMinHz, bandMin)
+                            var clippedMax = Math.min(viewMaxHz, bandMax)
+                            if (clippedMax <= clippedMin) {
+                                continue
+                            }
+                            var thresholdY = height - (thresholdBand.thresholdAmplitude - amplitudeMin) / amplitudeSpan * height
+                            var thresholdX0 = (clippedMin - viewMinHz) / spanHz * width
+                            var thresholdX1 = (clippedMax - viewMinHz) / spanHz * width
+                            ctx.beginPath()
+                            ctx.moveTo(thresholdX0, thresholdY)
+                            ctx.lineTo(thresholdX1, thresholdY)
+                            ctx.stroke()
+                        }
+                        ctx.restore()
+
+                        if (decimatedMinMax.length < 2) {
+                            return
+                        }
+
+                        ctx.strokeStyle = String(Theme.signalCyan)
+                        ctx.lineWidth = 1.6
+
+                        for (var px = 0; px < width; px++) {
+                            var idx = px * 2
+                            if (idx + 1 >= decimatedMinMax.length) {
+                                break
+                            }
+                            var minVal = decimatedMinMax[idx]
+                            var maxVal = decimatedMinMax[idx + 1]
+                            var freqHz = viewMinHz + (px / width) * spanHz
+                            var bandThreshold = thresholdForHz(freqHz)
+
+                            if (bandThreshold > -1e8) {
+                                if (maxVal < bandThreshold) {
+                                    continue
+                                }
+                                if (minVal < bandThreshold) {
+                                    minVal = bandThreshold
+                                }
+                            }
+
+                            minVal = clampAmplitude(minVal)
+                            maxVal = clampAmplitude(maxVal)
+
+                            var yMin = height - (minVal - amplitudeMin) / amplitudeSpan * height
+                            var yMax = height - (maxVal - amplitudeMin) / amplitudeSpan * height
+
+                            ctx.beginPath()
+                            ctx.moveTo(px + 0.5, yMin)
+                            ctx.lineTo(px + 0.5, yMax)
+                            ctx.stroke()
+                        }
+                    }
+                }
+
+                MouseArea {
+                    id: interactionArea
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                    hoverEnabled: false
+                    preventStealing: true
+                    z: 0
 
                 property bool panning: false
                 property real panStartX: 0
@@ -469,31 +502,32 @@ Item {
                 }
             }
 
-            Repeater {
-                id: bandRepeater
-                model: BandModel
-                delegate: BandItem {
-                    bandId: model.bandId
-                    centerHz: model.centerHz
-                    widthHz: model.widthHz
-                    thresholdAmplitude: model.thresholdAmplitude
-                    bandColor: model.color
-                    bandBorderColor: model.borderColor
-                    bandTextColor: model.textColor
-                    viewMinHz: root.viewMinHz
-                    viewMaxHz: root.viewMaxHz
-                    globalMinHz: root.globalMinHz
-                    globalMaxHz: root.globalMaxHz
-                    settingsWindowOpen: model.settingsWindowOpen
-                    panModifierActive: root.spacePressed
-                    z: 2
+                Repeater {
+                    id: bandRepeater
+                    model: BandModel
+                    delegate: BandItem {
+                        bandId: model.bandId
+                        centerHz: model.centerHz
+                        widthHz: model.widthHz
+                        thresholdAmplitude: model.thresholdAmplitude
+                        bandColor: model.color
+                        bandBorderColor: model.borderColor
+                        bandTextColor: model.textColor
+                        viewMinHz: root.viewMinHz
+                        viewMaxHz: root.viewMaxHz
+                        globalMinHz: root.globalMinHz
+                        globalMaxHz: root.globalMaxHz
+                        settingsWindowOpen: model.settingsWindowOpen
+                        panModifierActive: root.spacePressed
+                        z: 2
 
-                    onConfigureRequested: (requestedBandId) => {
-                        openBandSettingsWindow(index)
-                    }
+                        onConfigureRequested: (requestedBandId) => {
+                            openBandSettingsWindow(index)
+                        }
 
-                    onBandPreviewMoved: (movedBandId, nextCenter, nextWidth) => {
-                        updateBandPreviewFromDrag(movedBandId, nextCenter, nextWidth)
+                        onBandPreviewMoved: (movedBandId, nextCenter, nextWidth) => {
+                            updateBandPreviewFromDrag(movedBandId, nextCenter, nextWidth)
+                        }
                     }
                 }
             }
@@ -512,6 +546,7 @@ Item {
         }
         function onHeightChanged() {
             plot.requestPaint()
+            amplitudeAxis.requestPaint()
         }
     }
 }
