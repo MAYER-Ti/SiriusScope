@@ -5,15 +5,16 @@
 
 #include <cstdint>
 
+struct WaterfallBeamBin;
 struct WaterfallRow;
 
 class WaterfallRowResampler
 {
 public:
-    static QVector<uint16_t> resample(const WaterfallRow& row,
-                                      double targetMinHz,
-                                      double targetMaxHz,
-                                      int targetBins);
+    static QVector<WaterfallBeamBin> resample(const WaterfallRow& row,
+                                              double targetMinHz,
+                                              double targetMaxHz,
+                                              int targetBins);
 };
 
 #endif // WATERFALLROWRESAMPLER_H

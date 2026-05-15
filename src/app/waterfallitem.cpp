@@ -5,6 +5,7 @@
 #include "waterfallitem.h"
 
 #include "waterfallringbuffer.h"
+#include "waterfallstorage.h"
 
 #include <QDebug>
 #include <QImage>
@@ -16,59 +17,13 @@
 
 #include <algorithm>
 
-namespace {
-
-struct ColorStop
-{
-    double r = 0.0;
-    double g = 0.0;
-    double b = 0.0;
-};
-
-uchar channelToByte(double value)
-{
-    return static_cast<uchar>(std::clamp(value, 0.0, 1.0) * 255.0 + 0.5);
-}
-
-ColorStop mixColor(ColorStop a, ColorStop b, double factor)
-{
-    factor = std::clamp(factor, 0.0, 1.0);
-    return ColorStop{
-        a.r + (b.r - a.r) * factor,
-        a.g + (b.g - a.g) * factor,
-        a.b + (b.b - a.b) * factor
-    };
-}
-
-ColorStop waterfallColor(uint16_t sample)
-{
-    const double t = std::clamp(static_cast<double>(sample) / 65535.0, 0.0, 1.0);
-    constexpr ColorStop c0{0.02, 0.03, 0.08};
-    constexpr ColorStop c1{0.00, 0.22, 0.60};
-    constexpr ColorStop c2{0.00, 0.75, 0.80};
-    constexpr ColorStop c3{0.95, 0.85, 0.30};
-    constexpr ColorStop c4{1.00, 1.00, 1.00};
-
-    if (t < 0.25) {
-        return mixColor(c0, c1, t / 0.25);
-    }
-    if (t < 0.55) {
-        return mixColor(c1, c2, (t - 0.25) / 0.30);
-    }
-    if (t < 0.85) {
-        return mixColor(c2, c3, (t - 0.55) / 0.30);
-    }
-    return mixColor(c3, c4, (t - 0.85) / 0.15);
-}
-
-} // namespace
-
 struct WaterfallNode : public QSGSimpleTextureNode
 {
     QImage image;
-    QVector<uint16_t> scratchLine;
+    QVector<WaterfallBeamBin> scratchLine;
     uint64_t lastWriteIndex = 0;
     uint64_t lastGenerationId = 0;
+    uint64_t lastColorRevision = 0;
     bool awaitingFirstLine = true;
     int nbins = 0;
     int height = 0;
@@ -110,6 +65,50 @@ void WaterfallItem::setRingBuffer(QObject *buffer)
     emit ringBufferChanged();
     emit freshDataChanged();
     emit activeGenerationIdChanged();
+    update();
+}
+
+void WaterfallItem::setDirectionalEnabled(bool enabled)
+{
+    if (m_colorParams.directionalEnabled == enabled) {
+        return;
+    }
+    m_colorParams.directionalEnabled = enabled;
+    ++m_colorRevision;
+    emit colorParamsChanged();
+    update();
+}
+
+void WaterfallItem::setColorGamma(double gamma)
+{
+    if (qFuzzyCompare(m_colorParams.gamma, gamma)) {
+        return;
+    }
+    m_colorParams.gamma = gamma;
+    ++m_colorRevision;
+    emit colorParamsChanged();
+    update();
+}
+
+void WaterfallItem::setDirectionDeadZone(double deadZone)
+{
+    if (qFuzzyCompare(m_colorParams.directionDeadZone, deadZone)) {
+        return;
+    }
+    m_colorParams.directionDeadZone = deadZone;
+    ++m_colorRevision;
+    emit colorParamsChanged();
+    update();
+}
+
+void WaterfallItem::setDirectionalAlpha(double alpha)
+{
+    if (qFuzzyCompare(m_colorParams.directionalAlpha, alpha)) {
+        return;
+    }
+    m_colorParams.directionalAlpha = alpha;
+    ++m_colorRevision;
+    emit colorParamsChanged();
     update();
 }
 
@@ -177,25 +176,28 @@ QSGNode *WaterfallItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
     bool textureDirty = false;
     uint16_t maxValue = 0;
-    if (generationId != node->lastGenerationId || writeIndex != node->lastWriteIndex) {
+    if (generationId != node->lastGenerationId
+        || writeIndex != node->lastWriteIndex
+        || m_colorRevision != node->lastColorRevision) {
         node->lastGenerationId = generationId;
         node->lastWriteIndex = writeIndex;
+        node->lastColorRevision = m_colorRevision;
         node->image.fill(0);
 
         for (int row = 0; row < rows; ++row) {
-            node->scratchLine.fill(0);
+            node->scratchLine.fill(WaterfallBeamBin{});
             m_ringBuffer->copyLine(row, node->scratchLine.data(), nbins);
 
             uchar *dst = node->image.scanLine(row);
             for (int bin = 0; bin < nbins; ++bin) {
-                const uint16_t sample = node->scratchLine.at(bin);
-                maxValue = std::max(maxValue, sample);
-                const ColorStop color = waterfallColor(sample);
+                const WaterfallBeamBin sample = node->scratchLine.at(bin);
+                maxValue = std::max(maxValue, std::max(sample.left, sample.right));
+                const Rgba8 color = WaterfallColorMapper::map(sample, m_colorParams);
                 const int offset = bin * 4;
-                dst[offset] = channelToByte(color.r);
-                dst[offset + 1] = channelToByte(color.g);
-                dst[offset + 2] = channelToByte(color.b);
-                dst[offset + 3] = 255;
+                dst[offset] = color.r;
+                dst[offset + 1] = color.g;
+                dst[offset + 2] = color.b;
+                dst[offset + 3] = color.a;
             }
         }
 

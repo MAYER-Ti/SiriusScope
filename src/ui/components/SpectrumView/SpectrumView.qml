@@ -172,6 +172,7 @@ Item {
             BandModel.setProperty(bandIndex, "thresholdAmplitude", snapshot.thresholdAmplitude)
             BandModel.setProperty(bandIndex, "inputAttenuatorDb", snapshot.inputAttenuatorDb)
             BandModel.setProperty(bandIndex, "outputAttenuatorDb", snapshot.outputAttenuatorDb)
+            SpectrumController.setBand(bandId, snapshot.centerHz, snapshot.widthHz, false)
             plot.requestPaint()
         })
 
@@ -197,6 +198,7 @@ Item {
         }
         BandModel.setProperty(index, "centerHz", centerHz)
         BandModel.setProperty(index, "widthHz", widthHz)
+        SpectrumController.setBand(bandId, centerHz, widthHz, false)
         var window = bandSettingsWindows[String(bandId)]
         if (window) {
             window.updateDraftFrequenciesHz(centerHz, widthHz)

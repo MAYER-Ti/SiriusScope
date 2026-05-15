@@ -9,10 +9,9 @@
 #include "waterfallrowresampler.h"
 
 #include <QDateTime>
-#include <QRandomGenerator>
 #include <QVariantMap>
-#include <QtMath>
 
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 
@@ -33,6 +32,13 @@ WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewpor
     , m_viewportModel(viewportModel)
     , m_ringBuffer(new WaterfallRingBuffer(kDefaultBins, kDefaultRows, 300e6, 18e9, this))
     , m_storage(std::make_unique<InMemoryWaterfallStorage>())
+    , m_syntheticBands({
+          SyntheticBandRange{3.0e9, 5.0e8},
+          SyntheticBandRange{5.795e9, 4.10e8},
+          SyntheticBandRange{8.25e9, 5.0e8},
+          SyntheticBandRange{9.55e9, 5.0e8},
+          SyntheticBandRange{14.25e9, 5.0e8}
+      })
     , m_historyModel(kDefaultRows)
 {
     if (m_viewportModel) {
@@ -46,7 +52,6 @@ WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewpor
         m_sourceMaxHz = m_viewportModel->globalMaxHz();
     }
 
-    m_lineBuffer.resize(m_ringBuffer->nbins());
     seedSyntheticHistory();
     reloadHistoryFromStorage();
     updateRenderBuffer();
@@ -132,6 +137,32 @@ void WaterfallControllerStub::jumpToLive()
     notifyPresentationChanged(previousLiveMode, previousUtcText);
 }
 
+void WaterfallControllerStub::setSyntheticBand(int bandId,
+                                               double centerHz,
+                                               double widthHz,
+                                               double,
+                                               bool enabled)
+{
+    if (bandId < 0) {
+        return;
+    }
+
+    if (bandId >= m_syntheticBands.size()) {
+        m_syntheticBands.resize(bandId + 1);
+    }
+
+    if (!enabled) {
+        m_syntheticBands[bandId] = SyntheticBandRange{};
+        return;
+    }
+
+    if (!std::isfinite(centerHz) || !std::isfinite(widthHz) || widthHz <= 0.0) {
+        return;
+    }
+
+    m_syntheticBands[bandId] = SyntheticBandRange{centerHz, widthHz};
+}
+
 void WaterfallControllerStub::onViewportChanged(double minHz, double maxHz, const QString &)
 {
     scheduleRetune(minHz, maxHz);
@@ -154,7 +185,7 @@ void WaterfallControllerStub::commitViewport()
 
 void WaterfallControllerStub::pushSyntheticLine()
 {
-    if (!m_ringBuffer || m_lineBuffer.isEmpty()) {
+    if (!m_ringBuffer) {
         return;
     }
     if (m_retuning) {
@@ -176,33 +207,9 @@ void WaterfallControllerStub::pushSyntheticLine()
 
 WaterfallRow WaterfallControllerStub::buildLine(double minHz, double maxHz, qint64 utcMs)
 {
-    const double span = qMax(1.0, maxHz - minHz);
-    const int bins = m_lineBuffer.size();
-
-    m_phase += 0.05;
-    const double centerA = minHz + span * (0.25 + 0.05 * qSin(m_phase * 0.7));
-    const double centerB = minHz + span * (0.62 + 0.07 * qCos(m_phase * 0.4));
-    const double widthA = span * 0.045;
-    const double widthB = span * 0.06;
-
-    for (int i = 0; i < bins; ++i) {
-        const double freq = minHz + (static_cast<double>(i) / qMax(1, bins - 1)) * span;
-        const double noise = 0.08 + QRandomGenerator::global()->generateDouble() * 0.10;
-        const double peakA = qExp(-qPow((freq - centerA) / widthA, 2.0));
-        const double peakB = 0.8 * qExp(-qPow((freq - centerB) / widthB, 2.0));
-        double value = (noise + peakA + peakB) * 0.9;
-
-        value = qBound(0.0, value, 1.0);
-        m_lineBuffer[i] = static_cast<uint16_t>(value * 65535.0);
-    }
-
-    WaterfallRow row;
-    row.utcMs = utcMs;
+    WaterfallRow row = m_syntheticSource.nextRow(utcMs, minHz, maxHz, currentBands());
     row.firstSampleIndex = m_nextSampleIndex;
     row.lastSampleIndex = m_nextSampleIndex;
-    row.viewMinHz = minHz;
-    row.viewMaxHz = maxHz;
-    row.bins = m_lineBuffer;
     ++m_nextSampleIndex;
     return row;
 }
@@ -226,6 +233,11 @@ void WaterfallControllerStub::setHistoryLoading(bool loading)
     }
     m_historyLoading = loading;
     emit historyLoadingChanged();
+}
+
+QVector<SyntheticBandRange> WaterfallControllerStub::currentBands() const
+{
+    return m_syntheticBands;
 }
 
 void WaterfallControllerStub::updateRenderBuffer()

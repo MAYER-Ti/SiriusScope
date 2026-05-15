@@ -24,7 +24,7 @@ WaterfallRingBuffer::WaterfallRingBuffer(int nbins,
 {
 }
 
-const uint16_t *WaterfallRingBuffer::linePtr(int row) const noexcept
+const WaterfallBeamBin *WaterfallRingBuffer::linePtr(int row) const noexcept
 {
     if (row < 0 || row >= m_height || m_nbins <= 0) {
         return nullptr;
@@ -32,7 +32,7 @@ const uint16_t *WaterfallRingBuffer::linePtr(int row) const noexcept
     return m_data.constData() + static_cast<qsizetype>(row) * m_nbins;
 }
 
-void WaterfallRingBuffer::pushLine(const uint16_t *line, int nbins, uint64_t generationId)
+void WaterfallRingBuffer::pushLine(const WaterfallBeamBin *line, int nbins, uint64_t generationId)
 {
     if (!line || nbins != m_nbins || m_height <= 0) {
         return;
@@ -45,11 +45,11 @@ void WaterfallRingBuffer::pushLine(const uint16_t *line, int nbins, uint64_t gen
             std::memmove(m_data.data() + m_nbins,
                          m_data.constData(),
                          static_cast<size_t>(m_nbins) * static_cast<size_t>(m_height - 1)
-                             * sizeof(uint16_t));
+                             * sizeof(WaterfallBeamBin));
         }
 
-        uint16_t *dest = m_data.data();
-        std::memcpy(dest, line, static_cast<size_t>(m_nbins) * sizeof(uint16_t));
+        WaterfallBeamBin *dest = m_data.data();
+        std::memcpy(dest, line, static_cast<size_t>(m_nbins) * sizeof(WaterfallBeamBin));
 
         const int populatedRows = std::min(m_height, m_populatedRows.load(std::memory_order_relaxed) + 1);
         m_populatedRows.store(populatedRows, std::memory_order_release);
@@ -65,7 +65,7 @@ void WaterfallRingBuffer::replaceRows(const QVector<WaterfallRow>& rows, uint64_
     {
         QMutexLocker locker(&m_mutex);
 
-        std::fill(m_data.begin(), m_data.end(), uint16_t{0});
+        std::fill(m_data.begin(), m_data.end(), WaterfallBeamBin{});
 
         const int rowCount = std::min(m_height, static_cast<int>(rows.size()));
         for (int row = 0; row < rowCount; ++row) {
@@ -75,8 +75,8 @@ void WaterfallRingBuffer::replaceRows(const QVector<WaterfallRow>& rows, uint64_
             }
 
             const int binsToCopy = std::min(m_nbins, static_cast<int>(source.size()));
-            uint16_t *dest = m_data.data() + static_cast<qsizetype>(row) * m_nbins;
-            std::memcpy(dest, source.constData(), static_cast<size_t>(binsToCopy) * sizeof(uint16_t));
+            WaterfallBeamBin *dest = m_data.data() + static_cast<qsizetype>(row) * m_nbins;
+            std::memcpy(dest, source.constData(), static_cast<size_t>(binsToCopy) * sizeof(WaterfallBeamBin));
         }
 
         m_populatedRows.store(rowCount, std::memory_order_release);
@@ -87,14 +87,14 @@ void WaterfallRingBuffer::replaceRows(const QVector<WaterfallRow>& rows, uint64_
     emit contentsChanged();
 }
 
-bool WaterfallRingBuffer::copyLine(int row, uint16_t *destination, int nbins) const
+bool WaterfallRingBuffer::copyLine(int row, WaterfallBeamBin *destination, int nbins) const
 {
     if (!destination || nbins != m_nbins || row < 0 || row >= m_height || m_nbins <= 0) {
         return false;
     }
 
     QMutexLocker locker(&m_mutex);
-    const uint16_t *src = m_data.constData() + static_cast<qsizetype>(row) * m_nbins;
-    std::memcpy(destination, src, static_cast<size_t>(m_nbins) * sizeof(uint16_t));
+    const WaterfallBeamBin *src = m_data.constData() + static_cast<qsizetype>(row) * m_nbins;
+    std::memcpy(destination, src, static_cast<size_t>(m_nbins) * sizeof(WaterfallBeamBin));
     return true;
 }

@@ -9,6 +9,8 @@
 #include <QQuickItem>
 #include <QtQml/qqmlregistration.h>
 
+#include "waterfallcolormapper.h"
+
 class WaterfallRingBuffer;
 
 /*!
@@ -22,6 +24,10 @@ class WaterfallItem : public QQuickItem
     Q_PROPERTY(QObject *ringBuffer READ ringBuffer WRITE setRingBuffer NOTIFY ringBufferChanged)
     Q_PROPERTY(bool freshData READ freshData NOTIFY freshDataChanged)
     Q_PROPERTY(qulonglong activeGenerationId READ activeGenerationId NOTIFY activeGenerationIdChanged)
+    Q_PROPERTY(bool directionalEnabled READ directionalEnabled WRITE setDirectionalEnabled NOTIFY colorParamsChanged)
+    Q_PROPERTY(double colorGamma READ colorGamma WRITE setColorGamma NOTIFY colorParamsChanged)
+    Q_PROPERTY(double directionDeadZone READ directionDeadZone WRITE setDirectionDeadZone NOTIFY colorParamsChanged)
+    Q_PROPERTY(double directionalAlpha READ directionalAlpha WRITE setDirectionalAlpha NOTIFY colorParamsChanged)
 
 public:
     /*!
@@ -51,6 +57,14 @@ public:
      *  \return Идентификатор активного поколения Waterfall.
      */
     qulonglong activeGenerationId() const noexcept { return m_activeGenerationId; }
+    bool directionalEnabled() const noexcept { return m_colorParams.directionalEnabled; }
+    void setDirectionalEnabled(bool enabled);
+    double colorGamma() const noexcept { return m_colorParams.gamma; }
+    void setColorGamma(double gamma);
+    double directionDeadZone() const noexcept { return m_colorParams.directionDeadZone; }
+    void setDirectionDeadZone(double deadZone);
+    double directionalAlpha() const noexcept { return m_colorParams.directionalAlpha; }
+    void setDirectionalAlpha(double alpha);
 
 signals:
     //! \brief Испускается при изменении подключенного кольцевого буфера.
@@ -59,6 +73,7 @@ signals:
     void freshDataChanged();
     //! \brief Испускается при изменении activeGenerationId.
     void activeGenerationIdChanged();
+    void colorParamsChanged();
 
 private slots:
     void notifyFreshData(qulonglong generationId);
@@ -76,6 +91,8 @@ protected:
 private:
     WaterfallRingBuffer *m_ringBuffer = nullptr;
     QMetaObject::Connection m_ringBufferConnection;
+    WaterfallColorParams m_colorParams;
+    uint64_t m_colorRevision = 0;
     bool m_freshData = false;
     qulonglong m_activeGenerationId = 0;
 };

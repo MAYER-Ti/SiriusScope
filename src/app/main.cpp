@@ -35,6 +35,11 @@ int main(int argc, char *argv[])
     SpectrumDecimator spectrumDecimator;
     WaterfallControllerStub waterfallController(&viewportModel);
 
+    QObject::connect(&spectrumController,
+                     &SpectrumControllerStub::bandStateChanged,
+                     &waterfallController,
+                     &WaterfallControllerStub::setSyntheticBand);
+
     siriusscope::app::AppStateQmlSingleton::instance = &AppState::instance();
     siriusscope::app::FrequencyViewportModelQmlSingleton::instance = &viewportModel;
     siriusscope::app::FrequencyGridModelQmlSingleton::instance = &frequencyGridModel;

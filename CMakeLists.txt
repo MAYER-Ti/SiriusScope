@@ -17,6 +17,10 @@ find_package(Qt6 REQUIRED COMPONENTS
 qt_standard_project_setup(REQUIRES 6.8)
 
 set(SIRIUSSCOPE_APPLICATION_SOURCES
+    src/app/syntheticwaterfalldatasource.h
+    src/app/syntheticwaterfalldatasource.cpp
+    src/app/waterfallcolormapper.h
+    src/app/waterfallcolormapper.cpp
     src/app/waterfallrowresampler.h
     src/app/waterfallrowresampler.cpp
     src/app/waterfallhistorymodel.h

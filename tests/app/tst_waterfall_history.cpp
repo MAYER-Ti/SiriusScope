@@ -46,7 +46,9 @@ WaterfallRow makeRow(qint64 utcMs, quint64 sampleIndex)
     row.lastSampleIndex = sampleIndex;
     row.viewMinHz = 300e6;
     row.viewMaxHz = 18e9;
-    row.bins = QVector<uint16_t>(4, static_cast<uint16_t>(sampleIndex + 1));
+    row.bins = QVector<WaterfallBeamBin>(4,
+                                         WaterfallBeamBin{static_cast<uint16_t>(sampleIndex + 1),
+                                                          static_cast<uint16_t>(sampleIndex + 2)});
     return row;
 }
 
@@ -164,15 +166,18 @@ void testRingBufferReplaceRowsProvidesNonZeroTopRow(TestRunner& test)
     WaterfallRingBuffer buffer(4, 3);
     buffer.replaceRows(rows, 42);
 
-    QVector<uint16_t> copied(4);
+    QVector<WaterfallBeamBin> copied(4);
     const bool copiedTopRow = buffer.copyLine(0, copied.data(), copied.size());
 
     test.require(buffer.populatedRows() == 3, "replaceRows stores populated row count");
     test.require(buffer.generationId() == 42, "replaceRows stores generation id");
     test.require(buffer.writeIndex() == 1, "replaceRows advances write index");
     test.require(copiedTopRow, "top render row can be copied");
-    test.require(copied.at(0) == 3, "top render row contains newest visible row");
-    test.require(*std::max_element(copied.cbegin(), copied.cend()) > 0,
+    test.require(copied.at(0).left == 3 && copied.at(0).right == 4,
+                 "top render row contains newest visible row");
+    test.require(std::any_of(copied.cbegin(), copied.cend(), [](const WaterfallBeamBin& bin) {
+        return bin.left > 0 || bin.right > 0;
+    }),
                  "top render row contains non-zero samples");
 }
 
