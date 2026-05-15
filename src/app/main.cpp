@@ -9,6 +9,7 @@
 #include <QSGRendererInterface>
 
 #include "appstate.h"
+#include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
 #include "qmlsingletons.h"
 #include "spectrumcontrollerstub.h"
@@ -29,12 +30,14 @@ int main(int argc, char *argv[])
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
     FrequencyViewportModel viewportModel;
+    FrequencyGridModel frequencyGridModel;
     SpectrumControllerStub spectrumController;
     SpectrumDecimator spectrumDecimator;
     WaterfallControllerStub waterfallController(&viewportModel);
 
     siriusscope::app::AppStateQmlSingleton::instance = &AppState::instance();
     siriusscope::app::FrequencyViewportModelQmlSingleton::instance = &viewportModel;
+    siriusscope::app::FrequencyGridModelQmlSingleton::instance = &frequencyGridModel;
     siriusscope::app::SpectrumControllerQmlSingleton::instance = &spectrumController;
     siriusscope::app::SpectrumDecimatorQmlSingleton::instance = &spectrumDecimator;
     siriusscope::app::WaterfallControllerQmlSingleton::instance = &waterfallController;

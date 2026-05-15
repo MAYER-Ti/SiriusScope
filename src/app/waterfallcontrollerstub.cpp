@@ -6,6 +6,7 @@
 
 #include "frequencyviewportmodel.h"
 #include "waterfallringbuffer.h"
+#include "waterfallrowresampler.h"
 
 #include <QDateTime>
 #include <QRandomGenerator>
@@ -41,6 +42,8 @@ WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewpor
                 &WaterfallControllerStub::onViewportChanged);
         m_viewMinHz = m_viewportModel->viewMinHz();
         m_viewMaxHz = m_viewportModel->viewMaxHz();
+        m_sourceMinHz = m_viewportModel->globalMinHz();
+        m_sourceMaxHz = m_viewportModel->globalMaxHz();
     }
 
     m_lineBuffer.resize(m_ringBuffer->nbins());
@@ -159,8 +162,8 @@ void WaterfallControllerStub::pushSyntheticLine()
     }
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
-    const WaterfallRow row = buildLine(m_viewMinHz,
-                                       m_viewMaxHz,
+    const WaterfallRow row = buildLine(m_sourceMinHz,
+                                       m_sourceMaxHz,
                                        QDateTime::currentMSecsSinceEpoch());
     m_storage->appendRow(row);
     m_historyModel.appendLiveRow(row);
@@ -231,7 +234,22 @@ void WaterfallControllerStub::updateRenderBuffer()
         return;
     }
 
-    m_ringBuffer->replaceRows(m_historyModel.visibleRows(), ++m_generationId);
+    const QVector<WaterfallRow> visibleRows = m_historyModel.visibleRows();
+    QVector<WaterfallRow> projectedRows;
+    projectedRows.reserve(visibleRows.size());
+
+    for (const auto& row : visibleRows) {
+        WaterfallRow projected = row;
+        projected.viewMinHz = m_viewMinHz;
+        projected.viewMaxHz = m_viewMaxHz;
+        projected.bins = WaterfallRowResampler::resample(row,
+                                                         m_viewMinHz,
+                                                         m_viewMaxHz,
+                                                         m_ringBuffer->nbins());
+        projectedRows.push_back(std::move(projected));
+    }
+
+    m_ringBuffer->replaceRows(projectedRows, ++m_generationId);
     ++m_timeTicksVersion;
     emit timeTicksChanged();
 }
@@ -261,10 +279,10 @@ void WaterfallControllerStub::seedSyntheticHistory()
     const qint64 oldSessionStart = now - kOneDayMs - 79 * kOneSecondMs;
 
     for (int i = 0; i < 80; ++i) {
-        seedRows.push_back(buildLine(m_viewMinHz, m_viewMaxHz, oldSessionStart + i * kOneSecondMs));
+        seedRows.push_back(buildLine(m_sourceMinHz, m_sourceMaxHz, oldSessionStart + i * kOneSecondMs));
     }
     for (int i = 0; i < 420; ++i) {
-        seedRows.push_back(buildLine(m_viewMinHz, m_viewMaxHz, currentStart + i * kOneSecondMs));
+        seedRows.push_back(buildLine(m_sourceMinHz, m_sourceMaxHz, currentStart + i * kOneSecondMs));
     }
 
     m_storage->appendRows(seedRows);

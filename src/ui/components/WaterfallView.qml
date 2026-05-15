@@ -28,6 +28,10 @@ Item {
         return (hz - root.viewMinHz) / root.spanHz() * plotArea.width
     }
 
+    onViewMinHzChanged: waterfallGrid.requestPaint()
+    onViewMaxHzChanged: waterfallGrid.requestPaint()
+    onTimeTicksChanged: waterfallGrid.requestPaint()
+
     function refreshTimeTicks() {
         if (plotArea.height <= 0) {
             timeTicks = []
@@ -94,19 +98,13 @@ Item {
                 Rectangle {
                     anchors.fill: plotArea
                     color: Sirius.Theme.waterfallBackground
-                }
-
-                Sirius.WaterfallItem {
-                    id: waterfall
-                    anchors.fill: plotArea
-                    ringBuffer: root.ringBuffer
-                    z: 1
+                    z: -1
                 }
 
                 Canvas {
                     id: waterfallGrid
                     anchors.fill: plotArea
-                    z: 2
+                    z: 0
                     opacity: 0.9
 
                     onPaint: {
@@ -114,24 +112,40 @@ Item {
                         ctx.clearRect(0, 0, width, height)
 
                         ctx.lineWidth = 1
-                        for (var i = 1; i < 6; i++) {
-                            var x = i / 6 * width
-                            ctx.strokeStyle = String(Sirius.Theme.gridMajor)
+                        var frequencyTicks = Sirius.FrequencyGridModel.buildTicks(root.viewMinHz,
+                                                                                  root.viewMaxHz,
+                                                                                  Math.floor(width))
+                        for (var i = 0; i < frequencyTicks.length; i++) {
+                            var tick = frequencyTicks[i]
+                            var x = root.xForHz(tick.frequencyHz)
+                            ctx.strokeStyle = tick.major
+                                ? String(Sirius.Theme.gridMajor)
+                                : String(Sirius.Theme.gridSoft)
                             ctx.beginPath()
                             ctx.moveTo(x, 0)
                             ctx.lineTo(x, height)
                             ctx.stroke()
                         }
 
-                        for (var j = 1; j < 6; j++) {
-                            var y = j / 6 * height
-                            ctx.strokeStyle = String(Sirius.Theme.gridSoft)
+                        for (var j = 0; j < root.timeTicks.length; j++) {
+                            var timeTick = root.timeTicks[j]
+                            var y = timeTick.y
+                            ctx.strokeStyle = timeTick.major
+                                ? String(Sirius.Theme.gridMajor)
+                                : String(Sirius.Theme.gridSoft)
                             ctx.beginPath()
                             ctx.moveTo(0, y)
                             ctx.lineTo(width, y)
                             ctx.stroke()
                         }
                     }
+                }
+
+                Sirius.WaterfallItem {
+                    id: waterfall
+                    anchors.fill: plotArea
+                    ringBuffer: root.ringBuffer
+                    z: 1
                 }
 
                 WheelHandler {
@@ -280,6 +294,7 @@ Item {
         target: Sirius.FrequencyViewportModel
         function onViewportChanged() {
             root.retuning = true
+            waterfallGrid.requestPaint()
         }
     }
 
@@ -312,6 +327,7 @@ Item {
         target: Sirius.WaterfallController
         function onTimeTicksChanged() {
             root.refreshTimeTicks()
+            waterfallGrid.requestPaint()
         }
         function onCurrentUtcTextChanged() {
             root.currentUtcText = Sirius.WaterfallController.currentUtcText

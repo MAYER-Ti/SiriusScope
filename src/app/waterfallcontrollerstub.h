@@ -94,6 +94,8 @@ private:
     qulonglong m_timeTicksVersion = 0;
     double m_viewMinHz = 0.0;
     double m_viewMaxHz = 0.0;
+    double m_sourceMinHz = 300e6;
+    double m_sourceMaxHz = 18e9;
     double m_phase = 0.0;
     bool m_retuning = false;
     bool m_historyLoading = false;

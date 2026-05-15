@@ -17,6 +17,8 @@ find_package(Qt6 REQUIRED COMPONENTS
 qt_standard_project_setup(REQUIRES 6.8)
 
 set(SIRIUSSCOPE_APPLICATION_SOURCES
+    src/app/waterfallrowresampler.h
+    src/app/waterfallrowresampler.cpp
     src/app/waterfallhistorymodel.h
     src/app/waterfallhistorymodel.cpp
     src/app/waterfallringbuffer.h
@@ -127,6 +129,8 @@ qt6_add_qml_module(appSiriusScope
     SOURCES
         src/app/appstate.h
         src/app/appstate.cpp
+        src/app/frequencygridmodel.h
+        src/app/frequencygridmodel.cpp
         src/app/frequencyviewportmodel.h
         src/app/frequencyviewportmodel.cpp
         src/app/qmlsingletons.h
