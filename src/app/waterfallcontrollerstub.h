@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "syntheticwaterfalldatasource.h"
 #include "waterfallhistorymodel.h"
 #include "waterfallstorage.h"
 
@@ -32,6 +33,10 @@ class WaterfallControllerStub : public QObject
     Q_PROPERTY(bool historyLoading READ historyLoading NOTIFY historyLoadingChanged)
     Q_PROPERTY(QString currentUtcText READ currentUtcText NOTIFY currentUtcTextChanged)
     Q_PROPERTY(qulonglong timeTicksVersion READ timeTicksVersion NOTIFY timeTicksChanged)
+    Q_PROPERTY(bool directionalEnabled READ directionalEnabled NOTIFY colorParamsChanged)
+    Q_PROPERTY(double colorGamma READ colorGamma NOTIFY colorParamsChanged)
+    Q_PROPERTY(double directionDeadZone READ directionDeadZone NOTIFY colorParamsChanged)
+    Q_PROPERTY(double directionalAlpha READ directionalAlpha NOTIFY colorParamsChanged)
 
 public:
     enum class WaterfallViewMode
@@ -57,16 +62,24 @@ public:
     bool historyLoading() const noexcept { return m_historyLoading; }
     QString currentUtcText() const;
     qulonglong timeTicksVersion() const noexcept { return m_timeTicksVersion; }
+    bool directionalEnabled() const noexcept { return true; }
+    double colorGamma() const noexcept { return 0.7; }
+    double directionDeadZone() const noexcept { return 0.10; }
+    double directionalAlpha() const noexcept { return 0.35; }
 
     Q_INVOKABLE QVariantList visibleTimeTicks(int pixelHeight) const;
     Q_INVOKABLE void scrollHistory(int wheelSteps);
     Q_INVOKABLE void jumpToLive();
+
+public slots:
+    void setSyntheticBand(int bandId, double centerHz, double widthHz, double thresholdAmplitude, bool enabled);
 
 signals:
     void liveModeChanged();
     void historyLoadingChanged();
     void currentUtcTextChanged();
     void timeTicksChanged();
+    void colorParamsChanged();
 
 private slots:
     void onViewportChanged(double minHz, double maxHz, const QString &sourceTag);
@@ -77,6 +90,7 @@ private:
     void scheduleRetune(double minHz, double maxHz);
     WaterfallRow buildLine(double minHz, double maxHz, qint64 utcMs);
     void reloadHistoryFromStorage();
+    QVector<SyntheticBandRange> currentBands() const;
     void setHistoryLoading(bool loading);
     void updateRenderBuffer();
     void notifyPresentationChanged(bool previousLiveMode, const QString& previousUtcText);
@@ -85,10 +99,11 @@ private:
     FrequencyViewportModel *m_viewportModel = nullptr;
     WaterfallRingBuffer *m_ringBuffer = nullptr;
     std::unique_ptr<InMemoryWaterfallStorage> m_storage;
+    SyntheticWaterfallDataSource m_syntheticSource;
+    QVector<SyntheticBandRange> m_syntheticBands;
     WaterfallHistoryModel m_historyModel;
     QTimer m_retuneTimer;
     QTimer m_lineTimer;
-    QVector<uint16_t> m_lineBuffer;
     uint64_t m_generationId = 0;
     quint64 m_nextSampleIndex = 0;
     qulonglong m_timeTicksVersion = 0;
@@ -96,7 +111,6 @@ private:
     double m_viewMaxHz = 0.0;
     double m_sourceMinHz = 300e6;
     double m_sourceMaxHz = 18e9;
-    double m_phase = 0.0;
     bool m_retuning = false;
     bool m_historyLoading = false;
 };

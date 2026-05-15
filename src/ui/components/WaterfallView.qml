@@ -13,9 +13,6 @@ Item {
     property real globalMaxHz: Sirius.FrequencyViewportModel.globalMaxHz
     property var ringBuffer: Sirius.WaterfallController.ringBuffer
     property bool retuning: true
-    property bool directionalEnabled: true
-    property real gamma: 0.7
-    property real directionThreshold: 0.10
     property string currentUtcText: Sirius.WaterfallController.currentUtcText
     property var timeTicks: []
     property var timeTicksVersion: Sirius.WaterfallController.timeTicksVersion
@@ -98,13 +95,13 @@ Item {
                 Rectangle {
                     anchors.fill: plotArea
                     color: Sirius.Theme.waterfallBackground
-                    z: -1
+                    z: 0
                 }
 
                 Canvas {
                     id: waterfallGrid
                     anchors.fill: plotArea
-                    z: 0
+                    z: 1
                     opacity: 0.9
 
                     onPaint: {
@@ -145,7 +142,11 @@ Item {
                     id: waterfall
                     anchors.fill: plotArea
                     ringBuffer: root.ringBuffer
-                    z: 1
+                    directionalEnabled: Sirius.WaterfallController.directionalEnabled
+                    colorGamma: Sirius.WaterfallController.colorGamma
+                    directionDeadZone: Sirius.WaterfallController.directionDeadZone
+                    directionalAlpha: Sirius.WaterfallController.directionalAlpha
+                    z: 3
                 }
 
                 WheelHandler {
@@ -154,7 +155,7 @@ Item {
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
 
                     onWheel: (event) => {
-                        const steps = event.angleDelta.y / 120
+                        const steps = -event.angleDelta.y / 120
                         if (steps !== 0) {
                             Sirius.WaterfallController.scrollHistory(steps)
                         }
@@ -184,7 +185,7 @@ Item {
                         width: Math.max(0, root.xForHz(clampedMaxHz) - root.xForHz(clampedMinHz))
                         height: plotArea.height
                         opacity: 0.10
-                        z: 3
+                        z: 2
 
                         Rectangle {
                             anchors.fill: bandOverlayDelegate
@@ -240,8 +241,8 @@ Item {
                 spacing: 12
 
                 Text {
-                    text: root.directionalEnabled ? "DIR ON" : "DIR OFF"
-                    color: root.directionalEnabled ? Sirius.Theme.statusGood : Sirius.Theme.textMuted
+                    text: Sirius.WaterfallController.directionalEnabled ? "DIR ON" : "DIR OFF"
+                    color: Sirius.WaterfallController.directionalEnabled ? Sirius.Theme.statusGood : Sirius.Theme.textMuted
                     font.family: Sirius.Theme.monoFontFamily
                     font.pixelSize: 10
                     font.weight: Font.DemiBold
@@ -249,7 +250,7 @@ Item {
                 }
 
                 Text {
-                    text: "\u03B3 " + root.gamma.toFixed(1)
+                    text: "\u03B3 " + Sirius.WaterfallController.colorGamma.toFixed(1)
                     color: Sirius.Theme.textSecondary
                     font.family: Sirius.Theme.monoFontFamily
                     font.pixelSize: 10
@@ -257,7 +258,7 @@ Item {
                 }
 
                 Text {
-                    text: "D " + root.directionThreshold.toFixed(2)
+                    text: "D " + Sirius.WaterfallController.directionDeadZone.toFixed(2)
                     color: Sirius.Theme.textSecondary
                     font.family: Sirius.Theme.monoFontFamily
                     font.pixelSize: 10
@@ -318,8 +319,8 @@ Item {
             waterfallGrid.requestPaint()
         }
         function onHeightChanged() {
-            waterfallGrid.requestPaint()
             root.refreshTimeTicks()
+            waterfallGrid.requestPaint()
         }
     }
 
@@ -336,7 +337,7 @@ Item {
 
     Component.onCompleted: {
         root.retuning = !waterfall.freshData
-        waterfallGrid.requestPaint()
         root.refreshTimeTicks()
+        waterfallGrid.requestPaint()
     }
 }

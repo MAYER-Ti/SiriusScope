@@ -5,6 +5,17 @@
 
 #include <cstdint>
 
+struct WaterfallBeamBin
+{
+    uint16_t left = 0;
+    uint16_t right = 0;
+
+    friend bool operator==(const WaterfallBeamBin& lhs, const WaterfallBeamBin& rhs) noexcept
+    {
+        return lhs.left == rhs.left && lhs.right == rhs.right;
+    }
+};
+
 struct WaterfallRow
 {
     qint64 utcMs = 0;
@@ -12,7 +23,7 @@ struct WaterfallRow
     quint64 lastSampleIndex = 0;
     double viewMinHz = 0.0;
     double viewMaxHz = 0.0;
-    QVector<uint16_t> bins;
+    QVector<WaterfallBeamBin> bins;
 };
 
 class IWaterfallStorage

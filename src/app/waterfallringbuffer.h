@@ -12,7 +12,7 @@
 #include <atomic>
 #include <cstdint>
 
-struct WaterfallRow;
+#include "waterfallstorage.h"
 
 /*!
  *  \class WaterfallRingBuffer
@@ -47,7 +47,7 @@ public:
      *  \param[in] nbins Количество значений в line.
      *  \param[in] generationId Идентификатор поколения обзора/данных для строки.
      */
-    void pushLine(const uint16_t *line, int nbins, uint64_t generationId);
+    void pushLine(const WaterfallBeamBin *line, int nbins, uint64_t generationId);
 
     void replaceRows(const QVector<WaterfallRow>& rows, uint64_t generationId);
 
@@ -97,14 +97,14 @@ public:
      *  \param[in] row Физический индекс строки внутри [0, height()).
      *  \return Указатель на первое значение строки или nullptr для неверной строки.
      */
-    const uint16_t *linePtr(int row) const noexcept;
-    bool copyLine(int row, uint16_t *destination, int nbins) const;
+    const WaterfallBeamBin *linePtr(int row) const noexcept;
+    bool copyLine(int row, WaterfallBeamBin *destination, int nbins) const;
 
 signals:
     void contentsChanged();
 
 private:
-    QVector<uint16_t> m_data;
+    QVector<WaterfallBeamBin> m_data;
     std::atomic<uint64_t> m_writeIndex{0};
     std::atomic<uint64_t> m_generationId{0};
     std::atomic<int> m_populatedRows{0};

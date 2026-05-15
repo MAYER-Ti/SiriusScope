@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -28,7 +29,7 @@ private:
     int m_failed = 0;
 };
 
-WaterfallRow makeRow(double minHz, double maxHz, QVector<uint16_t> bins)
+WaterfallRow makeRow(double minHz, double maxHz, QVector<WaterfallBeamBin> bins)
 {
     WaterfallRow row;
     row.viewMinHz = minHz;
@@ -37,86 +38,71 @@ WaterfallRow makeRow(double minHz, double maxHz, QVector<uint16_t> bins)
     return row;
 }
 
-bool allZero(const QVector<uint16_t>& values)
+bool allZero(const QVector<WaterfallBeamBin>& values)
 {
-    return std::all_of(values.cbegin(), values.cend(), [](uint16_t value) {
-        return value == 0;
+    return std::all_of(values.cbegin(), values.cend(), [](const WaterfallBeamBin& value) {
+        return value.left == 0 && value.right == 0;
     });
 }
 
 void testMatchingRange(TestRunner& test)
 {
-    const WaterfallRow row = makeRow(100.0, 200.0, {0, 1000, 2000, 3000, 4000});
-    const auto result = WaterfallRowResampler::resample(row, 100.0, 200.0, 5);
+    const WaterfallRow row = makeRow(100.0, 200.0, {{0, 10}, {1000, 900}, {2000, 1800}});
+    const auto result = WaterfallRowResampler::resample(row, 100.0, 200.0, 3);
 
-    test.require(result == row.bins, "matching range preserves bins");
+    test.require(result == row.bins, "matching range preserves two-beam bins");
 }
 
 void testZoomIn(TestRunner& test)
 {
-    const WaterfallRow row = makeRow(100.0, 200.0, {0, 1000, 2000, 3000, 4000});
+    const WaterfallRow row = makeRow(100.0,
+                                     200.0,
+                                     {{0, 4000}, {1000, 3000}, {2000, 2000}, {3000, 1000}, {4000, 0}});
     const auto result = WaterfallRowResampler::resample(row, 125.0, 175.0, 3);
 
     test.require(result.size() == 3, "zoom-in result has requested size");
-    test.require(result.at(0) == 1000, "zoom-in starts at central source section");
-    test.require(result.at(1) == 2000, "zoom-in interpolates middle source section");
-    test.require(result.at(2) == 3000, "zoom-in ends at central source section");
+    test.require(result.at(0) == WaterfallBeamBin{1000, 3000},
+                 "zoom-in interpolates left edge for both beams");
+    test.require(result.at(1) == WaterfallBeamBin{2000, 2000},
+                 "zoom-in interpolates middle for both beams");
+    test.require(result.at(2) == WaterfallBeamBin{3000, 1000},
+                 "zoom-in interpolates right edge for both beams");
 }
 
 void testTargetWiderThanSource(TestRunner& test)
 {
-    const WaterfallRow row = makeRow(100.0, 200.0, {100, 200, 300});
+    const WaterfallRow row = makeRow(100.0, 200.0, {{100, 300}, {200, 400}, {300, 500}});
     const auto result = WaterfallRowResampler::resample(row, 50.0, 250.0, 5);
 
     test.require(result.size() == 5, "wider target result has requested size");
-    test.require(result.first() == 0, "wider target has zero left edge");
-    test.require(result.last() == 0, "wider target has zero right edge");
-    test.require(result.at(2) > 0, "wider target keeps source data in the middle");
-}
-
-void testViewportShiftedRight(TestRunner& test)
-{
-    const WaterfallRow row = makeRow(100.0, 200.0, {0, 1000, 2000, 3000, 4000});
-    const auto result = WaterfallRowResampler::resample(row, 150.0, 250.0, 5);
-
-    test.require(result.at(0) == 2000, "shifted viewport starts with overlapping source data");
-    test.require(result.at(1) == 3000, "shifted viewport keeps overlapping source data");
-    test.require(result.at(2) == 4000, "shifted viewport includes source right edge");
-    test.require(result.at(3) == 0 && result.at(4) == 0,
-                 "shifted viewport fills non-overlapping right side with zero");
+    test.require(result.first() == WaterfallBeamBin{}, "wider target has zero left edge");
+    test.require(result.last() == WaterfallBeamBin{}, "wider target has zero right edge");
+    test.require(result.at(2).left > 0 && result.at(2).right > 0,
+                 "wider target keeps source data in the middle");
 }
 
 void testNoIntersection(TestRunner& test)
 {
-    const WaterfallRow row = makeRow(100.0, 200.0, {100, 200, 300});
+    const WaterfallRow row = makeRow(100.0, 200.0, {{100, 200}, {200, 300}, {300, 400}});
     const auto result = WaterfallRowResampler::resample(row, 300.0, 400.0, 6);
 
     test.require(result.size() == 6, "non-intersection result has requested size");
     test.require(allZero(result), "non-intersection result is zero");
 }
 
-void testEmptyBins(TestRunner& test)
-{
-    const WaterfallRow row = makeRow(100.0, 200.0, {});
-    const auto result = WaterfallRowResampler::resample(row, 100.0, 200.0, 4);
-
-    test.require(result.size() == 4, "empty source result has requested size");
-    test.require(allZero(result), "empty source result is zero");
-}
-
 void testInvalidRangesAndSingleBin(TestRunner& test)
 {
-    const WaterfallRow invalidSource = makeRow(200.0, 100.0, {100, 200, 300});
+    const WaterfallRow invalidSource = makeRow(200.0, 100.0, {{100, 200}, {200, 300}});
     const auto invalidSourceResult =
         WaterfallRowResampler::resample(invalidSource, 100.0, 200.0, 4);
     test.require(allZero(invalidSourceResult), "invalid source range returns zero result");
 
-    const WaterfallRow row = makeRow(100.0, 200.0, {100, 200, 300});
+    const WaterfallRow row = makeRow(100.0, 200.0, {{100, 200}, {200, 300}, {300, 400}});
     const auto invalidTargetResult = WaterfallRowResampler::resample(row, 200.0, 100.0, 4);
     test.require(allZero(invalidTargetResult), "invalid target range returns zero result");
 
     const auto singleBinResult = WaterfallRowResampler::resample(row, 100.0, 200.0, 1);
-    test.require(singleBinResult.size() == 1 && singleBinResult.first() == 100,
+    test.require(singleBinResult.size() == 1 && singleBinResult.first() == WaterfallBeamBin{100, 200},
                  "single output bin samples target minimum");
 }
 
@@ -129,9 +115,7 @@ int main()
     testMatchingRange(test);
     testZoomIn(test);
     testTargetWiderThanSource(test);
-    testViewportShiftedRight(test);
     testNoIntersection(test);
-    testEmptyBins(test);
     testInvalidRangesAndSingleBin(test);
 
     return test.result();

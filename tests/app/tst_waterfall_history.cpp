@@ -46,7 +46,9 @@ WaterfallRow makeRow(qint64 utcMs, quint64 sampleIndex)
     row.lastSampleIndex = sampleIndex;
     row.viewMinHz = 300e6;
     row.viewMaxHz = 18e9;
-    row.bins = QVector<uint16_t>(4, static_cast<uint16_t>(sampleIndex + 1));
+    row.bins = QVector<WaterfallBeamBin>(4,
+                                         WaterfallBeamBin{static_cast<uint16_t>(sampleIndex + 1),
+                                                          static_cast<uint16_t>(sampleIndex + 2)});
     return row;
 }
 
@@ -55,6 +57,33 @@ void appendRows(WaterfallHistoryModel& model, int count, qint64 startMs)
     for (int i = 0; i < count; ++i) {
         model.appendLiveRow(makeRow(startMs + i * 1000, static_cast<quint64>(i)));
     }
+}
+
+int tickYByLabel(const QVector<WaterfallTimeTick>& ticks, const QString& label)
+{
+    for (const auto& tick : ticks) {
+        if (tick.label == label) {
+            return tick.y;
+        }
+    }
+    return -1;
+}
+
+bool ticksStayInsidePixelRange(const QVector<WaterfallTimeTick>& ticks, int pixelHeight)
+{
+    return std::all_of(ticks.cbegin(), ticks.cend(), [pixelHeight](const WaterfallTimeTick& tick) {
+        return tick.y >= 0 && tick.y < pixelHeight;
+    });
+}
+
+bool ticksHaveSeparatedY(const QVector<WaterfallTimeTick>& ticks, int minDistance = 14)
+{
+    for (int i = 1; i < ticks.size(); ++i) {
+        if (std::abs(ticks.at(i).y - ticks.at(i - 1).y) < minDistance) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void testAppendLiveKeepsNewestWindow(TestRunner& test)
@@ -108,6 +137,24 @@ void testJumpToLive(TestRunner& test)
                  "jumpToLive returns the visible window to the newest row");
 }
 
+void testEmptyTimeTicks(TestRunner& test)
+{
+    WaterfallHistoryModel model(10);
+    const auto ticks = model.visibleTimeTicks(320);
+
+    test.require(ticks.isEmpty(), "empty history returns no time ticks");
+}
+
+void testSingleVisibleRowReturnsOneTick(TestRunner& test)
+{
+    WaterfallHistoryModel model(10);
+    model.appendLiveRow(makeRow(localMs(QDate::currentDate(), QTime(10, 0, 0)), 0));
+
+    const auto ticks = model.visibleTimeTicks(320);
+    test.require(ticks.size() == 1, "single visible row returns one time tick");
+    test.require(ticks.isEmpty() || ticks.first().y == 0, "single row tick is anchored at top");
+}
+
 void testTimeTicksUseSecondsAndDateTransitions(TestRunner& test)
 {
     WaterfallHistoryModel model(6);
@@ -136,6 +183,85 @@ void testTimeTicksUseSecondsAndDateTransitions(TestRunner& test)
 
     test.require(hasSecondsLabel, "time ticks include HH:mm:ss labels");
     test.require(hasDateLabel, "time ticks include date when another day is visible");
+    test.require(ticksStayInsidePixelRange(ticks, 400), "time ticks stay inside pixel range");
+    test.require(ticksHaveSeparatedY(ticks), "time ticks do not overlap vertically");
+}
+
+void testTimeTickYCoordinatesMoveWithScrolledWindow(TestRunner& test)
+{
+    WaterfallHistoryModel model(20);
+    const QDate today = QDate::currentDate();
+    appendRows(model, 60, localMs(today, QTime(10, 0, 0)));
+
+    const auto liveTicks = model.visibleTimeTicks(320);
+    const int liveY = tickYByLabel(liveTicks, QStringLiteral("10:00:55"));
+
+    model.scrollRows(1);
+    const auto scrolledTicks = model.visibleTimeTicks(320);
+    const int scrolledY = tickYByLabel(scrolledTicks, QStringLiteral("10:00:55"));
+
+    test.require(liveY >= 0, "live window contains the expected aligned time tick");
+    test.require(scrolledY >= 0, "scrolled window keeps the same aligned time tick");
+    test.require(liveY != scrolledY, "time tick y changes after history scroll");
+    test.require(scrolledY < liveY, "scrolling to older rows moves the same time tick upward");
+    test.require(ticksStayInsidePixelRange(liveTicks, 320),
+                 "live time ticks stay inside pixel range");
+    test.require(ticksStayInsidePixelRange(scrolledTicks, 320),
+                 "scrolled time ticks stay inside pixel range");
+    test.require(ticksHaveSeparatedY(scrolledTicks),
+                 "scrolled time ticks keep separated y coordinates");
+}
+
+void testManyRowsHaveSeparatedTickY(TestRunner& test)
+{
+    WaterfallHistoryModel model(40);
+    appendRows(model, 40, localMs(QDate::currentDate(), QTime(10, 0, 0)));
+
+    const auto ticks = model.visibleTimeTicks(320);
+
+    test.require(ticks.size() >= 2, "many rows return multiple time ticks");
+    test.require(ticksStayInsidePixelRange(ticks, 320),
+                 "many-row time ticks stay inside pixel range");
+    test.require(ticksHaveSeparatedY(ticks), "many-row time ticks have separated y coordinates");
+}
+
+void testOldestWindowKeepsSeparatedTickY(TestRunner& test)
+{
+    WaterfallHistoryModel model(20);
+    appendRows(model, 60, localMs(QDate::currentDate(), QTime(10, 0, 0)));
+
+    model.scrollRows(1000);
+    const auto ticks = model.visibleTimeTicks(320);
+
+    test.require(ticks.size() >= 2, "oldest window still returns multiple time ticks");
+    test.require(ticksStayInsidePixelRange(ticks, 320),
+                 "oldest-window time ticks stay inside pixel range");
+    test.require(ticksHaveSeparatedY(ticks),
+                 "oldest-window time ticks do not collapse to one line");
+}
+
+void testSessionGapDoesNotCollapseTickY(TestRunner& test)
+{
+    WaterfallHistoryModel model(20);
+    const QDate today = QDate::currentDate();
+    const QDate yesterday = today.addDays(-1);
+
+    for (int i = 0; i < 8; ++i) {
+        model.appendLiveRow(makeRow(localMs(yesterday, QTime(10, 0, i)),
+                                    static_cast<quint64>(i)));
+    }
+    for (int i = 0; i < 12; ++i) {
+        model.appendLiveRow(makeRow(localMs(today, QTime(10, 0, i)),
+                                    static_cast<quint64>(8 + i)));
+    }
+
+    const auto ticks = model.visibleTimeTicks(320);
+
+    test.require(ticks.size() >= 2, "window with session gap returns multiple time ticks");
+    test.require(ticksStayInsidePixelRange(ticks, 320),
+                 "session-gap time ticks stay inside pixel range");
+    test.require(ticksHaveSeparatedY(ticks),
+                 "session-gap time ticks do not collapse to one y coordinate");
 }
 
 void testCurrentUtcTextUsesTopVisibleRow(TestRunner& test)
@@ -164,15 +290,18 @@ void testRingBufferReplaceRowsProvidesNonZeroTopRow(TestRunner& test)
     WaterfallRingBuffer buffer(4, 3);
     buffer.replaceRows(rows, 42);
 
-    QVector<uint16_t> copied(4);
+    QVector<WaterfallBeamBin> copied(4);
     const bool copiedTopRow = buffer.copyLine(0, copied.data(), copied.size());
 
     test.require(buffer.populatedRows() == 3, "replaceRows stores populated row count");
     test.require(buffer.generationId() == 42, "replaceRows stores generation id");
     test.require(buffer.writeIndex() == 1, "replaceRows advances write index");
     test.require(copiedTopRow, "top render row can be copied");
-    test.require(copied.at(0) == 3, "top render row contains newest visible row");
-    test.require(*std::max_element(copied.cbegin(), copied.cend()) > 0,
+    test.require(copied.at(0).left == 3 && copied.at(0).right == 4,
+                 "top render row contains newest visible row");
+    test.require(std::any_of(copied.cbegin(), copied.cend(), [](const WaterfallBeamBin& bin) {
+        return bin.left > 0 || bin.right > 0;
+    }),
                  "top render row contains non-zero samples");
 }
 
@@ -185,7 +314,13 @@ int main()
     testAppendLiveKeepsNewestWindow(test);
     testScrollHistoryAndReturnToLive(test);
     testJumpToLive(test);
+    testEmptyTimeTicks(test);
+    testSingleVisibleRowReturnsOneTick(test);
     testTimeTicksUseSecondsAndDateTransitions(test);
+    testTimeTickYCoordinatesMoveWithScrolledWindow(test);
+    testManyRowsHaveSeparatedTickY(test);
+    testOldestWindowKeepsSeparatedTickY(test);
+    testSessionGapDoesNotCollapseTickY(test);
     testCurrentUtcTextUsesTopVisibleRow(test);
     testRingBufferReplaceRowsProvidesNonZeroTopRow(test);
 

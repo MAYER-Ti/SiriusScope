@@ -7,29 +7,37 @@
 
 namespace {
 
-uint16_t interpolateBins(const QVector<uint16_t>& bins, double sourceBin)
+uint16_t interpolateValue(uint16_t leftValue, uint16_t rightValue, double frac)
+{
+    const double value = static_cast<double>(leftValue) * (1.0 - frac)
+        + static_cast<double>(rightValue) * frac;
+    return static_cast<uint16_t>(std::clamp(std::lround(value), 0L, 65535L));
+}
+
+WaterfallBeamBin interpolateBins(const QVector<WaterfallBeamBin>& bins, double sourceBin)
 {
     if (bins.isEmpty()) {
-        return 0;
+        return {};
     }
 
     const int lastIndex = bins.size() - 1;
     const int left = std::clamp(static_cast<int>(std::floor(sourceBin)), 0, lastIndex);
     const int right = std::clamp(static_cast<int>(std::ceil(sourceBin)), 0, lastIndex);
     const double frac = std::clamp(sourceBin - static_cast<double>(left), 0.0, 1.0);
-    const double value = static_cast<double>(bins.at(left)) * (1.0 - frac)
-        + static_cast<double>(bins.at(right)) * frac;
-    return static_cast<uint16_t>(std::clamp(std::lround(value), 0L, 65535L));
+    return WaterfallBeamBin{
+        interpolateValue(bins.at(left).left, bins.at(right).left, frac),
+        interpolateValue(bins.at(left).right, bins.at(right).right, frac)
+    };
 }
 
 } // namespace
 
-QVector<uint16_t> WaterfallRowResampler::resample(const WaterfallRow& row,
-                                                  double targetMinHz,
-                                                  double targetMaxHz,
-                                                  int targetBins)
+QVector<WaterfallBeamBin> WaterfallRowResampler::resample(const WaterfallRow& row,
+                                                          double targetMinHz,
+                                                          double targetMaxHz,
+                                                          int targetBins)
 {
-    QVector<uint16_t> result(std::max(0, targetBins), uint16_t{0});
+    QVector<WaterfallBeamBin> result(std::max(0, targetBins), WaterfallBeamBin{});
     if (result.isEmpty()
         || row.bins.isEmpty()
         || row.viewMaxHz <= row.viewMinHz
