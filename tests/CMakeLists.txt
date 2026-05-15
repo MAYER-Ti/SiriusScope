@@ -90,6 +90,28 @@ target_include_directories(tst_synthetic_waterfall_datasource
 
 add_test(NAME tst_synthetic_waterfall_datasource COMMAND tst_synthetic_waterfall_datasource)
 
+add_executable(tst_antenna_controller_stub
+    app/tst_antenna_controller_stub.cpp
+    ../src/app/antennacontrollerstub.cpp
+)
+
+set_target_properties(tst_antenna_controller_stub PROPERTIES
+    AUTOMOC ON
+)
+
+target_link_libraries(tst_antenna_controller_stub
+    PRIVATE
+        Qt6::Core
+        siriusscope_core
+)
+
+target_include_directories(tst_antenna_controller_stub
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_antenna_controller_stub COMMAND tst_antenna_controller_stub)
+
 if(WIN32)
     get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION)
     if(NOT _qt_core_location)
@@ -107,6 +129,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_synthetic_waterfall_datasource PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_antenna_controller_stub PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
     endif()

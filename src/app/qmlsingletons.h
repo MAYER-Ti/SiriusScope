@@ -1,6 +1,7 @@
 #ifndef QMLSINGLETONS_H
 #define QMLSINGLETONS_H
 
+#include "antennacontrollerstub.h"
 #include "appstate.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
@@ -115,6 +116,24 @@ public:
     inline static WaterfallControllerStub *instance = nullptr;
 
     static WaterfallControllerStub *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct AntennaControllerQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(AntennaControllerStub)
+    QML_NAMED_ELEMENT(AntennaController)
+    QML_SINGLETON
+
+public:
+    inline static AntennaControllerStub *instance = nullptr;
+
+    static AntennaControllerStub *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);

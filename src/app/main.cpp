@@ -8,6 +8,7 @@
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 
+#include "antennacontrollerstub.h"
 #include "appstate.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
@@ -34,6 +35,7 @@ int main(int argc, char *argv[])
     SpectrumControllerStub spectrumController;
     SpectrumDecimator spectrumDecimator;
     WaterfallControllerStub waterfallController(&viewportModel);
+    AntennaControllerStub antennaController;
 
     QObject::connect(&spectrumController,
                      &SpectrumControllerStub::bandStateChanged,
@@ -46,6 +48,7 @@ int main(int argc, char *argv[])
     siriusscope::app::SpectrumControllerQmlSingleton::instance = &spectrumController;
     siriusscope::app::SpectrumDecimatorQmlSingleton::instance = &spectrumDecimator;
     siriusscope::app::WaterfallControllerQmlSingleton::instance = &waterfallController;
+    siriusscope::app::AntennaControllerQmlSingleton::instance = &antennaController;
 
 #ifdef QT_DEBUG
     qDebug() << "waterfall.vert.qsb exists"

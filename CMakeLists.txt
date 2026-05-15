@@ -131,6 +131,9 @@ qt6_add_qml_module(appSiriusScope
     DEPENDENCIES
         QtQuick
     SOURCES
+        src/app/antennacontrolinterface.h
+        src/app/antennacontrollerstub.h
+        src/app/antennacontrollerstub.cpp
         src/app/appstate.h
         src/app/appstate.cpp
         src/app/frequencygridmodel.h
@@ -160,6 +163,7 @@ qt6_add_qml_module(appSiriusScope
         src/ui/components/SpectrumView/SpectrumView.qml
         src/ui/components/SpectrumView/BandItem.qml
         src/ui/components/SpectrumView/BandSettingsDialog.qml
+        src/ui/components/AntennaIndicator/ArcBand.qml
         src/ui/components/AntennaIndicator/Indicator.qml
         src/ui/components/AntennaIndicator/TargetTracker.qml
         src/ui/components/AntennaIndicator/AntennaIndicator.qml

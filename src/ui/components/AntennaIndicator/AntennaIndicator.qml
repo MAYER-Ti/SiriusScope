@@ -7,120 +7,76 @@ import ".." as Components
 Components.Panel {
     id: antennaIndicator
 
-    property real azimuthDeg: 34.7
-    property int turnDirection: 0
-    property real turnSpeedPerSec: 5
-    property var liveBearings: []
-    readonly property bool isTestState: (AppState.mode === AppState.Test)
-    readonly property var activeBearings: isTestState ? testBearings : liveBearings
+    property real azimuthDeg: 0
+    property var targetAzimuthsDeg: []
+    property bool hasSelectedSector: false
+    property real selectedLeftAngle: 0
+    property real selectedRightAngle: 0
+    property int scanSpeed: 10
+
+    readonly property int targetCount: targetAzimuthsDeg ? targetAzimuthsDeg.length : 0
+    readonly property string selectedSectorText: hasSelectedSector
+        ? selectedLeftAngle.toFixed(0) + "°→" + selectedRightAngle.toFixed(0) + "°"
+        : "—"
+
+    signal stopRequested()
+    signal driveLeftRequested(int speed)
+    signal driveRightRequested(int speed)
+    signal scanRequested(real leftAngle, real rightAngle, int speed)
 
     contentMargins: 18
 
-    function norm360(deg) {
-        var a = deg % 360
-        if (a < 0) a += 360
-        return a
-    }
+    component ControlButton: Button {
+        id: control
 
-    function handleManualStep(deltaDeg) {
-        if (AppState.mode === AppState.Test) {
-            antennaIndicator.turnDirection = 0
-            antennaIndicator.azimuthDeg = norm360(antennaIndicator.azimuthDeg + deltaDeg)
-        } else if (AppState.mode === AppState.Combat) {
-            console.log("TODO: handle antenna step in Combat mode", deltaDeg)
-        } else if (AppState.mode === AppState.Control) {
-            console.log("TODO: handle antenna step in Control mode", deltaDeg)
+        property color normalColor: Theme.chipBackground
+        property color hoveredColor: "#203040"
+        property color pressedColor: "#24455E"
+        property color disabledColor: "#121922"
+        property color normalBorderColor: Theme.panelBorder
+        property color hoveredBorderColor: "#3B4E60"
+        property color pressedBorderColor: Theme.signalCyan
+        property color disabledBorderColor: Theme.panelBorderSoft
+        property color textColor: Theme.textPrimary
+        property color disabledTextColor: Theme.textVeryMuted
+
+        hoverEnabled: true
+        scale: down ? 0.97 : 1.0
+
+        Behavior on scale {
+            NumberAnimation { duration: 80 }
         }
-    }
 
-    function stopManualTurn() {
-        if (AppState.mode === AppState.Test) {
-            antennaIndicator.turnDirection = 0
-        } else if (AppState.mode === AppState.Combat) {
-            console.log("TODO: handle antenna stop in Combat mode")
-        } else if (AppState.mode === AppState.Control) {
-            console.log("TODO: handle antenna stop in Control mode")
+        contentItem: Text {
+            text: control.text
+            color: control.enabled ? control.textColor : control.disabledTextColor
+            font: control.font
+            horizontalAlignment: Text.AlignCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
         }
-    }
 
-    onIsTestStateChanged: {
-        antennaIndicator.turnDirection = 0
-        antennaIndicator.testBearings = []
-        antennaIndicator._testLastMs = 0
-        if (indicator) {
-            indicator.resetTargets()
-        }
-    }
+        background: Rectangle {
+            radius: Theme.radiusInset
+            color: !control.enabled
+                   ? control.disabledColor
+                   : control.down
+                     ? control.pressedColor
+                     : control.hovered
+                       ? control.hoveredColor
+                       : control.normalColor
+            border.color: !control.enabled
+                          ? control.disabledBorderColor
+                          : control.down
+                            ? control.pressedBorderColor
+                            : control.hovered
+                              ? control.hoveredBorderColor
+                              : control.normalBorderColor
+            opacity: control.enabled ? 1.0 : 0.56
 
-    Timer {
-        id: timerSendAzimuth
-        interval: 100
-        running: antennaIndicator.isTestState && antennaIndicator.turnDirection !== 0
-        repeat: true
-        onTriggered: {
-            var dt = interval / 1000.0
-            antennaIndicator.azimuthDeg = norm360(antennaIndicator.azimuthDeg +
-                                                  antennaIndicator.turnDirection *
-                                                  antennaIndicator.turnSpeedPerSec * dt)
-        }
-    }
-
-    property real testSectorHalfDeg: 25
-    property var testBaseOffsetsDeg: [-18, -6, 8, 20, 106]
-    property var testOffsetVelDegPerSec: [0.12, -0.08, 0.00, 0.10, 0.04]
-    property real testJitterDeg: 0.8
-    property real testDropProb: 0.10
-    property real testClutterProb: 0.15
-    property int testClutterCount: 1
-    property real _testLastMs: 0
-    property var testBearings: [12, 26, 41, 63, 141]
-
-    Timer {
-        id: testTargetsTimer
-        interval: 250
-        running: antennaIndicator.isTestState
-        repeat: true
-
-        onTriggered: {
-            var now = Date.now()
-            var dt = (antennaIndicator._testLastMs > 0)
-                ? (now - antennaIndicator._testLastMs) / 1000.0
-                : interval / 1000.0
-            antennaIndicator._testLastMs = now
-
-            var arr = []
-
-            for (var i = 0; i < antennaIndicator.testBaseOffsetsDeg.length; i++) {
-                var offset = antennaIndicator.testBaseOffsetsDeg[i]
-                var vel = 0
-                if (i < antennaIndicator.testOffsetVelDegPerSec.length) {
-                    vel = antennaIndicator.testOffsetVelDegPerSec[i]
-                }
-
-                offset = offset + vel * dt
-                if (offset > 150) {
-                    offset = 150
-                    antennaIndicator.testOffsetVelDegPerSec[i] = -Math.abs(vel)
-                } else if (offset < -150) {
-                    offset = -150
-                    antennaIndicator.testOffsetVelDegPerSec[i] = Math.abs(vel)
-                }
-                antennaIndicator.testBaseOffsetsDeg[i] = offset
-
-                if (Math.random() >= antennaIndicator.testDropProb) {
-                    var jitter = (Math.random() * 2 - 1) * antennaIndicator.testJitterDeg
-                    arr.push(norm360(antennaIndicator.azimuthDeg + offset + jitter))
-                }
+            Behavior on color {
+                ColorAnimation { duration: 90 }
             }
-
-            if (Math.random() < antennaIndicator.testClutterProb) {
-                for (var c = 0; c < antennaIndicator.testClutterCount; c++) {
-                    var clutterOffset = (Math.random() * 2 - 1) * antennaIndicator.testSectorHalfDeg
-                    arr.push(norm360(antennaIndicator.azimuthDeg + clutterOffset))
-                }
-            }
-
-            antennaIndicator.testBearings = arr
         }
     }
 
@@ -135,9 +91,9 @@ Components.Panel {
 
             Repeater {
                 model: [
-                    { label: "Speed", value: antennaIndicator.turnSpeedPerSec.toFixed(0) + "°/s", color: Theme.textSecondary, weight: 112 },
-                    { label: "Tracks", value: antennaIndicator.activeBearings.length.toString(), color: Theme.textSecondary, weight: 98 },
-                    { label: "TTL", value: "12s", color: Theme.textSecondary, weight: 86 },
+                    { label: "Speed", value: antennaIndicator.scanSpeed.toString() + "°/s", color: Theme.textSecondary, weight: 112 },
+                    { label: "Targets", value: antennaIndicator.targetCount.toString(), color: Theme.textSecondary, weight: 98 },
+                    { label: "Sector", value: antennaIndicator.selectedSectorText, color: Theme.textSecondary, weight: 132 },
                     { label: "AZ", value: antennaIndicator.azimuthDeg.toFixed(1) + "°", color: Theme.textPrimary, weight: 132 }
                 ]
 
@@ -167,77 +123,110 @@ Components.Panel {
         Indicator {
             id: indicator
             azimuthDeg: antennaIndicator.azimuthDeg
-            targetAzimuthsDeg: antennaIndicator.activeBearings
+            targetAzimuthsDeg: antennaIndicator.targetAzimuthsDeg
+            hasSelectedSector: antennaIndicator.hasSelectedSector
+            selectedLeftAngle: antennaIndicator.selectedLeftAngle
+            selectedRightAngle: antennaIndicator.selectedRightAngle
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 260
             beamWidthDeg: 60
+
+            onSectorSelected: function(leftAngle, rightAngle) {
+                antennaIndicator.selectedLeftAngle = leftAngle
+                antennaIndicator.selectedRightAngle = rightAngle
+                antennaIndicator.hasSelectedSector = true
+            }
+
+            onSectorCleared: {
+                antennaIndicator.hasSelectedSector = false
+            }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 44
-            Layout.minimumHeight: 42
+            Layout.preferredHeight: 104
+            Layout.minimumHeight: 96
             radius: Theme.radiusPanel
             color: Theme.insetBackground
             border.color: Theme.panelBorder
 
-            Text {
-                anchors.left: parent.left
-                anchors.leftMargin: 10
-                anchors.top: parent.top
-                anchors.topMargin: 4
-                text: qsTr("ручное наведение")
-                color: Theme.textVeryMuted
-                font.pixelSize: 9
-            }
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 7
 
-            RowLayout {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
-                anchors.bottomMargin: 7
-                height: 28
-                spacing: 10
+                Label {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 14
+                    text: qsTr("Управление поворотом")
+                    color: Theme.textVeryMuted
+                    font.pixelSize: 10
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
 
-                Repeater {
-                    model: [
-                        { label: "-10°", delta: -10, stop: false },
-                        { label: "-1°", delta: -1, stop: false },
-                        { label: "■", delta: 0, stop: true },
-                        { label: "+1°", delta: 1, stop: false },
-                        { label: "+10°", delta: 10, stop: false }
-                    ]
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 30
+                    spacing: 8
 
-                    Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: modelData.stop ? 32 : 28
-                        text: modelData.label
-                        font.family: Theme.monoFontFamily
-                        font.pixelSize: modelData.stop ? 13 : 11
-                        contentItem: Text {
-                            text: parent.text
-                            color: modelData.stop ? Theme.statusBad : Theme.textPrimary
-                            font: parent.font
-                            horizontalAlignment: Text.AlignCenter
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                        }
-                        background: Rectangle {
-                            radius: Theme.radiusInset
-                            color: modelData.stop ? "#2A1E20" : Theme.chipBackground
-                            border.color: modelData.stop ? Theme.statusBad : Theme.panelBorder
-                        }
-                        onClicked: {
-                            if (modelData.stop) {
-                                antennaIndicator.stopManualTurn()
-                            } else {
-                                antennaIndicator.handleManualStep(modelData.delta)
+                    Repeater {
+                        model: [
+                            { label: "←10", speed: 10, direction: -1, stop: false },
+                            { label: "←1", speed: 1, direction: -1, stop: false },
+                            { label: "■", speed: 0, direction: 0, stop: true },
+                            { label: "1→", speed: 1, direction: 1, stop: false },
+                            { label: "10→", speed: 10, direction: 1, stop: false }
+                        ]
+
+                        ControlButton {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: modelData.stop ? 32 : 30
+                            text: modelData.label
+                            font.family: Theme.monoFontFamily
+                            font.pixelSize: modelData.stop ? 13 : 11
+                            textColor: modelData.stop ? Theme.statusBad : Theme.textPrimary
+                            normalColor: modelData.stop ? "#2A1E20" : Theme.chipBackground
+                            hoveredColor: modelData.stop ? "#35282B" : "#203040"
+                            pressedColor: modelData.stop ? "#452E32" : "#24455E"
+                            normalBorderColor: modelData.stop ? Theme.statusBad : Theme.panelBorder
+                            hoveredBorderColor: modelData.stop ? "#FF8A83" : "#3B4E60"
+                            pressedBorderColor: modelData.stop ? "#FFB0AA" : Theme.signalCyan
+
+                            onPressed: {
+                                if (modelData.stop) {
+                                    antennaIndicator.stopRequested()
+                                } else if (modelData.direction < 0) {
+                                    antennaIndicator.driveLeftRequested(modelData.speed)
+                                } else {
+                                    antennaIndicator.driveRightRequested(modelData.speed)
+                                }
                             }
                         }
                     }
+                }
+
+                ControlButton {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 30
+                    enabled: antennaIndicator.hasSelectedSector
+                    text: qsTr("Сканировать сектор")
+                    font.pixelSize: 11
+                    normalColor: "#123044"
+                    hoveredColor: "#173D56"
+                    pressedColor: "#1A4D6C"
+                    disabledColor: Theme.chipBackground
+                    normalBorderColor: Theme.signalCyan
+                    hoveredBorderColor: "#7DCBEE"
+                    pressedBorderColor: "#B8E8FF"
+                    disabledBorderColor: Theme.panelBorder
+
+                    onClicked: antennaIndicator.scanRequested(
+                        antennaIndicator.selectedLeftAngle,
+                        antennaIndicator.selectedRightAngle,
+                        antennaIndicator.scanSpeed)
                 }
             }
         }

@@ -84,6 +84,19 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         Layout.verticalStretchFactor: 72
                         Layout.minimumHeight: 380
+                        azimuthDeg: AntennaController.azimuthDeg
+                        targetAzimuthsDeg: []
+
+                        onStopRequested: AntennaController.stop()
+                        onDriveLeftRequested: function(speed) {
+                            AntennaController.driveLeft(speed)
+                        }
+                        onDriveRightRequested: function(speed) {
+                            AntennaController.driveRight(speed)
+                        }
+                        onScanRequested: function(leftAngle, rightAngle, speed) {
+                            AntennaController.scan(leftAngle, rightAngle, speed)
+                        }
                     }
 
                     Components.ResultTablePanel {

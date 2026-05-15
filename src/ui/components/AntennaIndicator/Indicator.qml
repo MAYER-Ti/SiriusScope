@@ -1,60 +1,125 @@
 import QtQuick
-import QtQuick.Shapes
 import QtQuick.Layouts
-import QtQuick.Controls
 import SiriusScope 1.0
 
 Item {
     id: indicator
 
-    // сырые пеленги (0..359.9); передаются извне для изоляции компонента
     property var targetAzimuthsDeg: []
-
-
-    // Вход: обновляется хоть каждые 10 мс (0..359.9)
     property real azimuthDeg: 0
+    property bool hasSelectedSector: false
+    property real selectedLeftAngle: 0
+    property real selectedRightAngle: 0
 
-    // Настройки "луча" антенны
-    property real beamWidthDeg: 60          // полный угол сектора
-    property real innerRadiusRatio: 0.3    // Радиус внутреннего кольца
-    property real beamOpacity: 0.45         // базовая прозрачность
-    property real smoothing: 0.1           // 0..1: скорость подтягивания renderAzimuth к latestAzimuth
-    property int renderFps: 60              // частота обновления UI
+    property real beamWidthDeg: 60
+    property real innerRadiusRatio: 0.3
+    property real beamOpacity: 0.45
+    property real smoothing: 0.1
+    property int renderFps: 60
+    property real minimumSectorDeg: 5
 
-    // Внутреннее состояние
+    signal sectorSelected(real leftAngle, real rightAngle)
+    signal sectorCleared()
+
     property real _latestAzimuthDeg: 0
     property real _renderAzimuthDeg: 0
     property real _tickMs: 0
+    property bool _dragging: false
+    property bool _dragMoved: false
+    property real _dragStartX: 0
+    property real _dragStartY: 0
+    property real _dragStartAngle: 0
+    property bool _previewHasSector: false
+    property real _previewLeftAngle: 0
+    property real _previewRightAngle: 0
 
-
+    readonly property real _blindLeftDeg: 170
+    readonly property real _blindRightDeg: 190
+    readonly property bool _displayHasSector: _previewHasSector || hasSelectedSector
+    readonly property real _displayLeftAngle: _previewHasSector ? _previewLeftAngle : selectedLeftAngle
+    readonly property real _displayRightAngle: _previewHasSector ? _previewRightAngle : selectedRightAngle
+    readonly property real _scanSectorInnerRadius: dial.rInner + 6
+    readonly property real _scanSectorOuterRadius: Math.max(_scanSectorInnerRadius + 1, dial.rOuter - 4)
+    readonly property real _beamOuterRadius: Math.max(dial.rInner + 1, dial.rOuter - 4)
 
     function _norm360(deg) {
         var a = deg % 360.0
-        if (a < 0) a += 360.0
+        if (a < 0) {
+            a += 360.0
+        }
         return a
     }
 
-    // signed delta in [-180, 180]
     function _deltaDeg(fromDeg, toDeg) {
         var d = _norm360(toDeg) - _norm360(fromDeg)
-        if (d > 180) d -= 360
-        else if (d < -180) d += 360
+        if (d > 180) {
+            d -= 360
+        } else if (d < -180) {
+            d += 360
+        }
         return d
     }
 
     function _updateRenderAzimuth() {
         var target = _norm360(_latestAzimuthDeg)
         var cur = _norm360(_renderAzimuthDeg)
-
         var d = _deltaDeg(cur, target)
-        cur = _norm360(cur + d * smoothing)
+        _renderAzimuthDeg = _norm360(cur + d * smoothing)
+    }
 
-        _renderAzimuthDeg = cur
+    function isInBlindZone(deg) {
+        var a = _norm360(deg)
+        return a > _blindLeftDeg && a < _blindRightDeg
+    }
+
+    function clampToSafeAngle(deg) {
+        var a = _norm360(deg)
+        if (!isInBlindZone(a)) {
+            return a
+        }
+        return a < 180 ? _blindLeftDeg : _blindRightDeg
+    }
+
+    function toSafeCoord(deg) {
+        var a = clampToSafeAngle(deg)
+        if (a >= _blindRightDeg) {
+            return a - _blindRightDeg
+        }
+        return a + _blindLeftDeg
+    }
+
+    function fromSafeCoord(coord) {
+        var c = Math.max(0, Math.min(340, coord))
+        if (c <= 170) {
+            return _norm360(_blindRightDeg + c)
+        }
+        return c - _blindLeftDeg
+    }
+
+    function makeSafeSector(angleA, angleB) {
+        var coordA = toSafeCoord(angleA)
+        var coordB = toSafeCoord(angleB)
+        var minCoord = Math.min(coordA, coordB)
+        var maxCoord = Math.max(coordA, coordB)
+        return {
+            leftAngle: fromSafeCoord(minCoord),
+            rightAngle: fromSafeCoord(maxCoord),
+            spanDeg: maxCoord - minCoord
+        }
+    }
+
+    function angleFromPoint(x, y) {
+        var dx = x - dial.width * 0.5
+        var dy = y - dial.height * 0.5
+        return _norm360(Math.atan2(dx, -dy) * 180.0 / Math.PI)
+    }
+
+    function resetTargets() {
+        targetTracker.clear()
     }
 
     onAzimuthDegChanged: {
         _latestAzimuthDeg = _norm360(azimuthDeg)
-        // первое значение ставим сразу, без "догонялок"
         if (_tickMs === 0) {
             _renderAzimuthDeg = _latestAzimuthDeg
         }
@@ -68,10 +133,6 @@ Item {
         fadeMs: 8000
     }
 
-    function resetTargets() {
-        targetTracker.clear()
-    }
-
     Timer {
         id: renderTimer
         interval: Math.max(16, Math.round(1000 / Math.max(1, indicator.renderFps)))
@@ -80,15 +141,12 @@ Item {
         onTriggered: {
             indicator._tickMs = Date.now()
             indicator._updateRenderAzimuth()
-
-            // обновляем трекер целей
             targetTracker.nowMs = indicator._tickMs
             targetTracker.ingest(indicator.targetAzimuthsDeg)
         }
     }
 
     Rectangle {
-        id: frame
         anchors.fill: parent
         color: "transparent"
         border.color: "transparent"
@@ -117,12 +175,23 @@ Item {
                 readonly property real rOuter: width * 0.5
                 readonly property real rInner: rOuter * indicator.innerRadiusRatio
                 readonly property real beamHalf: Math.max(0.5, indicator.beamWidthDeg * 0.5)
+                readonly property real tickOuterPad: dial.rOuter * 0.03
+                readonly property real majorTickLen: dial.rOuter * 0.085
+                readonly property real midTickLen: dial.rOuter * 0.055
+                readonly property real minorTickLen: dial.rOuter * 0.032
+                readonly property real labelRadius: dial.rOuter * 0.80
+                readonly property real targetRadius: dial.rInner + (dial.rOuter - dial.rInner) * 0.55
 
-                // Компасная ориентация: 0° вверх, 90° вправо, 180° вниз, 270° влево
-                // У Qt rotation: 0° вправо, +CCW => чтобы 0° стало вверх, делаем -90.
-                readonly property real baseRotation: -90
+                function _xAt(radius, deg) {
+                    var rad = deg * Math.PI / 180.0
+                    return dial.width / 2 + radius * Math.sin(rad)
+                }
 
-                // Dial base
+                function _yAt(radius, deg) {
+                    var rad = deg * Math.PI / 180.0
+                    return dial.height / 2 - radius * Math.cos(rad)
+                }
+
                 Rectangle {
                     anchors.fill: parent
                     gradient: Gradient {
@@ -134,35 +203,106 @@ Item {
                     radius: width / 2
                 }
 
-                // --- Scale parameters (под dial.*) ---
-                readonly property real tickOuterPad: dial.rOuter * 0.03
-                readonly property real majorTickLen: dial.rOuter * 0.085
-                readonly property real midTickLen:   dial.rOuter * 0.055
-                readonly property real minorTickLen: dial.rOuter * 0.032
-                readonly property real labelRadius:  dial.rOuter * 0.80
-                readonly property real targetRadius: dial.rInner + (dial.rOuter - dial.rInner) * 0.55
-
-
-                // Функции координат для компасной системы: 0° вверх, 90° вправо
-                function _xAt(radius, deg) {
-                    var rad = deg * Math.PI / 180.0
-                    return dial.width / 2 + radius * Math.sin(rad)
-                }
-                function _yAt(radius, deg) {
-                    var rad = deg * Math.PI / 180.0
-                    return dial.height / 2 - radius * Math.cos(rad)
+                ArcBand {
+                    anchors.fill: parent
+                    startDeg: indicator._displayLeftAngle
+                    endDeg: indicator._displayRightAngle
+                    innerRadius: indicator._scanSectorInnerRadius
+                    outerRadius: indicator._scanSectorOuterRadius
+                    fillColor: "#477D9E"
+                    strokeColor: "#72B8DA"
+                    strokeWidth: 1
+                    clockwise: true
+                    bandOpacity: indicator._displayHasSector ? 0.38 : 0
                 }
 
-                // --- Major ticks (каждые 30°) ---
+                ArcBand {
+                    anchors.fill: parent
+                    startDeg: indicator._renderAzimuthDeg - dial.beamHalf
+                    endDeg: indicator._renderAzimuthDeg
+                    innerRadius: dial.rInner
+                    outerRadius: indicator._beamOuterRadius
+                    fillColor: Theme.statusBad
+                    strokeColor: "transparent"
+                    strokeWidth: 0
+                    clockwise: true
+                    bandOpacity: indicator.beamOpacity
+                }
+
+                ArcBand {
+                    anchors.fill: parent
+                    startDeg: indicator._renderAzimuthDeg
+                    endDeg: indicator._renderAzimuthDeg + dial.beamHalf
+                    innerRadius: dial.rInner
+                    outerRadius: indicator._beamOuterRadius
+                    fillColor: Theme.statusGood
+                    strokeColor: "transparent"
+                    strokeWidth: 0
+                    clockwise: true
+                    bandOpacity: indicator.beamOpacity
+                }
+
+                ArcBand {
+                    anchors.fill: parent
+                    startDeg: indicator._blindLeftDeg
+                    endDeg: indicator._blindRightDeg
+                    innerRadius: 0
+                    outerRadius: dial.rOuter
+                    fillColor: "#2B3138"
+                    strokeColor: "#7B8792"
+                    strokeWidth: 1
+                    clockwise: true
+                    bandOpacity: 0.58
+                }
+
                 Repeater {
-                    model: 12  // 0..330
+                    model: 5
+
+                    Rectangle {
+                        readonly property real deg: 172 + index * 4
+                        width: 1
+                        height: dial.rOuter
+                        radius: 0.5
+                        color: "#9AA5AF"
+                        opacity: 0.16
+                        x: dial.width / 2 - width / 2
+                        y: dial.height / 2 - height
+                        transform: Rotation {
+                            origin.x: width / 2
+                            origin.y: height
+                            angle: deg
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: [indicator._blindLeftDeg, indicator._blindRightDeg]
+
+                    Rectangle {
+                        width: 2
+                        height: dial.rOuter
+                        radius: 1
+                        color: "#B0BAC4"
+                        opacity: 0.72
+                        x: dial.width / 2 - width / 2
+                        y: dial.height / 2 - height
+                        transform: Rotation {
+                            origin.x: width / 2
+                            origin.y: height
+                            angle: modelData
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: 12
+
                     Rectangle {
                         width: 2
                         height: dial.majorTickLen
                         radius: 1
                         color: "#8EA1B4"
                         opacity: 0.95
-
                         x: (dial.width - width) / 2
                         y: dial.tickOuterPad
                         transform: Rotation {
@@ -173,19 +313,17 @@ Item {
                     }
                 }
 
-                // --- Medium ticks (каждые 15°, но не 30°) ---
                 Repeater {
-                    model: 24 // 0..345 шаг 15
+                    model: 24
+
                     Rectangle {
                         readonly property int deg: index * 15
                         visible: (deg % 30) !== 0
-
                         width: 2
                         height: dial.midTickLen
                         radius: 1
                         color: "#5A6D7F"
                         opacity: 0.82
-
                         x: (dial.width - width) / 2
                         y: dial.tickOuterPad
                         transform: Rotation {
@@ -196,19 +334,17 @@ Item {
                     }
                 }
 
-                // --- Minor ticks (каждые 5°, но не 15°) ---
                 Repeater {
-                    model: 72 // 0..355 шаг 5
+                    model: 72
+
                     Rectangle {
                         readonly property int deg: index * 5
-                        visible: (deg % 15) !== 0   // не рисуем поверх 15° и 30° (30 тоже кратно 15)
-
+                        visible: (deg % 15) !== 0
                         width: 1
                         height: dial.minorTickLen
                         radius: 0.5
                         color: "#5A6D7F"
                         opacity: 0.48
-
                         x: (dial.width - width) / 2
                         y: dial.tickOuterPad
                         transform: Rotation {
@@ -219,194 +355,19 @@ Item {
                     }
                 }
 
-                // --- Angle labels (каждые 30°) ---
                 Repeater {
                     model: 12
+
                     Text {
                         readonly property int deg: index * 30
                         text: deg.toString()
                         color: Theme.textLabel
                         font.pixelSize: 10
-
                         x: dial._xAt(dial.labelRadius, deg) - width / 2
                         y: dial._yAt(dial.labelRadius, deg) - height / 2
                     }
                 }
 
-                // --- Antenna beam: two half-sectors ---------------------------
-                Item {
-                    id: beamLayer
-                    anchors.fill: parent
-                    // Входной азимут считаем по часовой (как на компасе),
-                    // поэтому: baseRotation + azimuth
-                    rotation: dial.baseRotation + indicator._renderAzimuthDeg
-                    transformOrigin: Item.Center
-
-                    // --- Shadow under beam ---
-                    Shape {
-                        anchors.fill: parent
-                        antialiasing: true
-                        opacity: 0.12   // мягкая прозрачность
-
-                        ShapePath {
-                            fillColor: "#000000"
-                            strokeWidth: 0
-
-                            PathMove {
-                                x: dial.width / 2 + dial.rInner
-                                y: dial.height / 2 + 2   // небольшой сдвиг вниз
-                            }
-
-                            PathArc {
-                                x: dial.width / 2 + dial.rInner * Math.cos(dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rInner * Math.sin(dial.beamHalf * Math.PI / 180) + 2
-                                radiusX: dial.rInner * 1.02
-                                radiusY: dial.rInner * 1.02
-                                useLargeArc: false
-                                direction: PathArc.Clockwise
-                            }
-
-                            PathLine {
-                                x: dial.width / 2 + dial.rOuter * Math.cos(dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rOuter * Math.sin(dial.beamHalf * Math.PI / 180) + 2
-                            }
-
-                            PathArc {
-                                x: dial.width / 2 + dial.rOuter
-                                y: dial.height / 2 + 2
-                                radiusX: dial.rOuter
-                                radiusY: dial.rOuter
-                                useLargeArc: false
-                                direction: PathArc.Counterclockwise
-                            }
-                        }
-                    }
-
-                    // Правая половина (зелёная): 0 .. +beamHalf
-                    Shape {
-                        anchors.fill: parent
-                        layer.enabled: true
-                        layer.smooth: true
-
-                        antialiasing: true
-                        opacity: indicator.beamOpacity
-
-                        ShapePath {
-                            fillColor: Theme.statusGood
-                            strokeColor: "transparent"
-                            strokeWidth: 0
-
-                            PathMove {
-                                x: dial.width / 2 + dial.rInner
-                                y: dial.height / 2
-                            }
-                            PathArc {
-                                x: dial.width / 2 + dial.rInner * Math.cos(dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rInner * Math.sin(dial.beamHalf * Math.PI / 180)
-                                radiusX: dial.rInner
-                                radiusY: dial.rInner
-                                useLargeArc: false
-                                direction: PathArc.Clockwise
-                            }
-                            PathLine {
-                                x: dial.width / 2 + dial.rOuter * Math.cos(dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rOuter * Math.sin(dial.beamHalf * Math.PI / 180)
-                            }
-                            PathArc {
-                                x: dial.width / 2 + dial.rOuter
-                                y: dial.height / 2
-                                radiusX: dial.rOuter
-                                radiusY: dial.rOuter
-                                useLargeArc: false
-                                direction: PathArc.Counterclockwise
-                            }
-                        }
-                    }
-
-                    // Левая половина (красная): -beamHalf .. 0
-                    Shape {
-                        anchors.fill: parent
-                        layer.enabled: true
-                        layer.smooth: true
-                        antialiasing: true
-                        opacity: indicator.beamOpacity
-
-                        ShapePath {
-                            fillColor: Theme.statusBad
-                            strokeColor: "transparent"
-                            strokeWidth: 0
-
-                            PathMove {
-                                x: dial.width / 2 + dial.rInner * Math.cos(-dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rInner * Math.sin(-dial.beamHalf * Math.PI / 180)
-                            }
-                            PathArc {
-                                x: dial.width / 2 + dial.rInner
-                                y: dial.height / 2
-                                radiusX: dial.rInner
-                                radiusY: dial.rInner
-                                useLargeArc: false
-                                direction: PathArc.Clockwise
-                            }
-                            PathLine {
-                                x: dial.width / 2 + dial.rOuter
-                                y: dial.height / 2
-                            }
-                            PathArc {
-                                x: dial.width / 2 + dial.rOuter * Math.cos(-dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rOuter * Math.sin(-dial.beamHalf * Math.PI / 180)
-                                radiusX: dial.rOuter
-                                radiusY: dial.rOuter
-                                useLargeArc: false
-                                direction: PathArc.Counterclockwise
-                            }
-                        }
-                    }
-
-                    // Контур сектора (опционально)
-                    Shape {
-                        anchors.fill: parent
-                        antialiasing: true
-                        opacity: 0.45
-
-                        ShapePath {
-                            strokeColor: Theme.panelBorderSoft
-                            strokeWidth: 1
-                            fillColor: "transparent"
-
-                            PathMove {
-                                x: dial.width / 2 + dial.rInner * Math.cos(-dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rInner * Math.sin(-dial.beamHalf * Math.PI / 180)
-                            }
-                            PathLine {
-                                x: dial.width / 2 + dial.rOuter * Math.cos(-dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rOuter * Math.sin(-dial.beamHalf * Math.PI / 180)
-                            }
-                            PathArc {
-                                x: dial.width / 2 + dial.rOuter * Math.cos(dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rOuter * Math.sin(dial.beamHalf * Math.PI / 180)
-                                radiusX: dial.rOuter
-                                radiusY: dial.rOuter
-                                useLargeArc: false
-                                direction: PathArc.Clockwise
-                            }
-                            PathLine {
-                                x: dial.width / 2 + dial.rInner * Math.cos(dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rInner * Math.sin(dial.beamHalf * Math.PI / 180)
-                            }
-                            PathArc {
-                                x: dial.width / 2 + dial.rInner * Math.cos(-dial.beamHalf * Math.PI / 180)
-                                y: dial.height / 2 + dial.rInner * Math.sin(-dial.beamHalf * Math.PI / 180)
-                                radiusX: dial.rInner
-                                radiusY: dial.rInner
-                                useLargeArc: false
-                                direction: PathArc.Counterclockwise
-                            }
-                        }
-                    }
-                }
-
-                // --- Targets belt -----------------------------------------------------------
                 Item {
                     id: targetsLayer
                     anchors.fill: parent
@@ -438,8 +399,6 @@ Item {
                     }
                 }
 
-
-                // Центр
                 Rectangle {
                     width: dial.width * 0.03
                     height: width
@@ -449,7 +408,6 @@ Item {
                     opacity: 0.85
                 }
 
-                // Внутреннее кольцо
                 Rectangle {
                     width: dial.rInner * 2
                     height: width
@@ -459,6 +417,77 @@ Item {
                     border.color: "#56687A"
                     border.width: 1
                     opacity: 0.82
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton
+
+                    onPressed: function(mouse) {
+                        var angle = indicator.angleFromPoint(mouse.x, mouse.y)
+                        indicator._dragMoved = false
+                        indicator._previewHasSector = false
+
+                        if (indicator.isInBlindZone(angle)) {
+                            indicator._dragging = false
+                            return
+                        }
+
+                        indicator._dragging = true
+                        indicator._dragStartX = mouse.x
+                        indicator._dragStartY = mouse.y
+                        indicator._dragStartAngle = angle
+                    }
+
+                    onPositionChanged: function(mouse) {
+                        if (!indicator._dragging) {
+                            return
+                        }
+
+                        var dx = mouse.x - indicator._dragStartX
+                        var dy = mouse.y - indicator._dragStartY
+                        if (Math.sqrt(dx * dx + dy * dy) >= 4) {
+                            indicator._dragMoved = true
+                        }
+
+                        var angle = indicator.clampToSafeAngle(indicator.angleFromPoint(mouse.x, mouse.y))
+                        var sector = indicator.makeSafeSector(indicator._dragStartAngle, angle)
+                        if (sector.spanDeg >= indicator.minimumSectorDeg) {
+                            indicator._previewLeftAngle = sector.leftAngle
+                            indicator._previewRightAngle = sector.rightAngle
+                            indicator._previewHasSector = true
+                        } else {
+                            indicator._previewHasSector = false
+                        }
+                    }
+
+                    onReleased: function(mouse) {
+                        if (!indicator._dragging) {
+                            indicator._previewHasSector = false
+                            return
+                        }
+
+                        if (!indicator._dragMoved) {
+                            indicator._dragging = false
+                            indicator._previewHasSector = false
+                            indicator.sectorCleared()
+                            return
+                        }
+
+                        var angle = indicator.clampToSafeAngle(indicator.angleFromPoint(mouse.x, mouse.y))
+                        var sector = indicator.makeSafeSector(indicator._dragStartAngle, angle)
+                        indicator._dragging = false
+                        indicator._previewHasSector = false
+
+                        if (sector.spanDeg >= indicator.minimumSectorDeg) {
+                            indicator.sectorSelected(sector.leftAngle, sector.rightAngle)
+                        }
+                    }
+
+                    onCanceled: {
+                        indicator._dragging = false
+                        indicator._previewHasSector = false
+                    }
                 }
             }
         }
