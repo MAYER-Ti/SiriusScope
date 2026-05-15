@@ -40,6 +40,10 @@ Item {
         plot.requestPaint()
     }
 
+    function xForHz(hz, pixelWidth) {
+        return (hz - viewMinHz) / Math.max(1.0, viewMaxHz - viewMinHz) * pixelWidth
+    }
+
     function samplesAsAmplitude(samples, sampleMin, sampleMax) {
         if (sampleMin >= amplitudeMin && sampleMax <= amplitudeMax) {
             return samples
@@ -247,8 +251,14 @@ Item {
         }
     }
 
-    onViewMinHzChanged: scheduleSpectrumRequest()
-    onViewMaxHzChanged: scheduleSpectrumRequest()
+    onViewMinHzChanged: {
+        scheduleSpectrumRequest()
+        plot.requestPaint()
+    }
+    onViewMaxHzChanged: {
+        scheduleSpectrumRequest()
+        plot.requestPaint()
+    }
 
     Component.onCompleted: {
         scheduleSpectrumRequest()
@@ -331,12 +341,15 @@ Item {
                         ctx.strokeStyle = String(Theme.gridSoft)
                         ctx.lineWidth = 1
 
-                        var tickCountX = 5
                         var tickCountY = 5
+                        var frequencyTicks = FrequencyGridModel.buildTicks(viewMinHz,
+                                                                           viewMaxHz,
+                                                                           Math.floor(width))
 
-                        for (var i = 0; i < tickCountX; i++) {
-                            var x = (i / (tickCountX - 1)) * width
-                            ctx.strokeStyle = i === 0 || i === tickCountX - 1 ? String(Theme.gridMajor) : String(Theme.gridSoft)
+                        for (var i = 0; i < frequencyTicks.length; i++) {
+                            var tick = frequencyTicks[i]
+                            var x = root.xForHz(tick.frequencyHz, width)
+                            ctx.strokeStyle = tick.major ? String(Theme.gridMajor) : String(Theme.gridSoft)
                             ctx.beginPath()
                             ctx.moveTo(x, 0)
                             ctx.lineTo(x, height)
@@ -357,11 +370,10 @@ Item {
                         ctx.textAlign = "center"
                         ctx.textBaseline = "bottom"
 
-                        for (var t = 0; t < tickCountX; t++) {
-                            var fx = viewMinHz + (t / (tickCountX - 1)) * spanHz
-                            var label = formatHz(fx)
-                            var lx = (t / (tickCountX - 1)) * width
-                            ctx.fillText(label, lx, height - 2)
+                        for (var t = 0; t < frequencyTicks.length; t++) {
+                            var labelTick = frequencyTicks[t]
+                            var lx = root.xForHz(labelTick.frequencyHz, width)
+                            ctx.fillText(labelTick.label, lx, height - 2)
                         }
 
                         ctx.save()

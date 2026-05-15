@@ -2,6 +2,7 @@
 #define QMLSINGLETONS_H
 
 #include "appstate.h"
+#include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
@@ -42,6 +43,24 @@ public:
     inline static FrequencyViewportModel *instance = nullptr;
 
     static FrequencyViewportModel *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct FrequencyGridModelQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(FrequencyGridModel)
+    QML_NAMED_ELEMENT(FrequencyGridModel)
+    QML_SINGLETON
+
+public:
+    inline static FrequencyGridModel *instance = nullptr;
+
+    static FrequencyGridModel *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
