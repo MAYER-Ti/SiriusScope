@@ -163,11 +163,14 @@ QSGNode *WaterfallItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
         node->image = QImage(nbins, rows, QImage::Format_RGBA8888);
         node->image.fill(0);
+
         node->scratchLine.resize(nbins);
     }
 
     node->setRect(0.0, 0.0, width(), height());
-    node->setSourceRect(0.0, 0.0, 1.0, 1.0);
+    node->setSourceRect(0.0, 0.0,
+                        static_cast<qreal>(nbins),
+                        static_cast<qreal>(rows));
 
     const uint64_t writeIndex = m_ringBuffer->writeIndex();
     const uint64_t generationId = m_ringBuffer->generationId();
