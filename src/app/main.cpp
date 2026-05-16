@@ -8,14 +8,7 @@
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 
-#include "antennacontrollerstub.h"
-#include "appstate.h"
-#include "frequencygridmodel.h"
-#include "frequencyviewportmodel.h"
-#include "qmlsingletons.h"
-#include "spectrumcontrollerstub.h"
-#include "spectrumdecimator.h"
-#include "waterfallcontrollerstub.h"
+#include "applicationbootstrap.h"
 
 /*! \brief Инициализирует Qt/QML и запускает цикл обработки событий.
  *  \param[in] argc Количество аргументов командной строки.
@@ -30,25 +23,8 @@ int main(int argc, char *argv[])
 
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
-    FrequencyViewportModel viewportModel;
-    FrequencyGridModel frequencyGridModel;
-    SpectrumControllerStub spectrumController;
-    SpectrumDecimator spectrumDecimator;
-    WaterfallControllerStub waterfallController(&viewportModel);
-    AntennaControllerStub antennaController;
-
-    QObject::connect(&spectrumController,
-                     &SpectrumControllerStub::bandStateChanged,
-                     &waterfallController,
-                     &WaterfallControllerStub::setSyntheticBand);
-
-    siriusscope::app::AppStateQmlSingleton::instance = &AppState::instance();
-    siriusscope::app::FrequencyViewportModelQmlSingleton::instance = &viewportModel;
-    siriusscope::app::FrequencyGridModelQmlSingleton::instance = &frequencyGridModel;
-    siriusscope::app::SpectrumControllerQmlSingleton::instance = &spectrumController;
-    siriusscope::app::SpectrumDecimatorQmlSingleton::instance = &spectrumDecimator;
-    siriusscope::app::WaterfallControllerQmlSingleton::instance = &waterfallController;
-    siriusscope::app::AntennaControllerQmlSingleton::instance = &antennaController;
+    siriusscope::app::ApplicationBootstrap bootstrap;
+    bootstrap.registerQmlSingletons();
 
 #ifdef QT_DEBUG
     qDebug() << "waterfall.vert.qsb exists"

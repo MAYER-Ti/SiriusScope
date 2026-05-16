@@ -29,6 +29,7 @@ Read these documents before changing module boundaries, dependencies, threading,
 
 - `architecture/layers.md` — architectural layers, responsibilities, allowed dependencies, and forbidden dependencies.
 - `architecture/data-flow.md` — runtime flow of signal data, azimuth data, bearing results, UI updates, and storage operations.
+- `architecture/baseline.md` — current stage 1 composition root and hardware/infrastructure interface baseline.
 
 ### Domain model
 

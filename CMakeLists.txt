@@ -17,8 +17,25 @@ find_package(Qt6 REQUIRED COMPONENTS
 qt_standard_project_setup(REQUIRES 6.8)
 
 set(SIRIUSSCOPE_APPLICATION_SOURCES
+    src/app/applicationbootstrap.h
+    src/app/applicationbootstrap.cpp
+    src/app/antennacontrolinterface.h
+    src/app/antennacontrollerstub.h
+    src/app/antennacontrollerstub.cpp
+    src/app/appstate.h
+    src/app/appstate.cpp
+    src/app/frequencygridmodel.h
+    src/app/frequencygridmodel.cpp
+    src/app/frequencyviewportmodel.h
+    src/app/frequencyviewportmodel.cpp
+    src/app/spectrumcontrollerstub.h
+    src/app/spectrumcontrollerstub.cpp
+    src/app/spectrumdecimator.h
+    src/app/spectrumdecimator.cpp
     src/app/syntheticwaterfalldatasource.h
     src/app/syntheticwaterfalldatasource.cpp
+    src/app/waterfallcontrollerstub.h
+    src/app/waterfallcontrollerstub.cpp
     src/app/waterfallcolormapper.h
     src/app/waterfallcolormapper.cpp
     src/app/waterfallrowresampler.h
@@ -38,11 +55,26 @@ set(SIRIUSSCOPE_CORE_SOURCES
     src/core/domain_models.cpp
     src/core/domain_validation.h
     src/core/layer_placeholder.cpp
+    src/core/operation_result.h
 )
 
 set(SIRIUSSCOPE_PROCESSING_SOURCES
     src/processing/sample_processor.h
     src/processing/sample_processor.cpp
+)
+
+set(SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES
+    src/hardware/interfaces/antenna_azimuth_source.h
+    src/hardware/interfaces/antenna_control.h
+    src/hardware/interfaces/bco_control.h
+    src/hardware/interfaces/bco_sample_source.h
+)
+
+set(SIRIUSSCOPE_INFRASTRUCTURE_INTERFACE_SOURCES
+    src/infrastructure/interfaces/diagnostics_sink.h
+    src/infrastructure/interfaces/result_table_storage.h
+    src/infrastructure/interfaces/settings_storage.h
+    src/infrastructure/interfaces/waterfall_storage.h
 )
 
 add_library(siriusscope_core STATIC
@@ -83,6 +115,37 @@ target_link_libraries(siriusscope_processing_iface
 )
 add_library(siriusscope_infrastructure_iface INTERFACE)
 add_library(siriusscope_hardware_iface INTERFACE)
+
+target_sources(siriusscope_hardware_iface
+    INTERFACE
+        ${SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES}
+)
+
+target_include_directories(siriusscope_hardware_iface
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(siriusscope_hardware_iface
+    INTERFACE
+        siriusscope_core
+)
+
+target_sources(siriusscope_infrastructure_iface
+    INTERFACE
+        ${SIRIUSSCOPE_INFRASTRUCTURE_INTERFACE_SOURCES}
+)
+
+target_include_directories(siriusscope_infrastructure_iface
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(siriusscope_infrastructure_iface
+    INTERFACE
+        siriusscope_core
+        siriusscope_processing_iface
+)
 
 add_library(siriusscope_application STATIC
     ${SIRIUSSCOPE_APPLICATION_SOURCES}
@@ -131,22 +194,7 @@ qt6_add_qml_module(appSiriusScope
     DEPENDENCIES
         QtQuick
     SOURCES
-        src/app/antennacontrolinterface.h
-        src/app/antennacontrollerstub.h
-        src/app/antennacontrollerstub.cpp
-        src/app/appstate.h
-        src/app/appstate.cpp
-        src/app/frequencygridmodel.h
-        src/app/frequencygridmodel.cpp
-        src/app/frequencyviewportmodel.h
-        src/app/frequencyviewportmodel.cpp
         src/app/qmlsingletons.h
-        src/app/spectrumcontrollerstub.h
-        src/app/spectrumcontrollerstub.cpp
-        src/app/spectrumdecimator.h
-        src/app/spectrumdecimator.cpp
-        src/app/waterfallcontrollerstub.h
-        src/app/waterfallcontrollerstub.cpp
         src/app/waterfallitem.h
         src/app/waterfallitem.cpp
     QML_FILES

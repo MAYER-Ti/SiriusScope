@@ -20,6 +20,17 @@ target_link_libraries(tst_processing
 
 add_test(NAME tst_processing COMMAND tst_processing)
 
+add_executable(tst_architecture_baseline
+    infrastructure/tst_architecture_baseline.cpp
+)
+
+target_link_libraries(tst_architecture_baseline
+    PRIVATE
+        siriusscope_infrastructure_iface
+)
+
+add_test(NAME tst_architecture_baseline COMMAND tst_architecture_baseline)
+
 add_executable(tst_waterfall_history
     app/tst_waterfall_history.cpp
     ../src/app/waterfallhistorymodel.cpp
@@ -112,6 +123,23 @@ target_include_directories(tst_antenna_controller_stub
 
 add_test(NAME tst_antenna_controller_stub COMMAND tst_antenna_controller_stub)
 
+add_executable(tst_application_bootstrap
+    app/tst_application_bootstrap.cpp
+)
+
+target_link_libraries(tst_application_bootstrap
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_application_bootstrap
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_application_bootstrap COMMAND tst_application_bootstrap)
+
 if(WIN32)
     get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION)
     if(NOT _qt_core_location)
@@ -132,6 +160,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_antenna_controller_stub PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_application_bootstrap PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
     endif()
