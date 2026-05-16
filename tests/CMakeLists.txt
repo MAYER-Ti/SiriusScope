@@ -169,6 +169,27 @@ target_include_directories(tst_waterfall_controller
 
 add_test(NAME tst_waterfall_controller COMMAND tst_waterfall_controller)
 
+add_executable(tst_appstate
+    app/tst_appstate.cpp
+    ../src/app/appstate.cpp
+)
+
+set_target_properties(tst_appstate PROPERTIES
+    AUTOMOC ON
+)
+
+target_link_libraries(tst_appstate
+    PRIVATE
+        Qt6::Core
+)
+
+target_include_directories(tst_appstate
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_appstate COMMAND tst_appstate)
+
 add_executable(tst_synthetic_waterfall_datasource
     app/tst_synthetic_waterfall_datasource.cpp
     ../src/app/syntheticwaterfalldatasource.cpp
@@ -282,6 +303,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_waterfall_controller PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_appstate PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_synthetic_waterfall_datasource PROPERTIES

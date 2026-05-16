@@ -16,6 +16,7 @@ Item {
     readonly property real viewMaxHz: FrequencyViewportModel.viewMaxHz
     readonly property real globalMinHz: FrequencyViewportModel.globalMinHz
     readonly property real globalMaxHz: FrequencyViewportModel.globalMaxHz
+    readonly property bool bandEditingLocked: BandConfigController.editingLocked
     property real minSpanHz: 1050e6
     readonly property real maxSpanHz: globalMaxHz - globalMinHz
     property var rawSamples: []
@@ -89,6 +90,7 @@ Item {
         var key = String(band.bandId)
         var existingWindow = bandSettingsWindows[key]
         if (existingWindow) {
+            existingWindow.readOnly = root.bandEditingLocked
             existingWindow.raise()
             existingWindow.requestActivate()
             return
@@ -105,7 +107,8 @@ Item {
             globalMinHz: root.globalMinHz,
             globalMaxHz: root.globalMaxHz,
             minAmplitude: root.amplitudeMin,
-            maxAmplitude: root.amplitudeMax
+            maxAmplitude: root.amplitudeMax,
+            readOnly: root.bandEditingLocked
         })
 
         if (!window) {
@@ -118,6 +121,10 @@ Item {
 
         window.saveRequested.connect(function(bandId, centerHz, widthHz, thresholdAmplitude,
                                              inputAttenuatorDb, outputAttenuatorDb, polarization) {
+            if (root.bandEditingLocked) {
+                window.showControllerError(qsTr("Запись включена. Настройки доступны только для просмотра."))
+                return
+            }
             var accepted = BandConfigController.applyBandSettings(bandId, centerHz, widthHz,
                                                                   thresholdAmplitude,
                                                                   inputAttenuatorDb,
@@ -132,6 +139,9 @@ Item {
         })
 
         window.thresholdPreviewChanged.connect(function(bandId, thresholdAmplitude) {
+            if (root.bandEditingLocked) {
+                return
+            }
             if (BandConfigController.setBandThresholdPreview(bandId, thresholdAmplitude)) {
                 plot.requestPaint()
             }
@@ -160,7 +170,21 @@ Item {
         }
     }
 
+    function updateBandSettingsWindowsReadOnly() {
+        for (var key in bandSettingsWindows) {
+            var window = bandSettingsWindows[key]
+            if (window) {
+                window.readOnly = root.bandEditingLocked
+            }
+        }
+    }
+
     function queueBandPreviewFromDrag(bandId, centerHz, widthHz) {
+        if (root.bandEditingLocked) {
+            pendingBandPreviewValid = false
+            bandPreviewTimer.stop()
+            return
+        }
         pendingBandPreviewValid = true
         pendingBandPreviewId = bandId
         pendingBandPreviewCenterHz = centerHz
@@ -173,6 +197,10 @@ Item {
     }
 
     function flushBandPreviewFromDrag() {
+        if (root.bandEditingLocked) {
+            pendingBandPreviewValid = false
+            return false
+        }
         if (!pendingBandPreviewValid) {
             return true
         }
@@ -193,6 +221,9 @@ Item {
         pendingBandPreviewValid = false
         bandPreviewTimer.stop()
 
+        if (root.bandEditingLocked) {
+            return
+        }
         if (!BandConfigController.previewBandSettings(bandId, centerHz, widthHz)) {
             return
         }
@@ -251,6 +282,18 @@ Item {
             }
             rawSamples = samplesAsAmplitude(samples, sampleMinValue, sampleMaxValue)
             decimateAndRepaint()
+        }
+    }
+
+    Connections {
+        target: BandConfigController
+        function onEditingLockedChanged() {
+            if (BandConfigController.editingLocked) {
+                pendingBandPreviewValid = false
+                bandPreviewTimer.stop()
+            }
+            root.updateBandSettingsWindowsReadOnly()
+            plot.requestPaint()
         }
     }
 
@@ -534,6 +577,7 @@ Item {
                         globalMaxHz: root.globalMaxHz
                         settingsWindowOpen: model.settingsWindowOpen
                         panModifierActive: root.spacePressed
+                        editingLocked: root.bandEditingLocked
                         z: 2
 
                         onConfigureRequested: (requestedBandId) => {

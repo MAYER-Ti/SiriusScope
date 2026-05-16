@@ -42,6 +42,21 @@ ApplicationBootstrap::ApplicationBootstrap()
                          }
                      });
 
+    QObject::connect(m_waterfallController.get(),
+                     &WaterfallController::recordingStateChanged,
+                     &m_bandConfigController,
+                     [this]() {
+                         m_bandConfigController.setEditingLocked(
+                             m_waterfallController && m_waterfallController->sessionActive());
+                     });
+    QObject::connect(m_waterfallController.get(),
+                     &WaterfallController::recordingStateChanged,
+                     &AppState::instance(),
+                     [this]() {
+                         AppState::instance().setModeChangeLocked(
+                             m_waterfallController && m_waterfallController->sessionActive());
+                     });
+
     m_waterfallController->start();
 }
 

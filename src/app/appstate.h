@@ -15,6 +15,7 @@ class AppState : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(Mode mode READ mode WRITE setMode NOTIFY modeChanged FINAL)
+    Q_PROPERTY(bool modeChangeLocked READ modeChangeLocked WRITE setModeChangeLocked NOTIFY modeChangeLockedChanged FINAL)
 
 public:
     //! \brief Режимы работы приложения.
@@ -30,6 +31,7 @@ public:
     inline Mode mode() const noexcept {
         return m_mode;
     };
+    bool modeChangeLocked() const noexcept { return m_modeChangeLocked; }
 
     //! \brief Возвращает экземпляр синглтона.
     //! \return Ссылка на единственный AppState.
@@ -40,10 +42,12 @@ public slots:
      *  \param[in] newMode Новый режим приложения.
      */
     void setMode(AppState::Mode newMode);
+    void setModeChangeLocked(bool locked);
 
 signals:
     //! \brief Сигнал об изменении режима.
     void modeChanged(AppState::Mode mode);
+    void modeChangeLockedChanged();
 
 private:
     //! \brief Конструирует синглтон и загружает сохраненное состояние.
@@ -56,6 +60,7 @@ private:
 private:
     //! \brief Текущий режим.
     Mode m_mode = Mode::Test;
+    bool m_modeChangeLocked = false;
 
 };
 

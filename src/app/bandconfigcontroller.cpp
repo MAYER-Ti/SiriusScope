@@ -29,6 +29,19 @@ BandConfigController::BandConfigController(BandListModel* bandListModel,
     initializeCommittedState();
 }
 
+void BandConfigController::setEditingLocked(bool locked)
+{
+    if (m_editingLocked == locked) {
+        return;
+    }
+
+    m_editingLocked = locked;
+    if (m_editingLocked) {
+        restoreCommittedStates();
+    }
+    emit editingLockedChanged();
+}
+
 bool BandConfigController::applyBandSettings(int bandId,
                                              double centerHz,
                                              double widthHz,
@@ -37,6 +50,9 @@ bool BandConfigController::applyBandSettings(int bandId,
                                              int outputAttenuatorDb,
                                              const QString& polarization)
 {
+    if (m_editingLocked) {
+        return rejectApply(bandId, QStringLiteral("Запись включена"));
+    }
     if (!m_bandListModel) {
         return rejectApply(bandId, QStringLiteral("Band model is not available"));
     }
@@ -109,6 +125,9 @@ bool BandConfigController::applyBandSettings(int bandId,
 
 bool BandConfigController::previewBandSettings(int bandId, double centerHz, double widthHz)
 {
+    if (m_editingLocked) {
+        return false;
+    }
     if (!m_bandListModel) {
         return false;
     }
@@ -156,6 +175,9 @@ void BandConfigController::cancelBandSettingsPreview(int bandId)
 
 bool BandConfigController::setBandThresholdPreview(int bandId, double thresholdAmplitude)
 {
+    if (m_editingLocked) {
+        return false;
+    }
     if (!m_bandListModel || !isValidThreshold(thresholdAmplitude)) {
         return false;
     }
@@ -359,6 +381,24 @@ bool BandConfigController::restoreCommittedState(int bandId)
     }
 
     return restored;
+}
+
+void BandConfigController::restoreCommittedStates()
+{
+    for (const auto& state : m_committedStates) {
+        if (!m_bandListModel) {
+            return;
+        }
+
+        const bool restored = m_bandListModel->updateBandConfig(state.config,
+                                                                state.thresholdAmplitude,
+                                                                state.inputAttenuatorDb,
+                                                                state.outputAttenuatorDb,
+                                                                state.polarization);
+        if (restored) {
+            emitSyntheticBandState(state);
+        }
+    }
 }
 
 void BandConfigController::emitSyntheticBandState(const CommittedBandState& state)

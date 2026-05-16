@@ -17,11 +17,22 @@ AppState &AppState::instance()
  */
 void AppState::setMode(Mode newMode)
 {
+    if (m_modeChangeLocked)
+        return;
     if (m_mode == newMode)
         return;
     m_mode = newMode;
 
     emit modeChanged(m_mode);
+}
+
+void AppState::setModeChangeLocked(bool locked)
+{
+    if (m_modeChangeLocked == locked)
+        return;
+
+    m_modeChangeLocked = locked;
+    emit modeChangeLockedChanged();
 }
 
 //! \brief Конструирует синглтон и загружает сохраненное состояние.

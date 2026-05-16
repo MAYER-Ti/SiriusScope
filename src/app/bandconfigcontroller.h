@@ -16,12 +16,15 @@ namespace siriusscope::app {
 class BandConfigController : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(bool editingLocked READ editingLocked WRITE setEditingLocked NOTIFY editingLockedChanged FINAL)
 
 public:
     explicit BandConfigController(BandListModel* bandListModel,
                                   hardware::IBcoControl* bcoControl,
                                   infrastructure::IDiagnosticsSink* diagnosticsSink,
                                   QObject *parent = nullptr);
+    bool editingLocked() const noexcept { return m_editingLocked; }
+    void setEditingLocked(bool locked);
 
     Q_INVOKABLE bool applyBandSettings(int bandId,
                                        double centerHz,
@@ -40,6 +43,7 @@ signals:
     void bandSettingsRejected(int bandId, QString reason);
     void bandPreviewChanged(int bandId);
     void bandPreviewCanceled(int bandId);
+    void editingLockedChanged();
     void bandStateChanged(int bandId,
                           double centerHz,
                           double widthHz,
@@ -70,12 +74,14 @@ private:
     QString normalizedPolarization(const QString& polarization) const;
     bool isValidThreshold(double thresholdAmplitude) const;
     bool restoreCommittedState(int bandId);
+    void restoreCommittedStates();
     void emitSyntheticBandState(const CommittedBandState& state);
 
     BandListModel* m_bandListModel = nullptr;
     hardware::IBcoControl* m_bcoControl = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     std::vector<CommittedBandState> m_committedStates;
+    bool m_editingLocked = false;
 };
 
 } // namespace siriusscope::app

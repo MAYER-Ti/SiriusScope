@@ -229,6 +229,82 @@ void testThresholdPreview(TestRunner& test)
                  "threshold preview keeps center frequency");
 }
 
+void testEditingLockRejectsChanges(TestRunner& test)
+{
+    BandListModel model;
+    RecordingBcoControl bco;
+    RecordingDiagnosticsSink diagnostics;
+    BandConfigController controller(&model, &bco, &diagnostics);
+
+    const double originalCenter = model.getByBandId(1).value(QStringLiteral("centerHz")).toDouble();
+    const double originalWidth = model.getByBandId(1).value(QStringLiteral("widthHz")).toDouble();
+    const double originalThreshold =
+        model.getByBandId(1).value(QStringLiteral("thresholdAmplitude")).toDouble();
+
+    int rejected = 0;
+    QObject::connect(&controller,
+                     &BandConfigController::bandSettingsRejected,
+                     [&rejected](int bandId, const QString&) {
+                         if (bandId == 1) {
+                             ++rejected;
+                         }
+                     });
+
+    controller.setEditingLocked(true);
+    const bool previewOk = controller.previewBandSettings(1,
+                                                          6'100'000'000.0,
+                                                          300'000'000.0);
+    const bool thresholdOk = controller.setBandThresholdPreview(1, originalThreshold + 50.0);
+    const bool applyOk = controller.applyBandSettings(1,
+                                                      6'100'000'000.0,
+                                                      300'000'000.0,
+                                                      originalThreshold + 50.0,
+                                                      10,
+                                                      10,
+                                                      QStringLiteral("horizontal"));
+
+    const QVariantMap band = model.getByBandId(1);
+    test.require(controller.editingLocked(), "editing lock is enabled");
+    test.require(!previewOk, "locked controller rejects frequency preview");
+    test.require(!thresholdOk, "locked controller rejects threshold preview");
+    test.require(!applyOk, "locked controller rejects apply");
+    test.require(rejected == 1, "locked apply emits one rejection");
+    test.require(bco.applySingleCount == 0, "locked apply does not call BCO");
+    test.require(band.value(QStringLiteral("centerHz")).toDouble() == originalCenter,
+                 "locked controller keeps committed center");
+    test.require(band.value(QStringLiteral("widthHz")).toDouble() == originalWidth,
+                 "locked controller keeps committed width");
+    test.require(band.value(QStringLiteral("thresholdAmplitude")).toDouble() == originalThreshold,
+                 "locked controller keeps committed threshold");
+}
+
+void testEditingLockRestoresActivePreview(TestRunner& test)
+{
+    BandListModel model;
+    RecordingBcoControl bco;
+    RecordingDiagnosticsSink diagnostics;
+    BandConfigController controller(&model, &bco, &diagnostics);
+
+    const double originalCenter = model.getByBandId(2).value(QStringLiteral("centerHz")).toDouble();
+    const double originalThreshold =
+        model.getByBandId(2).value(QStringLiteral("thresholdAmplitude")).toDouble();
+
+    const bool previewOk = controller.previewBandSettings(2,
+                                                          9'000'000'000.0,
+                                                          300'000'000.0);
+    const bool thresholdOk = controller.setBandThresholdPreview(2, originalThreshold + 40.0);
+
+    controller.setEditingLocked(true);
+
+    const QVariantMap band = model.getByBandId(2);
+    test.require(previewOk, "preview is accepted before lock");
+    test.require(thresholdOk, "threshold preview is accepted before lock");
+    test.require(band.value(QStringLiteral("centerHz")).toDouble() == originalCenter,
+                 "locking restores previewed center to committed state");
+    test.require(band.value(QStringLiteral("thresholdAmplitude")).toDouble() == originalThreshold,
+                 "locking restores previewed threshold to committed state");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -241,6 +317,8 @@ int main(int argc, char *argv[])
     testRejectsOutOfRangeBand(test);
     testPreviewAndCancel(test);
     testThresholdPreview(test);
+    testEditingLockRejectsChanges(test);
+    testEditingLockRestoresActivePreview(test);
 
     return test.result();
 }

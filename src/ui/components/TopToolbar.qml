@@ -19,6 +19,9 @@ Rectangle {
     border.color: Theme.panelBorder
 
     function setMode(mode) {
+        if (AppState.modeChangeLocked) {
+            return
+        }
         AppState.mode = mode
     }
 
@@ -108,6 +111,7 @@ Rectangle {
                         radius: Theme.radiusInset
                         color: root.modeActive(modelData.mode) ? "#214B35" : "transparent"
                         border.color: root.modeActive(modelData.mode) ? "#2E7650" : "transparent"
+                        opacity: AppState.modeChangeLocked && !root.modeActive(modelData.mode) ? 0.50 : 1.0
 
                         Text {
                             anchors.fill: parent
@@ -124,6 +128,7 @@ Rectangle {
 
                         MouseArea {
                             anchors.fill: parent
+                            enabled: !AppState.modeChangeLocked
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.setMode(modelData.mode)
                         }

@@ -41,6 +41,7 @@ MenuBar {
             text: qsTr("Тестовый")
             checkable: true
             ActionGroup.group: appModeGroup
+            enabled: !AppState.modeChangeLocked
             checked: AppState.mode === AppState.Test
             onTriggered: {
                 AppState.mode = AppState.Test
@@ -51,6 +52,7 @@ MenuBar {
             text: qsTr("Боевой")
             checkable: true
             ActionGroup.group: appModeGroup
+            enabled: !AppState.modeChangeLocked
             checked: AppState.mode === AppState.Combat
             onTriggered: {
                 AppState.mode = AppState.Combat
@@ -60,6 +62,7 @@ MenuBar {
             text: qsTr("Контроль")
             checkable: true
             ActionGroup.group: appModeGroup
+            enabled: !AppState.modeChangeLocked
             checked: AppState.mode === AppState.Control
             onTriggered: {
                 AppState.mode = AppState.Control

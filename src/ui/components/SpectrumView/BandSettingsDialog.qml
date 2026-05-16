@@ -18,6 +18,7 @@ Window {
     property real globalMaxHz: 0
     property real minAmplitude: 0
     property real maxAmplitude: 500
+    property bool readOnly: false
 
     property bool _updatingFields: false
     property real _thresholdDraft: thresholdAmplitude
@@ -144,6 +145,7 @@ Window {
                     columns: 2
                     columnSpacing: 10
                     rowSpacing: 8
+                    enabled: !root.readOnly
 
                     Label {
                         text: qsTr("Левая граница, МГц")
@@ -317,7 +319,7 @@ Window {
                         id: saveButton
                         text: root._savedIndicatorActive ? qsTr("Сохранено") : qsTr("Сохранить")
                         savedState: root._savedIndicatorActive
-                        enabled: errorText.text.length === 0
+                        enabled: !root.readOnly && errorText.text.length === 0
                         onClicked: {
                             if (!validateForm()) {
                                 return

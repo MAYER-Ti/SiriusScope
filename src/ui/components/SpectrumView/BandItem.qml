@@ -20,6 +20,7 @@ Item {
     property real globalMaxHz: 0
     property bool settingsWindowOpen: false
     property bool panModifierActive: false
+    property bool editingLocked: false
     property bool dragging: false
     property real previewCenterHz: centerHz
 
@@ -39,6 +40,12 @@ Item {
 
     onCenterHzChanged: {
         if (!dragging) {
+            previewCenterHz = centerHz
+        }
+    }
+    onEditingLockedChanged: {
+        if (editingLocked) {
+            dragging = false
             previewCenterHz = centerHz
         }
     }
@@ -103,7 +110,8 @@ Item {
                     return
                 }
 
-                if (mouse.button !== Qt.LeftButton || panModifierActive || !settingsWindowOpen) {
+                if (mouse.button !== Qt.LeftButton || panModifierActive || !settingsWindowOpen
+                        || editingLocked) {
                     root.dragging = false
                     mouse.accepted = false
                     return
