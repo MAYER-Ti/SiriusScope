@@ -80,6 +80,7 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 
 Read these documents before changing build scripts, tests, formatting, or developer workflow.
 
+- `development/development-roadmap.md` — strategic roadmap for moving SiriusScope from the current UI prototype toward a working vertical product slice.
 - `development/build-and-test.md` — build, test, and QA commands.
 - `development/doxygen.md` - правила Doxygen-документирования исходного API и процесс генерации.
 - `generate-doxygen.ps1` - генерация русскоязычной HTML-документации Doxygen.
@@ -87,6 +88,8 @@ Read these documents before changing build scripts, tests, formatting, or develo
 - `development/coding-style.md` — C++ and QML style rules.
 - `development/testing-strategy.md` — required test types and coverage expectations.
 - `development/codex-task-template.md` — recommended format for tasks given to Codex.
+
+Read `development/development-roadmap.md` before large tasks that affect architecture, application flow, storage, simulator, hardware adapters, scanning, or bearing.
 
 `development/coding-style.md`, `development/testing-strategy.md`, and `development/codex-task-template.md` are planned but do not exist yet. Until they are added, use `development/build-and-test.md`, `AGENTS.md`, and the style of nearby code.
 
