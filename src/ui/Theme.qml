@@ -51,9 +51,15 @@ QtObject {
     readonly property int pageMargin: 16
     readonly property int panelPadding: 18
     readonly property int compactPadding: 10
-    readonly property int leftAxisWidth: 72
+    readonly property int leftAxisWidth: 88
     readonly property int rowSpacing: 12
     readonly property string monoFontFamily: "JetBrains Mono, Consolas, monospace"
+
+    readonly property int fontSmall: 14
+    readonly property int fontNormal: 16
+    readonly property int fontMedium: 18
+    readonly property int fontLarge: 22
+    readonly property int fontTitle: 24
 
     function bandColor(index) {
         if (index === 0) return "#4BB4FF"

@@ -362,7 +362,7 @@ Item {
                         readonly property int deg: index * 30
                         text: deg.toString()
                         color: Theme.textLabel
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSmall
                         x: dial._xAt(dial.labelRadius, deg) - width / 2
                         y: dial._yAt(dial.labelRadius, deg) - height / 2
                     }

@@ -5,42 +5,79 @@ import SiriusScope 1.0
 Rectangle {
     id: root
 
-    implicitHeight: 56
+    implicitHeight: 86
     color: Theme.panelBottom
     border.color: Theme.panelBorder
     border.width: 1
 
-    RowLayout {
+    function modeText() {
+        if (AppState.mode === AppState.Test) {
+            return qsTr("генератор")
+        }
+        if (AppState.mode === AppState.Combat) {
+            return qsTr("аппаратура")
+        }
+        return qsTr("контроль")
+    }
+
+    function azimuthText(value) {
+        return value.toFixed(1).replace(".", ",") + "°"
+    }
+
+    GridLayout {
         anchors.fill: parent
         anchors.leftMargin: Theme.pageMargin
         anchors.rightMargin: Theme.pageMargin
-        anchors.topMargin: 10
-        anchors.bottomMargin: 10
-        spacing: 10
+        anchors.topMargin: 8
+        anchors.bottomMargin: 8
+        columns: 4
+        rowSpacing: 8
+        columnSpacing: 10
 
         StatusChip {
-            Layout.preferredWidth: 146
+            Layout.fillWidth: true
             label: qsTr("Программа")
-            value: "OK"
+            value: qsTr("работает")
             statusColor: Theme.statusGood
         }
 
         StatusChip {
-            Layout.preferredWidth: 124
+            Layout.fillWidth: true
+            label: qsTr("Режим")
+            value: root.modeText()
+            statusColor: Theme.statusGood
+        }
+
+        StatusChip {
+            Layout.fillWidth: true
             label: qsTr("БЦО")
-            value: qsTr("связь")
+            value: qsTr("поток активен")
             statusColor: Theme.statusGood
         }
 
         StatusChip {
-            Layout.preferredWidth: 158
-            label: qsTr("Антенна")
-            value: "034.7°"
+            Layout.fillWidth: true
+            label: qsTr("РПУ")
+            value: qsTr("готово")
             statusColor: Theme.statusGood
         }
 
         StatusChip {
-            Layout.preferredWidth: 156
+            Layout.fillWidth: true
+            label: qsTr("Поворот")
+            value: qsTr("подключено")
+            statusColor: Theme.statusGood
+        }
+
+        StatusChip {
+            Layout.fillWidth: true
+            label: qsTr("Азимут")
+            value: root.azimuthText(AntennaController.azimuthDeg)
+            statusColor: Theme.statusGood
+        }
+
+        StatusChip {
+            Layout.fillWidth: true
             label: qsTr("Запись")
             value: qsTr("активна")
             statusColor: Theme.statusWarn
@@ -48,16 +85,8 @@ Rectangle {
 
         StatusChip {
             Layout.fillWidth: true
-            Layout.minimumWidth: 220
             label: qsTr("Диагностика")
-            value: "2 dropped rows, storage lag 18 ms"
-            statusColor: Theme.statusWarn
-        }
-
-        StatusChip {
-            Layout.preferredWidth: 196
-            label: ""
-            value: "sampleIndex preserved"
+            value: WaterfallController.historyLoading ? qsTr("загрузка истории") : qsTr("ошибок нет")
             statusColor: Theme.statusGood
         }
     }

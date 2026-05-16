@@ -28,11 +28,11 @@ Window {
     signal canceled(int bandId)
     signal windowClosed(int bandId)
 
-    title: qsTr("Настройка B%1").arg(bandId + 1)
-    width: 430
-    height: 390
-    minimumWidth: 390
-    minimumHeight: 360
+    title: qsTr("Настройка диапазона %1").arg(bandId + 1)
+    width: 520
+    height: 460
+    minimumWidth: 480
+    minimumHeight: 430
     modality: Qt.NonModal
     flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: Theme.panelBottom
@@ -63,18 +63,21 @@ Window {
             Rectangle {
                 id: titleBar
                 Layout.fillWidth: true
-                Layout.preferredHeight: 34
+                Layout.preferredHeight: 44
                 color: Theme.chromeTopBar
 
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
+                    anchors.right: closeButton.left
+                    anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: qsTr("Настройка B%1").arg(root.bandId + 1)
+                    text: qsTr("Настройка диапазона %1").arg(root.bandId + 1)
                     color: Theme.textPrimary
                     font.family: Theme.monoFontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontMedium
                     font.weight: Font.DemiBold
+                    elide: Text.ElideRight
                 }
 
                 MouseArea {
@@ -116,7 +119,7 @@ Window {
                         text: "\u00D7"
                         color: Theme.textPrimary
                         font.family: "Segoe UI, Arial, sans-serif"
-                        font.pixelSize: 18
+                        font.pixelSize: Theme.fontLarge
                     }
 
                     MouseArea {
@@ -144,7 +147,7 @@ Window {
                         text: qsTr("Левая граница, МГц")
                         color: Theme.textSecondary
                         font.family: Theme.monoFontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontNormal
                     }
 
                     TextField {
@@ -154,6 +157,7 @@ Window {
                         selectionColor: Theme.signalCyan
                         selectedTextColor: Theme.appBackgroundDeep
                         font.family: Theme.monoFontFamily
+                        font.pixelSize: Theme.fontNormal
                         inputMethodHints: Qt.ImhFormattedNumbersOnly
                         background: FieldBackground {}
                         onTextEdited: markDirtyAndValidate()
@@ -163,7 +167,7 @@ Window {
                         text: qsTr("Правая граница, МГц")
                         color: Theme.textSecondary
                         font.family: Theme.monoFontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontNormal
                     }
 
                     TextField {
@@ -173,6 +177,7 @@ Window {
                         selectionColor: Theme.signalCyan
                         selectedTextColor: Theme.appBackgroundDeep
                         font.family: Theme.monoFontFamily
+                        font.pixelSize: Theme.fontNormal
                         inputMethodHints: Qt.ImhFormattedNumbersOnly
                         background: FieldBackground {}
                         onTextEdited: markDirtyAndValidate()
@@ -182,7 +187,7 @@ Window {
                         text: qsTr("Амплитудный фильтр")
                         color: Theme.textSecondary
                         font.family: Theme.monoFontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontNormal
                     }
 
                     RowLayout {
@@ -212,6 +217,7 @@ Window {
                             selectionColor: Theme.signalCyan
                             selectedTextColor: Theme.appBackgroundDeep
                             font.family: Theme.monoFontFamily
+                            font.pixelSize: Theme.fontNormal
                             inputMethodHints: Qt.ImhFormattedNumbersOnly
                             background: FieldBackground {}
                             onEditingFinished: {
@@ -235,7 +241,7 @@ Window {
                         text: qsTr("Входной аттенюатор")
                         color: Theme.textSecondary
                         font.family: Theme.monoFontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontNormal
                     }
 
                     ThemedComboBox {
@@ -249,7 +255,7 @@ Window {
                         text: qsTr("Выходной аттенюатор")
                         color: Theme.textSecondary
                         font.family: Theme.monoFontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontNormal
                     }
 
                     ThemedComboBox {
@@ -266,7 +272,7 @@ Window {
                     text: ""
                     color: Theme.statusBad
                     font.family: Theme.monoFontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSmall
                     wrapMode: Text.WordWrap
                     visible: text.length > 0
                 }
@@ -314,7 +320,7 @@ Window {
     }
 
     component FieldBackground: Rectangle {
-        implicitHeight: 30
+        implicitHeight: 38
         radius: Theme.radiusInset
         color: Theme.insetBackground
         border.color: Theme.panelBorder
@@ -323,10 +329,10 @@ Window {
     component ThemedButton: Button {
         id: control
         property bool savedState: false
-        implicitWidth: 94
-        implicitHeight: 30
+        implicitWidth: 120
+        implicitHeight: 38
         font.family: Theme.monoFontFamily
-        font.pixelSize: 11
+        font.pixelSize: Theme.fontNormal
 
         contentItem: Text {
             text: control.text
@@ -351,10 +357,10 @@ Window {
 
     component ThemedComboBox: ComboBox {
         id: control
-        implicitHeight: 30
+        implicitHeight: 38
         displayText: currentValue + " dB"
         font.family: Theme.monoFontFamily
-        font.pixelSize: 11
+        font.pixelSize: Theme.fontNormal
 
         contentItem: Text {
             leftPadding: 10
@@ -371,7 +377,7 @@ Window {
             y: (control.height - height) * 0.5
             text: "\u25BE"
             color: Theme.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: Theme.fontNormal
         }
 
         background: Rectangle {
@@ -382,7 +388,7 @@ Window {
 
         delegate: ItemDelegate {
             width: control.width
-            height: 30
+            height: 38
             text: modelData + " dB"
             highlighted: control.highlightedIndex === index
 
@@ -390,7 +396,7 @@ Window {
                 text: parent.text
                 color: parent.highlighted ? Theme.textPrimary : Theme.textSecondary
                 font.family: Theme.monoFontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontNormal
                 verticalAlignment: Text.AlignVCenter
                 leftPadding: 10
             }
@@ -448,7 +454,7 @@ Window {
         var widthHz = rightHz - leftHz
 
         if (leftHz < globalMinHz || rightHz > globalMaxHz) {
-            errorText.text = qsTr("Границы полосы должны быть в пределах диапазона SpectrumView.")
+            errorText.text = qsTr("Границы полосы должны быть в пределах спектра.")
             return false
         }
 

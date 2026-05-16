@@ -67,11 +67,13 @@ Item {
             anchors.leftMargin: 10
             anchors.top: parent.top
             anchors.topMargin: 4
-            text: "B" + (bandId + 1) + " " + thresholdAmplitude.toFixed(0)
+            width: Math.max(0, parent.width - 20)
+            text: qsTr("Диапазон %1").arg(bandId + 1) + " " + thresholdAmplitude.toFixed(0)
             color: root.bandTextColor
             font.family: root.monoFontFamily
-            font.pixelSize: 10
+            font.pixelSize: Theme.fontSmall
             font.weight: Font.DemiBold
+            elide: Text.ElideRight
         }
 
         MouseArea {
@@ -128,8 +130,8 @@ Item {
 
         Popup {
             id: contextMenu
-            width: 132
-            height: 34
+            width: 160
+            height: 42
             padding: 2
             modal: false
             focus: true
@@ -152,7 +154,7 @@ Item {
                     text: qsTr("Настроить")
                     color: Theme.textPrimary
                     font.family: Theme.monoFontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontNormal
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
                 }

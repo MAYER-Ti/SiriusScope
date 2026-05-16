@@ -278,7 +278,7 @@ Item {
             id: spectrumLayout
             anchors.fill: parent
             anchors.topMargin: 10
-            anchors.bottomMargin: 8
+            anchors.bottomMargin: 16
 
             Canvas {
                 id: amplitudeAxis
@@ -304,7 +304,7 @@ Item {
                     var tickCountY = 5
 
                     ctx.fillStyle = String(Theme.textMuted)
-                    ctx.font = "10px " + root.monoFontFamily
+                    ctx.font = Theme.fontSmall + "px " + root.monoFontFamily
                     ctx.textAlign = "right"
                     ctx.textBaseline = "middle"
 
@@ -368,7 +368,7 @@ Item {
                         }
 
                         ctx.fillStyle = String(Theme.textMuted)
-                        ctx.font = "10px " + root.monoFontFamily
+                        ctx.font = Theme.fontSmall + "px " + root.monoFontFamily
                         ctx.textAlign = "center"
                         ctx.textBaseline = "bottom"
 

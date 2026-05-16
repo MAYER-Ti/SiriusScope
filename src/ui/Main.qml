@@ -10,10 +10,10 @@ ApplicationWindow {
     width: Math.max(minimumWidth, Screen.width * 0.72)
     height: Math.max(minimumHeight, Screen.height * 0.74)
     minimumWidth: 1080
-    minimumHeight: 640
+    minimumHeight: 720
     visible: true
     title: qsTr("SiriusScope")
-    font.pixelSize: 12
+    font.pixelSize: Theme.fontNormal
     color: Theme.appBackgroundDeep
 
     menuBar: Components.MenuBarApp { }
@@ -34,10 +34,19 @@ ApplicationWindow {
             spacing: 12
 
             Components.TopToolbar {
+                id: topToolbar
+
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                Layout.minimumHeight: 40
-                Layout.maximumHeight: 46
+                Layout.preferredHeight: 52
+                Layout.minimumHeight: 52
+                Layout.maximumHeight: 58
+                canScanSector: antennaIndicator.hasSelectedSector
+
+                onLiveRequested: WaterfallController.jumpToLive()
+                onScanSectorRequested: AntennaController.scan(
+                    antennaIndicator.selectedLeftAngle,
+                    antennaIndicator.selectedRightAngle,
+                    antennaIndicator.scanSpeed)
             }
 
             RowLayout {
@@ -80,10 +89,12 @@ ApplicationWindow {
                     spacing: 14
 
                     AntInd.AntennaIndicator {
+                        id: antennaIndicator
+
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         Layout.verticalStretchFactor: 72
-                        Layout.minimumHeight: 380
+                        Layout.minimumHeight: 330
                         azimuthDeg: AntennaController.azimuthDeg
                         targetAzimuthsDeg: []
 
@@ -103,7 +114,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         Layout.verticalStretchFactor: 26
-                        Layout.minimumHeight: 170
+                        Layout.minimumHeight: 150
                     }
                 }
             }

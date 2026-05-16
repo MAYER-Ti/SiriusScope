@@ -10,12 +10,12 @@ MenuBar {
     }
 
     delegate: MenuBarItem {
-        implicitHeight: 30
-        leftPadding: 12
-        rightPadding: 12
+        implicitHeight: 36
+        leftPadding: 14
+        rightPadding: 14
         topPadding: 0
         bottomPadding: 0
-        font.pixelSize: 11
+        font.pixelSize: Theme.fontNormal
 
         contentItem: Text {
             text: parent.text

@@ -77,7 +77,7 @@ Item {
                         text: timeTickLabel.modelData.label
                         color: timeTickLabel.modelData.major ? Sirius.Theme.textSecondary : Sirius.Theme.textMuted
                         font.family: Sirius.Theme.monoFontFamily
-                        font.pixelSize: timeTickLabel.modelData.major ? 9 : 8
+                        font.pixelSize: Sirius.Theme.fontSmall
                         elide: Text.ElideRight
                         z: 5
                     }
@@ -205,18 +205,18 @@ Item {
                     Rectangle {
                         id: retuningLabel
                         anchors.centerIn: retuningOverlay
-                        width: Math.min(retuningOverlay.width - 28, 150)
-                        height: 34
+                        width: Math.min(retuningOverlay.width - 28, 180)
+                        height: 42
                         radius: Sirius.Theme.radiusInset
                         color: Sirius.Theme.chipBackground
                         border.color: Sirius.Theme.panelBorder
 
                         Text {
                             anchors.centerIn: retuningLabel
-                            text: "RETUNING"
+                            text: qsTr("Перестройка")
                             color: Sirius.Theme.textPrimary
                             font.family: Sirius.Theme.monoFontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Sirius.Theme.fontNormal
                             font.weight: Font.DemiBold
                         }
                     }
@@ -227,9 +227,9 @@ Item {
         Rectangle {
             id: directionControls
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
-            Layout.minimumHeight: 28
-            Layout.maximumHeight: 34
+            Layout.preferredHeight: 42
+            Layout.minimumHeight: 38
+            Layout.maximumHeight: 46
             radius: Sirius.Theme.radiusInset
             color: Sirius.Theme.insetBackground
             border.color: Sirius.Theme.panelBorderSoft
@@ -241,27 +241,31 @@ Item {
                 spacing: 12
 
                 Text {
-                    text: Sirius.WaterfallController.directionalEnabled ? "DIR ON" : "DIR OFF"
+                    Layout.preferredWidth: 190
+                    text: Sirius.WaterfallController.directionalEnabled
+                          ? qsTr("Направление включено")
+                          : qsTr("Направление выключено")
                     color: Sirius.WaterfallController.directionalEnabled ? Sirius.Theme.statusGood : Sirius.Theme.textMuted
                     font.family: Sirius.Theme.monoFontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Sirius.Theme.fontSmall
                     font.weight: Font.DemiBold
                     Layout.alignment: Qt.AlignVCenter
+                    elide: Text.ElideRight
                 }
 
                 Text {
-                    text: "\u03B3 " + Sirius.WaterfallController.colorGamma.toFixed(1)
+                    text: qsTr("Гамма ") + Sirius.WaterfallController.colorGamma.toFixed(1)
                     color: Sirius.Theme.textSecondary
                     font.family: Sirius.Theme.monoFontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Sirius.Theme.fontSmall
                     Layout.alignment: Qt.AlignVCenter
                 }
 
                 Text {
-                    text: "D " + Sirius.WaterfallController.directionDeadZone.toFixed(2)
+                    text: qsTr("Порог ") + Sirius.WaterfallController.directionDeadZone.toFixed(2)
                     color: Sirius.Theme.textSecondary
                     font.family: Sirius.Theme.monoFontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Sirius.Theme.fontSmall
                     Layout.alignment: Qt.AlignVCenter
                 }
 
@@ -271,21 +275,23 @@ Item {
 
                 Row {
                     Layout.alignment: Qt.AlignVCenter
+                    visible: directionControls.width > 740
                     spacing: 6
                     Rectangle { width: 24; height: 8; radius: 2; color: Sirius.Theme.waterfallLeftHigh }
-                    Text { text: qsTr("левый"); color: Sirius.Theme.textMuted; font.pixelSize: 10 }
+                    Text { text: qsTr("левый луч"); color: Sirius.Theme.textMuted; font.pixelSize: Sirius.Theme.fontSmall }
                     Rectangle { width: 24; height: 8; radius: 2; color: Sirius.Theme.waterfallNeutralHigh }
-                    Text { text: qsTr("равно"); color: Sirius.Theme.textMuted; font.pixelSize: 10 }
+                    Text { text: qsTr("равно"); color: Sirius.Theme.textMuted; font.pixelSize: Sirius.Theme.fontSmall }
                     Rectangle { width: 24; height: 8; radius: 2; color: Sirius.Theme.waterfallRightHigh }
-                    Text { text: qsTr("правый"); color: Sirius.Theme.textMuted; font.pixelSize: 10 }
+                    Text { text: qsTr("правый луч"); color: Sirius.Theme.textMuted; font.pixelSize: Sirius.Theme.fontSmall }
                 }
 
                 Text {
                     text: root.currentUtcText
                     color: Sirius.Theme.textSecondary
                     font.family: Sirius.Theme.monoFontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Sirius.Theme.fontSmall
                     Layout.alignment: Qt.AlignVCenter
+                    visible: directionControls.width > 620
                 }
             }
         }

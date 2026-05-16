@@ -86,21 +86,21 @@ Components.Panel {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 24
+            Layout.preferredHeight: 34
             spacing: 8
 
             Repeater {
                 model: [
-                    { label: "Speed", value: antennaIndicator.scanSpeed.toString() + "°/s", color: Theme.textSecondary, weight: 112 },
-                    { label: "Targets", value: antennaIndicator.targetCount.toString(), color: Theme.textSecondary, weight: 98 },
-                    { label: "Sector", value: antennaIndicator.selectedSectorText, color: Theme.textSecondary, weight: 132 },
-                    { label: "AZ", value: antennaIndicator.azimuthDeg.toFixed(1) + "°", color: Theme.textPrimary, weight: 132 }
+                    { label: qsTr("Скорость"), value: antennaIndicator.scanSpeed.toString() + "°/с", color: Theme.textSecondary, weight: 128 },
+                    { label: qsTr("ИРИ"), value: antennaIndicator.targetCount.toString(), color: Theme.textSecondary, weight: 90 },
+                    { label: qsTr("Сектор"), value: antennaIndicator.selectedSectorText, color: Theme.textSecondary, weight: 142 },
+                    { label: qsTr("Азимут"), value: antennaIndicator.azimuthDeg.toFixed(1).replace(".", ",") + "°", color: Theme.textPrimary, weight: 142 }
                 ]
 
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredWidth: modelData.weight
-                    Layout.preferredHeight: 24
+                    Layout.preferredHeight: 34
                     radius: Theme.radiusInset
                     color: Theme.chipBackground
                     border.color: Theme.panelBorder
@@ -112,7 +112,7 @@ Components.Panel {
                         text: modelData.label + " " + modelData.value
                         color: modelData.color
                         font.family: Theme.monoFontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSmall
                         verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
                     }
@@ -129,7 +129,7 @@ Components.Panel {
             selectedRightAngle: antennaIndicator.selectedRightAngle
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 260
+            Layout.minimumHeight: 200
             beamWidthDeg: 60
 
             onSectorSelected: function(leftAngle, rightAngle) {
@@ -145,8 +145,8 @@ Components.Panel {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 104
-            Layout.minimumHeight: 96
+            Layout.preferredHeight: 124
+            Layout.minimumHeight: 116
             radius: Theme.radiusPanel
             color: Theme.insetBackground
             border.color: Theme.panelBorder
@@ -158,10 +158,10 @@ Components.Panel {
 
                 Label {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 14
+                    Layout.preferredHeight: 20
                     text: qsTr("Управление поворотом")
                     color: Theme.textVeryMuted
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSmall
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
@@ -169,7 +169,7 @@ Components.Panel {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 30
+                    Layout.preferredHeight: 36
                     spacing: 8
 
                     Repeater {
@@ -183,10 +183,10 @@ Components.Panel {
 
                         ControlButton {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: modelData.stop ? 32 : 30
+                            Layout.preferredHeight: modelData.stop ? 38 : 36
                             text: modelData.label
                             font.family: Theme.monoFontFamily
-                            font.pixelSize: modelData.stop ? 13 : 11
+                            font.pixelSize: modelData.stop ? Theme.fontMedium : Theme.fontNormal
                             textColor: modelData.stop ? Theme.statusBad : Theme.textPrimary
                             normalColor: modelData.stop ? "#2A1E20" : Theme.chipBackground
                             hoveredColor: modelData.stop ? "#35282B" : "#203040"
@@ -210,10 +210,10 @@ Components.Panel {
 
                 ControlButton {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 30
+                    Layout.preferredHeight: 38
                     enabled: antennaIndicator.hasSelectedSector
                     text: qsTr("Сканировать сектор")
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontNormal
                     normalColor: "#123044"
                     hoveredColor: "#173D56"
                     pressedColor: "#1A4D6C"
