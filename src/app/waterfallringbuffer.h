@@ -50,6 +50,7 @@ public:
     void pushLine(const WaterfallBeamBin *line, int nbins, uint64_t generationId);
 
     void replaceRows(const QVector<WaterfallRow>& rows, uint64_t generationId);
+    void replaceSlots(const QVector<WaterfallRowSlot>& rowSlots, uint64_t generationId);
 
     /*!
      *  \brief Возвращает следующую позицию записи как монотонно растущий индекс.

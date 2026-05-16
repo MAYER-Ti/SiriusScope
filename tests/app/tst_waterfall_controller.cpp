@@ -147,11 +147,81 @@ bool emitRenderableRow(FakeSampleSource& source,
     });
 }
 
+void processEventsFor(int durationMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < durationMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(5);
+    }
+}
+
+void testControllerStartsWithRecordingDisabled(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = 8;
+    config.sourceFlushIntervalMs = 20;
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config);
+
+    test.require(!controller.sessionActive(), "recording is disabled on controller startup");
+    test.require(!controller.liveMode(), "startup is not live without an active session");
+    test.require(controller.recordingStatusText() == QStringLiteral("выключена"),
+                 "startup status text reports disabled recording");
+}
+
+void testInactiveSessionIgnoresRenderableRows(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = 8;
+    config.sourceFlushIntervalMs = 20;
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config);
+    controller.start();
+
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const std::uint64_t initialWriteIndex = buffer ? buffer->writeIndex() : 0;
+
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
+                                               makeSample(bands, 1, 0, 1, 40)}});
+    processEventsFor(120);
+
+    test.require(buffer != nullptr, "controller exposes a waterfall ring buffer");
+    test.require(buffer && buffer->writeIndex() == initialWriteIndex,
+                 "inactive recording ignores incoming render rows");
+    test.require(storage.listSessions().isEmpty(),
+                 "inactive recording does not create implicit sessions");
+}
+
 void testInputBatchUpdatesModel(TestRunner& test)
 {
     FrequencyViewportModel viewport;
     FakeSampleSource source;
     RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
     siriusscope::app::WaterfallControllerConfig config;
     config.renderBinCount = 128;
@@ -161,9 +231,11 @@ void testInputBatchUpdatesModel(TestRunner& test)
     siriusscope::app::WaterfallController controller(&viewport,
                                                      &source,
                                                      bands,
+                                                     &storage,
                                                      &diagnostics,
                                                      config);
     controller.start();
+    controller.startRecording();
 
     source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
                                                makeSample(bands, 1, 0, 1, 40)}});
@@ -181,6 +253,8 @@ void testInputBatchUpdatesModel(TestRunner& test)
 
     test.require(updated, "controller appends a render row from input batch");
     test.require(copiedLine && hasSignal, "controller updates ring buffer with non-zero samples");
+    test.require(controller.sessionActive(), "startRecording enables the active session state");
+    test.require(!storage.listSessions().isEmpty(), "startRecording creates an in-memory session");
 }
 
 void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
@@ -188,6 +262,7 @@ void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
     FrequencyViewportModel viewport;
     FakeSampleSource source;
     RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
     siriusscope::app::WaterfallControllerConfig config;
     config.renderBinCount = 64;
@@ -197,6 +272,7 @@ void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
     siriusscope::app::WaterfallController controller(&viewport,
                                                      &source,
                                                      bands,
+                                                     &storage,
                                                      &diagnostics,
                                                      config);
 
@@ -221,6 +297,7 @@ void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
     FrequencyViewportModel viewport;
     FakeSampleSource source;
     RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
     siriusscope::app::WaterfallControllerConfig config;
     config.renderBinCount = 64;
@@ -230,9 +307,11 @@ void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
     siriusscope::app::WaterfallController controller(&viewport,
                                                      &source,
                                                      bands,
+                                                     &storage,
                                                      &diagnostics,
                                                      config);
     controller.start();
+    controller.startRecording();
 
     auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
     const bool rowsReady =
@@ -241,11 +320,11 @@ void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
         && emitRenderableRow(source, buffer, bands, 3);
 
     const std::uint64_t beforeScroll = buffer ? buffer->writeIndex() : 0;
-    controller.scrollHistory(1);
+    controller.scrollHistory(1000);
     const std::uint64_t afterOlderScroll = buffer ? buffer->writeIndex() : 0;
     controller.scrollHistory(1);
     const std::uint64_t afterOldestBoundary = buffer ? buffer->writeIndex() : 0;
-    controller.scrollHistory(-1);
+    controller.scrollHistory(-1000);
     const std::uint64_t afterLiveScroll = buffer ? buffer->writeIndex() : 0;
     controller.scrollHistory(-1);
     const std::uint64_t afterLiveBoundary = buffer ? buffer->writeIndex() : 0;
@@ -267,6 +346,7 @@ void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
     FrequencyViewportModel viewport;
     FakeSampleSource source;
     RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
     siriusscope::app::WaterfallControllerConfig config;
     config.renderBinCount = 64;
@@ -276,6 +356,7 @@ void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
     siriusscope::app::WaterfallController controller(&viewport,
                                                      &source,
                                                      bands,
+                                                     &storage,
                                                      &diagnostics,
                                                      config);
     controller.start();
@@ -289,6 +370,42 @@ void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
     test.require(diagnosed, "empty batch is routed to processing diagnostics");
 }
 
+void testStopRecordingFreezesWaterfallFlow(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = 8;
+    config.sourceFlushIntervalMs = 20;
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config);
+    controller.start();
+    controller.startRecording();
+
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const bool firstRowReady = emitRenderableRow(source, buffer, bands, 1);
+    const std::uint64_t beforeStopWriteIndex = buffer ? buffer->writeIndex() : 0;
+
+    controller.stopRecording();
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 2, 0, 0, 90),
+                                               makeSample(bands, 2, 0, 1, 40)}});
+    processEventsFor(120);
+
+    test.require(firstRowReady, "active recording accepts a render row before stop");
+    test.require(!controller.sessionActive(), "stopRecording disables the active session state");
+    test.require(buffer && buffer->writeIndex() == beforeStopWriteIndex,
+                 "stopped recording does not move the waterfall on new input");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -296,10 +413,13 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
     TestRunner test;
 
+    testControllerStartsWithRecordingDisabled(test);
+    testInactiveSessionIgnoresRenderableRows(test);
     testInputBatchUpdatesModel(test);
     testScrollHistoryNoopDoesNotRebuildEmptyHistory(test);
     testScrollHistoryRebuildsOnlyWhenWindowChanges(test);
     testEmptyBatchDoesNotCrashAndReportsDiagnostic(test);
+    testStopRecordingFreezesWaterfallFlow(test);
 
     return test.result();
 }

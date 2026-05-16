@@ -26,18 +26,6 @@ Item {
         return (hz - root.viewMinHz) / root.spanHz() * plotArea.width
     }
 
-    function visibleRowCount() {
-        if (!root.ringBuffer) {
-            return 1
-        }
-        return Math.max(1, root.ringBuffer.height)
-    }
-
-    function rowGridStep(pixelHeight, rowCount) {
-        var targetLines = Math.max(2, Math.min(8, Math.floor(pixelHeight / 80) + 1))
-        return Math.max(1, Math.ceil(rowCount / Math.max(1, targetLines - 1)))
-    }
-
     function queueHistoryWheel(angleDeltaY, pixelDeltaY) {
         var deltaSteps = 0
         if (angleDeltaY !== 0) {
@@ -179,26 +167,16 @@ Item {
                             ctx.stroke()
                         }
 
-                        var rowCount = root.visibleRowCount()
-                        var rowStep = root.rowGridStep(height, rowCount)
-                        var lastGridRow = -1
-                        function drawRowGridLine(rowIndex) {
-                            var y = rowIndex / rowCount * height
-                            ctx.strokeStyle = rowIndex === 0 || rowIndex === rowCount
+                        for (var j = 0; j < root.timeTicks.length; j++) {
+                            var timeTick = root.timeTicks[j]
+                            var y = Math.max(0, Math.min(height - 1, timeTick.y))
+                            ctx.strokeStyle = timeTick.major
                                 ? String(Sirius.Theme.gridMajor)
                                 : String(Sirius.Theme.gridSoft)
                             ctx.beginPath()
                             ctx.moveTo(0, y)
                             ctx.lineTo(width, y)
                             ctx.stroke()
-                            lastGridRow = rowIndex
-                        }
-
-                        for (var j = 0; j <= rowCount; j += rowStep) {
-                            drawRowGridLine(j)
-                        }
-                        if (lastGridRow !== rowCount) {
-                            drawRowGridLine(rowCount)
                         }
                     }
                 }

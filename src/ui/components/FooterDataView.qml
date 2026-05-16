@@ -87,8 +87,8 @@ Rectangle {
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("Запись")
-            value: qsTr("активна")
-            statusColor: Theme.statusWarn
+            value: WaterfallController.recordingStatusText
+            statusColor: WaterfallController.sessionActive ? Theme.statusWarn : Theme.textVeryMuted
         }
 
         StatusChip {

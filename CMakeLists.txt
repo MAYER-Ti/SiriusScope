@@ -50,6 +50,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/waterfallrowresampler.cpp
     src/app/waterfallhistorymodel.h
     src/app/waterfallhistorymodel.cpp
+    src/app/waterfalltimeline.h
+    src/app/waterfalltimeline.cpp
     src/app/waterfallringbuffer.h
     src/app/waterfallringbuffer.cpp
     src/app/waterfallstorage.h

@@ -9,6 +9,8 @@ Rectangle {
     property bool canScanSector: false
 
     signal liveRequested()
+    signal recordingStartRequested()
+    signal recordingStopRequested()
     signal scanSectorRequested()
 
     implicitHeight: 52
@@ -81,7 +83,8 @@ Rectangle {
         }
 
         Rectangle {
-            Layout.preferredWidth: 380
+            Layout.preferredWidth: 340
+            Layout.minimumWidth: 260
             Layout.fillHeight: true
             radius: Theme.radiusInset
             color: Theme.insetBackground
@@ -135,8 +138,10 @@ Rectangle {
         }
 
         ToolbarButton {
-            Layout.preferredWidth: 190
+            Layout.preferredWidth: 176
+            Layout.minimumWidth: 136
             Layout.fillHeight: true
+            enabled: WaterfallController.sessionActive
             text: qsTr("К текущим данным")
             normalColor: "#183B2A"
             accentBorderColor: Theme.statusGood
@@ -144,7 +149,30 @@ Rectangle {
         }
 
         ToolbarButton {
-            Layout.preferredWidth: 210
+            Layout.preferredWidth: 158
+            Layout.minimumWidth: 118
+            Layout.fillHeight: true
+            enabled: !WaterfallController.sessionActive
+            text: qsTr("Включить запись")
+            normalColor: "#183B2A"
+            accentBorderColor: Theme.statusGood
+            onClicked: root.recordingStartRequested()
+        }
+
+        ToolbarButton {
+            Layout.preferredWidth: 166
+            Layout.minimumWidth: 122
+            Layout.fillHeight: true
+            enabled: WaterfallController.sessionActive
+            text: qsTr("Выключить запись")
+            normalColor: "#3B2418"
+            accentBorderColor: Theme.statusWarn
+            onClicked: root.recordingStopRequested()
+        }
+
+        ToolbarButton {
+            Layout.preferredWidth: 196
+            Layout.minimumWidth: 150
             Layout.fillHeight: true
             enabled: root.canScanSector
             text: qsTr("Сканировать сектор")

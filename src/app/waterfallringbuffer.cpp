@@ -87,6 +87,38 @@ void WaterfallRingBuffer::replaceRows(const QVector<WaterfallRow>& rows, uint64_
     emit contentsChanged();
 }
 
+void WaterfallRingBuffer::replaceSlots(const QVector<WaterfallRowSlot>& rowSlots,
+                                       uint64_t generationId)
+{
+    {
+        QMutexLocker locker(&m_mutex);
+
+        std::fill(m_data.begin(), m_data.end(), WaterfallBeamBin{});
+
+        const int slotCount = std::min(m_height, static_cast<int>(rowSlots.size()));
+        int populatedRows = 0;
+        for (int row = 0; row < slotCount; ++row) {
+            const auto& slot = rowSlots.at(row);
+            if (!slot.occupied || slot.row.bins.isEmpty()) {
+                continue;
+            }
+
+            const int binsToCopy = std::min(m_nbins, static_cast<int>(slot.row.bins.size()));
+            WaterfallBeamBin *dest = m_data.data() + static_cast<qsizetype>(row) * m_nbins;
+            std::memcpy(dest,
+                        slot.row.bins.constData(),
+                        static_cast<size_t>(binsToCopy) * sizeof(WaterfallBeamBin));
+            ++populatedRows;
+        }
+
+        m_populatedRows.store(populatedRows, std::memory_order_release);
+        m_generationId.store(generationId, std::memory_order_release);
+        m_writeIndex.fetch_add(1, std::memory_order_release);
+    }
+
+    emit contentsChanged();
+}
+
 bool WaterfallRingBuffer::copyLine(int row, WaterfallBeamBin *destination, int nbins) const
 {
     if (!destination || nbins != m_nbins || row < 0 || row >= m_height || m_nbins <= 0) {

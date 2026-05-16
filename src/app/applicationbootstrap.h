@@ -8,6 +8,7 @@
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "waterfallcontroller.h"
+#include "waterfallstorage.h"
 
 #include "hardware/interfaces/antenna_azimuth_source.h"
 #include "hardware/interfaces/antenna_control.h"
@@ -79,6 +80,7 @@ private:
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::IDiagnosticsSink> m_diagnosticsSink;
     std::unique_ptr<infrastructure::IWaterfallStorage> m_waterfallStorage;
+    std::unique_ptr<IWaterfallSessionStorage> m_waterfallSessionStorage;
     std::unique_ptr<hardware::SimulatorBcoSampleSource> m_bcoSampleSource;
     std::unique_ptr<hardware::SimulatorAntennaState> m_antennaState;
     std::unique_ptr<hardware::SimulatorAntennaAzimuthSource> m_antennaAzimuthSource;

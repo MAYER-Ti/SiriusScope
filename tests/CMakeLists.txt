@@ -83,6 +83,24 @@ target_include_directories(tst_waterfall_history
 
 add_test(NAME tst_waterfall_history COMMAND tst_waterfall_history)
 
+add_executable(tst_waterfall_timeline
+    app/tst_waterfall_timeline.cpp
+    ../src/app/waterfalltimeline.cpp
+    ../src/app/waterfallstorage.cpp
+)
+
+target_link_libraries(tst_waterfall_timeline
+    PRIVATE
+        Qt6::Core
+)
+
+target_include_directories(tst_waterfall_timeline
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_waterfall_timeline COMMAND tst_waterfall_timeline)
+
 add_executable(tst_waterfall_row_resampler
     app/tst_waterfall_row_resampler.cpp
     ../src/app/waterfallrowresampler.cpp
@@ -249,6 +267,9 @@ if(WIN32)
     if(_qt_core_location)
         get_filename_component(_qt_bin_dir "${_qt_core_location}" DIRECTORY)
         set_tests_properties(tst_waterfall_history PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_waterfall_timeline PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_waterfall_row_resampler PROPERTIES

@@ -43,6 +43,8 @@ ApplicationWindow {
                 canScanSector: antennaIndicator.hasSelectedSector
 
                 onLiveRequested: WaterfallController.jumpToLive()
+                onRecordingStartRequested: WaterfallController.startRecording()
+                onRecordingStopRequested: WaterfallController.stopRecording()
                 onScanSectorRequested: AntennaController.scan(
                     antennaIndicator.selectedLeftAngle,
                     antennaIndicator.selectedRightAngle,

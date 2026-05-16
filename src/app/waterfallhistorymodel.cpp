@@ -219,7 +219,7 @@ void appendTick(QVector<WaterfallTimeTick>& ticks,
     previousDate = localTime.date();
     hasPreviousDate = true;
 
-    ticks.push_back(WaterfallTimeTick{y, label, major});
+    ticks.push_back(WaterfallTimeTick{y, utcMs, label, major});
 }
 
 QVector<WaterfallTimeTick> rowSpacedTimeTicks(const QVector<WaterfallRow>& rows,
@@ -236,6 +236,7 @@ QVector<WaterfallTimeTick> rowSpacedTimeTicks(const QVector<WaterfallRow>& rows,
         bool major = false;
         ticks.push_back(WaterfallTimeTick{
             0,
+            rows.first().utcMs,
             localTimeLabel(rows.first().utcMs, QDate{}, false, &major),
             major
         });
@@ -365,9 +366,10 @@ QVector<WaterfallTimeTick> WaterfallHistoryModel::visibleTimeTicks(int pixelHeig
         bool major = false;
         return {
             WaterfallTimeTick{
-            0,
-            localTimeLabel(rows.first().utcMs, QDate{}, false, &major),
-            major
+                0,
+                rows.first().utcMs,
+                localTimeLabel(rows.first().utcMs, QDate{}, false, &major),
+                major
             }
         };
     }

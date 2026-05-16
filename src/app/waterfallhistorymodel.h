@@ -1,18 +1,11 @@
 #ifndef WATERFALLHISTORYMODEL_H
 #define WATERFALLHISTORYMODEL_H
 
-#include "waterfallstorage.h"
+#include "waterfalltimeline.h"
 
 #include <QDate>
 #include <QString>
 #include <QVector>
-
-struct WaterfallTimeTick
-{
-    int y = 0;
-    QString label;
-    bool major = false;
-};
 
 class WaterfallHistoryModel
 {

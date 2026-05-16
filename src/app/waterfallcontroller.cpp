@@ -6,13 +6,13 @@
 
 #include <QDateTime>
 #include <QMetaObject>
+#include <QTimeZone>
 #include <QVariantMap>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
-#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -21,7 +21,30 @@ namespace {
 
 constexpr int kRetuneDelayMs = 160;
 constexpr int kRowsPerWheelStep = 5;
-constexpr int kMaxLoadedRows = 2400;
+
+QString utcText(qint64 utcMs)
+{
+    if (utcMs <= 0) {
+        return QStringLiteral("UTC --:--:--");
+    }
+
+    return QDateTime::fromMSecsSinceEpoch(utcMs, QTimeZone::UTC)
+        .toString(QStringLiteral("dd.MM.yyyy HH:mm:ss 'UTC'"));
+}
+
+QString sessionLabel(const WaterfallSessionMetadata& metadata)
+{
+    const QDateTime start =
+        QDateTime::fromMSecsSinceEpoch(metadata.startUtcMs, QTimeZone::systemTimeZone());
+    const QDateTime end =
+        QDateTime::fromMSecsSinceEpoch(metadata.endUtcMs, QTimeZone::systemTimeZone());
+    if (metadata.endUtcMs > metadata.startUtcMs) {
+        return QStringLiteral("%1-%2")
+            .arg(start.toString(QStringLiteral("dd.MM HH:mm:ss")),
+                 end.toString(QStringLiteral("HH:mm:ss")));
+    }
+    return start.toString(QStringLiteral("dd.MM HH:mm:ss"));
+}
 
 std::string severityName(processing::ProcessingDiagnosticSeverity severity)
 {
@@ -59,6 +82,7 @@ std::string domainIssueName(core::ValidationCode code)
 WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                          hardware::IBcoSampleSource* sampleSource,
                                          std::vector<core::BandConfig> bandConfigs,
+                                         IWaterfallSessionStorage* sessionStorage,
                                          infrastructure::IDiagnosticsSink* diagnosticsSink,
                                          WaterfallControllerConfig config,
                                          QObject* parent)
@@ -71,10 +95,15 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                            300e6,
                                            18e9,
                                            this))
-    , m_storage(std::make_unique<InMemoryWaterfallStorage>())
-    , m_historyModel(config.visibleRowCount)
+    , m_sessionStorage(sessionStorage)
+    , m_timelineViewport(config.visibleRowCount, config.sourceFlushIntervalMs)
     , m_controllerConfig(config)
 {
+    if (!m_sessionStorage) {
+        m_ownedSessionStorage = std::make_unique<InMemoryWaterfallSessionStorage>();
+        m_sessionStorage = m_ownedSessionStorage.get();
+    }
+
     if (m_viewportModel) {
         connect(m_viewportModel,
                 &FrequencyViewportModel::viewportChanged,
@@ -108,12 +137,37 @@ QObject* WaterfallController::ringBuffer() const
 
 bool WaterfallController::liveMode() const noexcept
 {
-    return m_historyModel.liveMode();
+    return m_sessionActive && m_timelineViewport.liveMode();
 }
 
 QString WaterfallController::currentUtcText() const
 {
-    return m_historyModel.currentUtcText();
+    return utcText(m_timelineViewport.topUtcMs());
+}
+
+QString WaterfallController::recordingStatusText() const
+{
+    return m_sessionActive ? QStringLiteral("включена") : QStringLiteral("выключена");
+}
+
+QString WaterfallController::recordingLabel() const
+{
+    const auto metadata = selectedSession();
+    if (!metadata) {
+        return QStringLiteral("нет сеанса");
+    }
+    return sessionLabel(*metadata);
+}
+
+QString WaterfallController::viewportModeText() const
+{
+    if (m_sessionActive && m_timelineViewport.liveMode()) {
+        return QStringLiteral("live");
+    }
+    if (m_timelineViewport.hasSession()) {
+        return QStringLiteral("history");
+    }
+    return QStringLiteral("inactive");
 }
 
 void WaterfallController::start()
@@ -192,12 +246,21 @@ void WaterfallController::setBandConfigs(std::vector<core::BandConfig> bandConfi
 QVariantList WaterfallController::visibleTimeTicks(int pixelHeight) const
 {
     QVariantList result;
-    const auto ticks = m_historyModel.visibleTimeTicks(pixelHeight);
+    if (!m_timelineViewport.hasSession()) {
+        return result;
+    }
+
+    const auto ticks = WaterfallTimelineMapper(m_timelineViewport.topUtcMs(),
+                                               m_timelineViewport.rowPeriodMs(),
+                                               m_timelineViewport.visibleRowCount(),
+                                               pixelHeight)
+                           .buildTimeTicks();
     result.reserve(ticks.size());
 
     for (const auto& tick : ticks) {
         QVariantMap item;
         item.insert(QStringLiteral("y"), tick.y);
+        item.insert(QStringLiteral("utcMs"), tick.utcMs);
         item.insert(QStringLiteral("label"), tick.label);
         item.insert(QStringLiteral("major"), tick.major);
         result.push_back(item);
@@ -213,29 +276,93 @@ void WaterfallController::scrollHistory(int wheelSteps)
     }
 
     const int rows = std::abs(wheelSteps) * kRowsPerWheelStep;
-    const int signedRows = wheelSteps > 0 ? rows : -rows;
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
+    const bool changed = wheelSteps > 0 ? scrollOlder(rows) : scrollTowardLive(rows);
 
-    if (!m_historyModel.scrollRows(signedRows)) {
+    if (!changed) {
         return;
     }
 
     updateRenderBuffer();
-    notifyPresentationChanged(previousLiveMode, previousUtcText);
+    notifyPresentationChanged(previousLiveMode, previousUtcText, true);
 }
 
 void WaterfallController::jumpToLive()
 {
+    if (!m_sessionActive || !m_activeSessionId.isValid()) {
+        return;
+    }
+
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
+    const auto metadata = m_sessionStorage ? m_sessionStorage->session(m_activeSessionId)
+                                           : std::nullopt;
+    if (!metadata) {
+        return;
+    }
 
-    if (!m_historyModel.jumpToLive()) {
+    if (!m_timelineViewport.switchToSession(metadata->id,
+                                            newestViewportTop(*metadata),
+                                            metadata->rowPeriodMs,
+                                            WaterfallTimelineViewport::Mode::Live)) {
         return;
     }
 
     updateRenderBuffer();
-    notifyPresentationChanged(previousLiveMode, previousUtcText);
+    notifyPresentationChanged(previousLiveMode, previousUtcText, true);
+}
+
+void WaterfallController::startRecording()
+{
+    if (m_sessionActive || !m_sessionStorage) {
+        return;
+    }
+
+    const bool previousLiveMode = liveMode();
+    const QString previousUtcText = currentUtcText();
+    const qint64 nowUtcMs = QDateTime::currentMSecsSinceEpoch();
+
+    WaterfallSessionMetadata metadata;
+    metadata.id = WaterfallSessionId{QStringLiteral("session-%1").arg(nowUtcMs)};
+    metadata.startUtcMs = nowUtcMs;
+    metadata.endUtcMs = nowUtcMs;
+    metadata.rowPeriodMs = std::max<qint64>(1, m_controllerConfig.sourceFlushIntervalMs);
+    metadata.binCount = m_controllerConfig.renderBinCount;
+    metadata.bandCount = static_cast<int>(m_processingConfig.bands.size());
+    metadata.beamCount = 2;
+    metadata.sourceName = QStringLiteral("BCO");
+
+    metadata = m_sessionStorage->startSession(metadata);
+    m_activeSessionId = metadata.id;
+    m_sessionActive = true;
+    m_timelineViewport.switchToSession(metadata.id,
+                                       metadata.endUtcMs,
+                                       metadata.rowPeriodMs,
+                                       WaterfallTimelineViewport::Mode::Live);
+
+    updateRenderBuffer();
+    emit recordingStateChanged();
+    notifyPresentationChanged(previousLiveMode, previousUtcText, true);
+}
+
+void WaterfallController::stopRecording()
+{
+    if (!m_sessionActive || !m_sessionStorage || !m_activeSessionId.isValid()) {
+        return;
+    }
+
+    const bool previousLiveMode = liveMode();
+    const QString previousUtcText = currentUtcText();
+    const auto metadata = m_sessionStorage->session(m_activeSessionId);
+    const qint64 endUtcMs = metadata ? metadata->endUtcMs : m_timelineViewport.topUtcMs();
+
+    m_sessionStorage->closeSession(m_activeSessionId, endUtcMs);
+    m_sessionActive = false;
+    m_timelineViewport.setMode(WaterfallTimelineViewport::Mode::History);
+
+    emit recordingStateChanged();
+    notifyPresentationChanged(previousLiveMode, previousUtcText, true);
 }
 
 void WaterfallController::onViewportChanged(double minHz, double maxHz, const QString&)
@@ -409,14 +536,11 @@ void WaterfallController::scheduleRetune(double minHz, double maxHz)
 
 void WaterfallController::reloadHistoryFromStorage()
 {
-    if (!m_storage) {
+    if (!m_sessionStorage) {
         return;
     }
 
-    const auto rows = m_storage->loadRows(0,
-                                          std::numeric_limits<qint64>::max(),
-                                          kMaxLoadedRows);
-    m_historyModel.setRows(rows);
+    selectLatestSession();
 }
 
 void WaterfallController::setHistoryLoading(bool loading)
@@ -434,28 +558,45 @@ void WaterfallController::updateRenderBuffer()
         return;
     }
 
-    const QVector<WaterfallRow> visibleRows = m_historyModel.visibleRows();
-    QVector<WaterfallRow> projectedRows;
-    projectedRows.reserve(visibleRows.size());
+    QVector<WaterfallRowSlot> rowSlots(m_timelineViewport.visibleRowCount());
 
-    for (const auto& row : visibleRows) {
-        WaterfallRow projected = row;
-        projected.viewMinHz = m_viewMinHz;
-        projected.viewMaxHz = m_viewMaxHz;
-        projected.bins = WaterfallRowResampler::resample(row,
-                                                         m_viewMinHz,
-                                                         m_viewMaxHz,
-                                                         m_ringBuffer->nbins());
-        projectedRows.push_back(std::move(projected));
+    if (m_sessionStorage && m_timelineViewport.hasSession()) {
+        const WaterfallTimelineMapper mapper(m_timelineViewport.topUtcMs(),
+                                             m_timelineViewport.rowPeriodMs(),
+                                             m_timelineViewport.visibleRowCount(),
+                                             m_timelineViewport.visibleRowCount());
+        const qint64 marginMs = std::max<qint64>(1, m_timelineViewport.rowPeriodMs() / 2);
+        const auto rows = m_sessionStorage->loadRows(
+            m_timelineViewport.sessionId(),
+            m_timelineViewport.bottomUtcMs() - marginMs,
+            m_timelineViewport.topUtcMs() + marginMs,
+            m_timelineViewport.visibleRowCount() * 2);
+
+        for (const auto& row : rows) {
+            const int slotIndex = mapper.rowIndexForUtcMs(row.utcMs);
+            if (slotIndex < 0 || slotIndex >= rowSlots.size()) {
+                continue;
+            }
+
+            WaterfallRow projected = row;
+            projected.viewMinHz = m_viewMinHz;
+            projected.viewMaxHz = m_viewMaxHz;
+            projected.bins = WaterfallRowResampler::resample(row,
+                                                             m_viewMinHz,
+                                                             m_viewMaxHz,
+                                                             m_ringBuffer->nbins());
+            rowSlots[slotIndex] = WaterfallRowSlot{true, std::move(projected)};
+        }
     }
 
-    m_ringBuffer->replaceRows(projectedRows, ++m_generationId);
+    m_ringBuffer->replaceSlots(rowSlots, ++m_generationId);
     ++m_timeTicksVersion;
     emit timeTicksChanged();
 }
 
 void WaterfallController::notifyPresentationChanged(bool previousLiveMode,
-                                                    const QString& previousUtcText)
+                                                    const QString& previousUtcText,
+                                                    bool viewportDidChange)
 {
     if (previousLiveMode != liveMode()) {
         emit liveModeChanged();
@@ -463,10 +604,17 @@ void WaterfallController::notifyPresentationChanged(bool previousLiveMode,
     if (previousUtcText != currentUtcText()) {
         emit currentUtcTextChanged();
     }
+    if (viewportDidChange) {
+        emit viewportChanged();
+    }
 }
 
 void WaterfallController::appendRenderRow(WaterfallRenderBufferAdapterResult result)
 {
+    if (!m_sessionActive || !m_sessionStorage || !m_activeSessionId.isValid()) {
+        return;
+    }
+
     if (!result.hasVisibleCells) {
         publish(infrastructure::DiagnosticSeverity::Warning,
                 "waterfall frame without visible cells");
@@ -476,14 +624,155 @@ void WaterfallController::appendRenderRow(WaterfallRenderBufferAdapterResult res
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
 
-    m_storage->appendRow(result.row);
-    m_historyModel.appendLiveRow(result.row);
+    result.row.sessionId = m_activeSessionId;
+    m_sessionStorage->appendRow(m_activeSessionId, result.row);
 
-    if (m_historyModel.liveMode()) {
+    if (m_timelineViewport.liveMode()) {
+        m_timelineViewport.jumpToLive(result.row.utcMs);
         updateRenderBuffer();
     }
 
-    notifyPresentationChanged(previousLiveMode, previousUtcText);
+    notifyPresentationChanged(previousLiveMode, previousUtcText, m_timelineViewport.liveMode());
+}
+
+bool WaterfallController::selectLatestSession()
+{
+    if (!m_sessionStorage) {
+        return false;
+    }
+
+    const auto latest = m_sessionStorage->latestSession();
+    if (!latest) {
+        return false;
+    }
+
+    return switchToSession(*latest, WaterfallTimelineViewport::Mode::History);
+}
+
+bool WaterfallController::switchToSession(const WaterfallSessionMetadata& metadata,
+                                          WaterfallTimelineViewport::Mode mode)
+{
+    return m_timelineViewport.switchToSession(metadata.id,
+                                              newestViewportTop(metadata),
+                                              metadata.rowPeriodMs,
+                                              mode);
+}
+
+bool WaterfallController::scrollOlder(int rows)
+{
+    if (!m_sessionStorage || rows <= 0) {
+        return false;
+    }
+
+    if (!m_timelineViewport.hasSession()) {
+        return selectLatestSession();
+    }
+
+    const auto metadata = selectedSession();
+    if (!metadata) {
+        return selectLatestSession();
+    }
+
+    const qint64 oldTop = m_timelineViewport.topUtcMs();
+    const qint64 minTop = oldestViewportTop(*metadata);
+    const qint64 requestedTop = oldTop - static_cast<qint64>(rows) * metadata->rowPeriodMs;
+    if (requestedTop >= minTop) {
+        return m_timelineViewport.switchToSession(metadata->id,
+                                                  requestedTop,
+                                                  metadata->rowPeriodMs,
+                                                  WaterfallTimelineViewport::Mode::History);
+    }
+
+    if (oldTop != minTop) {
+        return m_timelineViewport.switchToSession(metadata->id,
+                                                  minTop,
+                                                  metadata->rowPeriodMs,
+                                                  WaterfallTimelineViewport::Mode::History);
+    }
+
+    const auto previous = m_sessionStorage->previousSession(metadata->id);
+    if (!previous) {
+        return false;
+    }
+
+    return switchToSession(*previous, WaterfallTimelineViewport::Mode::History);
+}
+
+bool WaterfallController::scrollTowardLive(int rows)
+{
+    if (!m_sessionStorage || rows <= 0 || !m_timelineViewport.hasSession()) {
+        return false;
+    }
+
+    const auto metadata = selectedSession();
+    if (!metadata) {
+        return false;
+    }
+
+    const qint64 oldTop = m_timelineViewport.topUtcMs();
+    const qint64 maxTop = newestViewportTop(*metadata);
+    const qint64 requestedTop = oldTop + static_cast<qint64>(rows) * metadata->rowPeriodMs;
+    if (requestedTop <= maxTop) {
+        const auto mode = m_sessionActive && metadata->id == m_activeSessionId
+                && requestedTop == maxTop
+            ? WaterfallTimelineViewport::Mode::Live
+            : WaterfallTimelineViewport::Mode::History;
+        return m_timelineViewport.switchToSession(metadata->id,
+                                                  requestedTop,
+                                                  metadata->rowPeriodMs,
+                                                  mode);
+    }
+
+    if (oldTop != maxTop) {
+        const auto mode = m_sessionActive && metadata->id == m_activeSessionId
+            ? WaterfallTimelineViewport::Mode::Live
+            : WaterfallTimelineViewport::Mode::History;
+        return m_timelineViewport.switchToSession(metadata->id,
+                                                  maxTop,
+                                                  metadata->rowPeriodMs,
+                                                  mode);
+    }
+
+    const auto next = m_sessionStorage->nextSession(metadata->id);
+    if (!next) {
+        return false;
+    }
+
+    const auto mode = m_sessionActive && next->id == m_activeSessionId
+        ? WaterfallTimelineViewport::Mode::Live
+        : WaterfallTimelineViewport::Mode::History;
+    return switchToSession(*next, mode);
+}
+
+std::optional<WaterfallSessionMetadata> WaterfallController::selectedSession() const
+{
+    if (!m_sessionStorage || !m_timelineViewport.hasSession()) {
+        return std::nullopt;
+    }
+    return m_sessionStorage->session(m_timelineViewport.sessionId());
+}
+
+qint64 WaterfallController::newestUtcForSession(
+    const WaterfallSessionMetadata& metadata) const
+{
+    return std::max(metadata.startUtcMs, metadata.endUtcMs);
+}
+
+qint64 WaterfallController::oldestViewportTop(
+    const WaterfallSessionMetadata& metadata) const
+{
+    const qint64 newestUtcMs = newestViewportTop(metadata);
+    const qint64 oldestFullWindowTop =
+        metadata.startUtcMs
+        + static_cast<qint64>(std::max(0, m_timelineViewport.visibleRowCount() - 1))
+            * metadata.rowPeriodMs;
+    return std::min(newestUtcMs, std::max(metadata.startUtcMs, oldestFullWindowTop));
+}
+
+qint64 WaterfallController::newestViewportTop(
+    const WaterfallSessionMetadata& metadata) const
+{
+    return newestUtcForSession(metadata);
 }
 
 void WaterfallController::publish(infrastructure::DiagnosticSeverity severity,

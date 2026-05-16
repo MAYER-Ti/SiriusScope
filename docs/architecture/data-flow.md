@@ -254,7 +254,24 @@ Rules:
 * data outside the current visible range may move outside the visible area;
 * heavy resampling or history loading must not block the GUI thread.
 
-### 6.6 Band configuration / BCO control flow
+### 6.6 Waterfall sessions and timeline viewport
+
+The current UI runtime uses an application-layer Waterfall session model before
+persistent archive storage is introduced.
+
+Rules:
+
+* SiriusScope starts with Waterfall recording disabled;
+* incoming live Waterfall rows are ignored while recording/session mode is off;
+* `startRecording` creates a new in-memory session and enables live Waterfall flow;
+* `stopRecording` closes the active in-memory session and freezes live Waterfall flow;
+* while recording is off, the operator may browse already available sessions;
+* render rows, horizontal grid lines, and time labels must be derived from the same
+  timeline viewport and mapper;
+* the Waterfall frequency band overlay remains frequency-only and does not scroll
+  along the time axis.
+
+### 6.7 Band configuration / BCO control flow
 
 `BandItem` edits produce reception configuration for the BCO.
 

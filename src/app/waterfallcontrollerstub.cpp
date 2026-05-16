@@ -9,6 +9,7 @@
 #include "waterfallrowresampler.h"
 
 #include <QDateTime>
+#include <QTimeZone>
 #include <QVariantMap>
 
 #include <cmath>
@@ -73,12 +74,41 @@ QObject *WaterfallControllerStub::ringBuffer() const
 
 bool WaterfallControllerStub::liveMode() const noexcept
 {
-    return m_historyModel.liveMode();
+    return m_sessionActive && m_historyModel.liveMode();
 }
 
 QString WaterfallControllerStub::currentUtcText() const
 {
     return m_historyModel.currentUtcText();
+}
+
+QString WaterfallControllerStub::recordingStatusText() const
+{
+    return m_sessionActive ? QStringLiteral("включена") : QStringLiteral("выключена");
+}
+
+QString WaterfallControllerStub::recordingLabel() const
+{
+    return m_historyModel.rowCount() > 0 ? m_historyModel.currentUtcText()
+                                         : QStringLiteral("нет сеанса");
+}
+
+QString WaterfallControllerStub::viewportModeText() const
+{
+    return m_sessionActive && m_historyModel.liveMode() ? QStringLiteral("live")
+                                                        : QStringLiteral("history");
+}
+
+qint64 WaterfallControllerStub::viewportTopUtcMs() const
+{
+    const auto rows = m_historyModel.visibleRows();
+    return rows.isEmpty() ? 0 : rows.first().utcMs;
+}
+
+qint64 WaterfallControllerStub::viewportBottomUtcMs() const
+{
+    const auto rows = m_historyModel.visibleRows();
+    return rows.isEmpty() ? 0 : rows.last().utcMs;
 }
 
 QVariantList WaterfallControllerStub::visibleTimeTicks(int pixelHeight) const
@@ -90,6 +120,7 @@ QVariantList WaterfallControllerStub::visibleTimeTicks(int pixelHeight) const
     for (const auto& tick : ticks) {
         QVariantMap item;
         item.insert(QStringLiteral("y"), tick.y);
+        item.insert(QStringLiteral("utcMs"), tick.utcMs);
         item.insert(QStringLiteral("label"), tick.label);
         item.insert(QStringLiteral("major"), tick.major);
         result.push_back(item);
@@ -115,10 +146,15 @@ void WaterfallControllerStub::scrollHistory(int wheelSteps)
 
     updateRenderBuffer();
     notifyPresentationChanged(previousLiveMode, previousUtcText);
+    emit viewportChanged();
 }
 
 void WaterfallControllerStub::jumpToLive()
 {
+    if (!m_sessionActive) {
+        return;
+    }
+
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
 
@@ -128,6 +164,37 @@ void WaterfallControllerStub::jumpToLive()
 
     updateRenderBuffer();
     notifyPresentationChanged(previousLiveMode, previousUtcText);
+    emit viewportChanged();
+}
+
+void WaterfallControllerStub::startRecording()
+{
+    if (m_sessionActive) {
+        return;
+    }
+
+    const bool previousLiveMode = liveMode();
+    const QString previousUtcText = currentUtcText();
+    m_sessionActive = true;
+    m_historyModel.setRows({});
+    updateRenderBuffer();
+    emit recordingStateChanged();
+    notifyPresentationChanged(previousLiveMode, previousUtcText);
+    emit viewportChanged();
+}
+
+void WaterfallControllerStub::stopRecording()
+{
+    if (!m_sessionActive) {
+        return;
+    }
+
+    const bool previousLiveMode = liveMode();
+    const QString previousUtcText = currentUtcText();
+    m_sessionActive = false;
+    emit recordingStateChanged();
+    notifyPresentationChanged(previousLiveMode, previousUtcText);
+    emit viewportChanged();
 }
 
 void WaterfallControllerStub::setSyntheticBand(int bandId,
@@ -179,6 +246,9 @@ void WaterfallControllerStub::commitViewport()
 void WaterfallControllerStub::pushSyntheticLine()
 {
     if (!m_ringBuffer) {
+        return;
+    }
+    if (!m_sessionActive) {
         return;
     }
     if (m_retuning) {

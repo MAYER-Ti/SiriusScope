@@ -10,6 +10,7 @@ namespace siriusscope::app {
 ApplicationBootstrap::ApplicationBootstrap()
     : m_diagnosticsSink(std::make_unique<infrastructure::NullDiagnosticsSink>())
     , m_waterfallStorage(std::make_unique<infrastructure::NullWaterfallStorage>())
+    , m_waterfallSessionStorage(std::make_unique<InMemoryWaterfallSessionStorage>())
     , m_bcoSampleSource(std::make_unique<hardware::SimulatorBcoSampleSource>(
           hardware::SimulatorBcoSampleSourceConfig{},
           m_diagnosticsSink.get()))
@@ -29,6 +30,7 @@ ApplicationBootstrap::ApplicationBootstrap()
     m_waterfallController = std::make_unique<WaterfallController>(&m_viewportModel,
                                                                   m_bcoSampleSource.get(),
                                                                   m_bandListModel.bandConfigs(),
+                                                                  m_waterfallSessionStorage.get(),
                                                                   m_diagnosticsSink.get());
 
     QObject::connect(&m_bandConfigController,
