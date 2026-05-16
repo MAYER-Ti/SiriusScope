@@ -21,7 +21,15 @@ Rectangle {
     }
 
     function azimuthText(value) {
-        return value.toFixed(1).replace(".", ",") + "°"
+        var normalized = value % 360
+        if (normalized < 0) {
+            normalized += 360
+        }
+        var text = normalized.toFixed(1).replace(".", ",")
+        while (text.length < 5) {
+            text = "0" + text
+        }
+        return text + "\u00B0"
     }
 
     GridLayout {

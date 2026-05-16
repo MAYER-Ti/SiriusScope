@@ -20,18 +20,28 @@ Item {
     property real globalMaxHz: 0
     property bool settingsWindowOpen: false
     property bool panModifierActive: false
+    property bool dragging: false
+    property real previewCenterHz: centerHz
 
     signal configureRequested(int bandId)
     signal bandPreviewMoved(int bandId, real centerHz, real widthHz)
+    signal bandPreviewFinished(int bandId, real centerHz, real widthHz)
 
     readonly property real viewSpanHz: Math.max(1.0, viewMaxHz - viewMinHz)
-    readonly property real bandMinHz: centerHz - widthHz * 0.5
-    readonly property real bandMaxHz: centerHz + widthHz * 0.5
+    readonly property real effectiveCenterHz: dragging ? previewCenterHz : centerHz
+    readonly property real bandMinHz: effectiveCenterHz - widthHz * 0.5
+    readonly property real bandMaxHz: effectiveCenterHz + widthHz * 0.5
     readonly property real visibleMinHz: Math.max(viewMinHz, bandMinHz)
     readonly property real visibleMaxHz: Math.min(viewMaxHz, bandMaxHz)
 
     anchors.fill: parent
     visible: visibleMaxHz > visibleMinHz
+
+    onCenterHzChanged: {
+        if (!dragging) {
+            previewCenterHz = centerHz
+        }
+    }
 
     Rectangle {
         id: bandRect
@@ -82,7 +92,6 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             hoverEnabled: true
 
-            property bool dragging: false
             property real startRootX: 0
             property real startCenterHz: 0
 
@@ -95,36 +104,39 @@ Item {
                 }
 
                 if (mouse.button !== Qt.LeftButton || panModifierActive || !settingsWindowOpen) {
-                    dragging = false
+                    root.dragging = false
                     mouse.accepted = false
                     return
                 }
 
-                dragging = true
+                root.previewCenterHz = centerHz
+                root.dragging = true
                 var rootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
                 startRootX = rootPoint.x
-                startCenterHz = centerHz
+                startCenterHz = root.effectiveCenterHz
             }
 
             onPositionChanged: (mouse) => {
-                if (!dragging) {
+                if (!root.dragging) {
                     return
                 }
                 var rootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
                 var deltaHz = (rootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
+                root.previewCenterHz = nextCenter
                 bandPreviewMoved(bandId, nextCenter, widthHz)
             }
 
             onReleased: (mouse) => {
-                if (!dragging) {
+                if (!root.dragging) {
                     return
                 }
-                dragging = false
                 var rootPoint = root.mapFromItem(bodyDrag, mouse.x, mouse.y)
                 var deltaHz = (rootPoint.x - startRootX) / root.width * viewSpanHz
                 var nextCenter = clampCenter(startCenterHz + deltaHz, widthHz)
-                bandPreviewMoved(bandId, nextCenter, widthHz)
+                root.previewCenterHz = nextCenter
+                bandPreviewFinished(bandId, nextCenter, widthHz)
+                root.dragging = false
             }
         }
 

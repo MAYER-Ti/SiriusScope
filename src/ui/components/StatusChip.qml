@@ -9,8 +9,9 @@ Rectangle {
     property color statusColor: Theme.statusGood
     property int fontSize: Theme.fontSmall
     property int horizontalPadding: 12
+    property int preferredWidth: 168
 
-    implicitWidth: Math.max(96, (label.length + value.length + 2) * fontSize * 0.62 + horizontalPadding * 2 + 18)
+    implicitWidth: preferredWidth
     implicitHeight: 30
     radius: Theme.radiusInset
     color: Theme.chipBackground

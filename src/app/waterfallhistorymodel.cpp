@@ -151,9 +151,24 @@ QVector<RowSegment> continuousSegments(const QVector<WaterfallRow>& rows, qint64
     return segments;
 }
 
-int yForUtcMs(qint64 utcMs, const QVector<WaterfallRow>& rows, int maxPixelY)
+int yForRowPosition(double rowPosition, int pixelHeight, int visibleRowCount)
 {
-    if (rows.size() <= 1 || maxPixelY <= 0) {
+    if (pixelHeight <= 0 || visibleRowCount <= 0) {
+        return 0;
+    }
+
+    const int maxPixelY = std::max(0, pixelHeight - 1);
+    const double y = rowPosition / static_cast<double>(visibleRowCount)
+        * static_cast<double>(pixelHeight);
+    return std::clamp(static_cast<int>(std::lround(y)), 0, maxPixelY);
+}
+
+int yForUtcMs(qint64 utcMs,
+              const QVector<WaterfallRow>& rows,
+              int pixelHeight,
+              int visibleRowCount)
+{
+    if (rows.size() <= 1 || pixelHeight <= 0 || visibleRowCount <= 0) {
         return 0;
     }
 
@@ -162,7 +177,7 @@ int yForUtcMs(qint64 utcMs, const QVector<WaterfallRow>& rows, int maxPixelY)
         return 0;
     }
     if (utcMs <= rows.last().utcMs) {
-        return maxPixelY;
+        return yForRowPosition(lastRow, pixelHeight, visibleRowCount);
     }
 
     for (int row = 0; row < lastRow; ++row) {
@@ -177,9 +192,7 @@ int yForUtcMs(qint64 utcMs, const QVector<WaterfallRow>& rows, int maxPixelY)
                 / static_cast<double>(upperUtcMs - lowerUtcMs);
             const double rowPosition = static_cast<double>(row)
                 + std::clamp(rowFraction, 0.0, 1.0);
-            const double y = rowPosition / static_cast<double>(lastRow)
-                * static_cast<double>(maxPixelY);
-            return std::clamp(static_cast<int>(std::lround(y)), 0, maxPixelY);
+            return yForRowPosition(rowPosition, pixelHeight, visibleRowCount);
         }
     }
 
@@ -189,7 +202,7 @@ int yForUtcMs(qint64 utcMs, const QVector<WaterfallRow>& rows, int maxPixelY)
     }
 
     const double ratio = static_cast<double>(rows.first().utcMs - utcMs) / totalSpanMs;
-    return std::clamp(static_cast<int>(std::lround(ratio * maxPixelY)), 0, maxPixelY);
+    return yForRowPosition(ratio * static_cast<double>(lastRow), pixelHeight, visibleRowCount);
 }
 
 void appendTick(QVector<WaterfallTimeTick>& ticks,
@@ -210,7 +223,8 @@ void appendTick(QVector<WaterfallTimeTick>& ticks,
 }
 
 QVector<WaterfallTimeTick> rowSpacedTimeTicks(const QVector<WaterfallRow>& rows,
-                                              int pixelHeight)
+                                              int pixelHeight,
+                                              int visibleRowCount)
 {
     QVector<WaterfallTimeTick> ticks;
     if (rows.isEmpty() || pixelHeight <= 0) {
@@ -243,7 +257,7 @@ QVector<WaterfallTimeTick> rowSpacedTimeTicks(const QVector<WaterfallRow>& rows,
             0,
             rows.size() - 1);
         const int y = std::clamp(
-            static_cast<int>(std::lround(ratio * static_cast<double>(maxPixelY))),
+            yForRowPosition(rowIndex, pixelHeight, visibleRowCount),
             0,
             maxPixelY);
 
@@ -347,7 +361,6 @@ QVector<WaterfallTimeTick> WaterfallHistoryModel::visibleTimeTicks(int pixelHeig
         return {};
     }
 
-    const int maxPixelY = std::max(0, pixelHeight - 1);
     if (rows.size() == 1 || rows.first().utcMs == rows.last().utcMs) {
         bool major = false;
         return {
@@ -363,7 +376,7 @@ QVector<WaterfallTimeTick> WaterfallHistoryModel::visibleTimeTicks(int pixelHeig
     const int targetTickCount = std::clamp(pixelHeight / 80 + 1, 2, 8);
     const qint64 targetStepMs = std::max<qint64>(
         1000,
-        typicalDeltaMs * std::max<qsizetype>(1, rows.size() - 1)
+        typicalDeltaMs * std::max(1, m_visibleRowCount - 1)
             / std::max(1, targetTickCount - 1));
     const qint64 stepMs = niceTimeStepMs(targetStepMs);
 
@@ -379,7 +392,10 @@ QVector<WaterfallTimeTick> WaterfallHistoryModel::visibleTimeTicks(int pixelHeig
         for (qint64 tickUtcMs = alignUp(oldestUtcMs, stepMs);
              tickUtcMs <= newestUtcMs;
              tickUtcMs += stepMs) {
-            candidates.push_back(TickCandidate{tickUtcMs, yForUtcMs(tickUtcMs, rows, maxPixelY)});
+            candidates.push_back(TickCandidate{
+                tickUtcMs,
+                yForUtcMs(tickUtcMs, rows, pixelHeight, m_visibleRowCount)
+            });
             segmentHasTick = true;
             if (tickUtcMs > std::numeric_limits<qint64>::max() - stepMs) {
                 break;
@@ -389,13 +405,13 @@ QVector<WaterfallTimeTick> WaterfallHistoryModel::visibleTimeTicks(int pixelHeig
         if (!segmentHasTick) {
             candidates.push_back(TickCandidate{
                 newestUtcMs,
-                yForUtcMs(newestUtcMs, rows, maxPixelY)
+                yForUtcMs(newestUtcMs, rows, pixelHeight, m_visibleRowCount)
             });
         }
     }
 
     if (candidates.isEmpty()) {
-        return rowSpacedTimeTicks(rows, pixelHeight);
+        return rowSpacedTimeTicks(rows, pixelHeight, m_visibleRowCount);
     }
 
     std::sort(candidates.begin(), candidates.end(), [](const TickCandidate& lhs,
@@ -421,7 +437,7 @@ QVector<WaterfallTimeTick> WaterfallHistoryModel::visibleTimeTicks(int pixelHeig
         previousY = candidate.y;
     }
 
-    return ticks.size() >= 2 ? ticks : rowSpacedTimeTicks(rows, pixelHeight);
+    return ticks.size() >= 2 ? ticks : rowSpacedTimeTicks(rows, pixelHeight, m_visibleRowCount);
 }
 
 QString WaterfallHistoryModel::currentUtcText() const

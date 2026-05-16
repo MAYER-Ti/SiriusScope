@@ -129,6 +129,24 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500)
     return predicate();
 }
 
+bool emitRenderableRow(FakeSampleSource& source,
+                       WaterfallRingBuffer* buffer,
+                       const std::vector<core::BandConfig>& bands,
+                       std::uint64_t sampleIndex)
+{
+    if (!buffer) {
+        return false;
+    }
+
+    const std::uint64_t targetWriteIndex = buffer->writeIndex() + 1;
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, sampleIndex, 0, 0, 90),
+                                               makeSample(bands, sampleIndex, 0, 1, 40)}});
+
+    return waitUntil([buffer, targetWriteIndex] {
+        return buffer->writeIndex() >= targetWriteIndex;
+    });
+}
+
 void testInputBatchUpdatesModel(TestRunner& test)
 {
     FrequencyViewportModel viewport;
@@ -163,6 +181,85 @@ void testInputBatchUpdatesModel(TestRunner& test)
 
     test.require(updated, "controller appends a render row from input batch");
     test.require(copiedLine && hasSignal, "controller updates ring buffer with non-zero samples");
+}
+
+void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = 8;
+    config.sourceFlushIntervalMs = 20;
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &diagnostics,
+                                                     config);
+
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const std::uint64_t initialWriteIndex = buffer ? buffer->writeIndex() : 0;
+    const std::uint64_t initialGenerationId = buffer ? buffer->generationId() : 0;
+
+    controller.scrollHistory(1);
+    controller.scrollHistory(-1);
+    controller.jumpToLive();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+
+    test.require(buffer != nullptr, "controller exposes a waterfall ring buffer");
+    test.require(buffer && buffer->writeIndex() == initialWriteIndex,
+                 "empty-history scroll does not rebuild render buffer");
+    test.require(buffer && buffer->generationId() == initialGenerationId,
+                 "empty-history scroll does not advance generation id");
+}
+
+void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = 1;
+    config.sourceFlushIntervalMs = 5;
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &diagnostics,
+                                                     config);
+    controller.start();
+
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const bool rowsReady =
+        emitRenderableRow(source, buffer, bands, 1)
+        && emitRenderableRow(source, buffer, bands, 2)
+        && emitRenderableRow(source, buffer, bands, 3);
+
+    const std::uint64_t beforeScroll = buffer ? buffer->writeIndex() : 0;
+    controller.scrollHistory(1);
+    const std::uint64_t afterOlderScroll = buffer ? buffer->writeIndex() : 0;
+    controller.scrollHistory(1);
+    const std::uint64_t afterOldestBoundary = buffer ? buffer->writeIndex() : 0;
+    controller.scrollHistory(-1);
+    const std::uint64_t afterLiveScroll = buffer ? buffer->writeIndex() : 0;
+    controller.scrollHistory(-1);
+    const std::uint64_t afterLiveBoundary = buffer ? buffer->writeIndex() : 0;
+
+    test.require(rowsReady, "controller appends enough rows for history scrolling");
+    test.require(afterOlderScroll == beforeScroll + 1,
+                 "older-history scroll rebuilds render buffer once");
+    test.require(afterOldestBoundary == afterOlderScroll,
+                 "oldest-boundary scroll does not rebuild render buffer");
+    test.require(afterLiveScroll == afterOldestBoundary + 1,
+                 "scrolling back to live rebuilds render buffer once");
+    test.require(afterLiveBoundary == afterLiveScroll,
+                 "live-boundary scroll does not rebuild render buffer");
+    test.require(controller.liveMode(), "negative scroll returns controller to live mode");
 }
 
 void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
@@ -200,6 +297,8 @@ int main(int argc, char *argv[])
     TestRunner test;
 
     testInputBatchUpdatesModel(test);
+    testScrollHistoryNoopDoesNotRebuildEmptyHistory(test);
+    testScrollHistoryRebuildsOnlyWhenWindowChanges(test);
     testEmptyBatchDoesNotCrashAndReportsDiagnostic(test);
 
     return test.result();

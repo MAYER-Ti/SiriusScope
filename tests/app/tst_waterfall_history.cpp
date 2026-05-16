@@ -122,6 +122,29 @@ void testScrollHistoryAndReturnToLive(TestRunner& test)
                  "live window shows newest appended row after scrolling down");
 }
 
+void testScrollRowsReportsNoopAtBoundaries(TestRunner& test)
+{
+    WaterfallHistoryModel model(3);
+    appendRows(model, 8, localMs(QDate::currentDate(), QTime(10, 0, 0)));
+
+    const bool movedToOldest = model.scrollRows(1000);
+    const qsizetype oldestEnd = model.windowEndExclusive();
+    const bool movedPastOldest = model.scrollRows(1);
+    const qsizetype oldestEndAfterNoop = model.windowEndExclusive();
+
+    const bool movedToLive = model.scrollRows(-1000);
+    const qsizetype liveEnd = model.windowEndExclusive();
+    const bool movedPastLive = model.scrollRows(-1);
+
+    test.require(movedToOldest, "positive scroll moves toward older history");
+    test.require(!movedPastOldest, "scrollRows reports false at oldest boundary");
+    test.require(oldestEndAfterNoop == oldestEnd,
+                 "oldest boundary scroll keeps the same window end");
+    test.require(movedToLive, "negative scroll moves back toward live");
+    test.require(!movedPastLive, "scrollRows reports false at live boundary");
+    test.require(liveEnd == model.rowCount(), "live boundary uses the newest row end");
+}
+
 void testJumpToLive(TestRunner& test)
 {
     WaterfallHistoryModel model(3);
@@ -220,9 +243,34 @@ void testManyRowsHaveSeparatedTickY(TestRunner& test)
     const auto ticks = model.visibleTimeTicks(320);
 
     test.require(ticks.size() >= 2, "many rows return multiple time ticks");
+    test.require(ticks.size() <= 8, "many rows keep time tick count bounded");
     test.require(ticksStayInsidePixelRange(ticks, 320),
                  "many-row time ticks stay inside pixel range");
     test.require(ticksHaveSeparatedY(ticks), "many-row time ticks have separated y coordinates");
+}
+
+void testPartialHistoryUsesFixedRowSlotsForTicks(TestRunner& test)
+{
+    WaterfallHistoryModel model(20);
+    appendRows(model, 2, localMs(QDate::currentDate(), QTime(10, 0, 0)));
+
+    const auto partialTicks = model.visibleTimeTicks(320);
+    int partialMaxY = 0;
+    for (const auto& tick : partialTicks) {
+        partialMaxY = std::max(partialMaxY, tick.y);
+    }
+
+    appendRows(model, 18, localMs(QDate::currentDate(), QTime(10, 0, 2)));
+    const auto fullTicks = model.visibleTimeTicks(320);
+
+    test.require(!partialTicks.isEmpty(), "partial history returns visible time ticks");
+    test.require(partialMaxY < 80,
+                 "partial history ticks stay in top fixed row slots instead of stretching");
+    test.require(fullTicks.size() <= 8, "full history keeps bounded time tick count");
+    test.require(ticksStayInsidePixelRange(fullTicks, 320),
+                 "full history ticks stay inside pixel range");
+    test.require(ticksHaveSeparatedY(fullTicks),
+                 "full history ticks remain separated after buffer fills");
 }
 
 void testOldestWindowKeepsSeparatedTickY(TestRunner& test)
@@ -313,12 +361,14 @@ int main()
 
     testAppendLiveKeepsNewestWindow(test);
     testScrollHistoryAndReturnToLive(test);
+    testScrollRowsReportsNoopAtBoundaries(test);
     testJumpToLive(test);
     testEmptyTimeTicks(test);
     testSingleVisibleRowReturnsOneTick(test);
     testTimeTicksUseSecondsAndDateTransitions(test);
     testTimeTickYCoordinatesMoveWithScrolledWindow(test);
     testManyRowsHaveSeparatedTickY(test);
+    testPartialHistoryUsesFixedRowSlotsForTicks(test);
     testOldestWindowKeepsSeparatedTickY(test);
     testSessionGapDoesNotCollapseTickY(test);
     testCurrentUtcTextUsesTopVisibleRow(test);

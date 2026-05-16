@@ -217,19 +217,10 @@ void WaterfallController::scrollHistory(int wheelSteps)
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
 
-    if (wheelSteps > 0) {
-        setHistoryLoading(true);
-        QMetaObject::invokeMethod(this, [this, signedRows, previousLiveMode, previousUtcText]() {
-            reloadHistoryFromStorage();
-            m_historyModel.scrollRows(signedRows);
-            updateRenderBuffer();
-            notifyPresentationChanged(previousLiveMode, previousUtcText);
-            setHistoryLoading(false);
-        }, Qt::QueuedConnection);
+    if (!m_historyModel.scrollRows(signedRows)) {
         return;
     }
 
-    m_historyModel.scrollRows(signedRows);
     updateRenderBuffer();
     notifyPresentationChanged(previousLiveMode, previousUtcText);
 }
@@ -239,8 +230,10 @@ void WaterfallController::jumpToLive()
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
 
-    reloadHistoryFromStorage();
-    m_historyModel.jumpToLive();
+    if (!m_historyModel.jumpToLive()) {
+        return;
+    }
+
     updateRenderBuffer();
     notifyPresentationChanged(previousLiveMode, previousUtcText);
 }

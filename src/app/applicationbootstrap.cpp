@@ -32,9 +32,9 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                                   m_diagnosticsSink.get());
 
     QObject::connect(&m_bandConfigController,
-                     &BandConfigController::bandStateChanged,
+                     &BandConfigController::bandSettingsApplied,
                      m_waterfallController.get(),
-                     [this](int, double, double, double, bool) {
+                     [this](int) {
                          if (m_waterfallController) {
                              m_waterfallController->setBandConfigs(m_bandListModel.bandConfigs());
                          }

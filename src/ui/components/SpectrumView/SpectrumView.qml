@@ -24,6 +24,10 @@ Item {
     property real pendingRequestMaxHz: viewMaxHz
     property bool spacePressed: false
     property var bandSettingsWindows: ({})
+    property bool pendingBandPreviewValid: false
+    property int pendingBandPreviewId: -1
+    property real pendingBandPreviewCenterHz: 0
+    property real pendingBandPreviewWidthHz: 0
 
     function scheduleSpectrumRequest() {
         pendingRequestMinHz = viewMinHz
@@ -149,14 +153,50 @@ Item {
         window.requestActivate()
     }
 
-    function updateBandPreviewFromDrag(bandId, centerHz, widthHz) {
-        if (!BandConfigController.previewBandSettings(bandId, centerHz, widthHz)) {
-            return
-        }
+    function updateBandSettingsDraftWindow(bandId, centerHz, widthHz) {
         var window = bandSettingsWindows[String(bandId)]
         if (window) {
             window.updateDraftFrequenciesHz(centerHz, widthHz)
         }
+    }
+
+    function queueBandPreviewFromDrag(bandId, centerHz, widthHz) {
+        pendingBandPreviewValid = true
+        pendingBandPreviewId = bandId
+        pendingBandPreviewCenterHz = centerHz
+        pendingBandPreviewWidthHz = widthHz
+        updateBandSettingsDraftWindow(bandId, centerHz, widthHz)
+
+        if (!bandPreviewTimer.running) {
+            bandPreviewTimer.start()
+        }
+    }
+
+    function flushBandPreviewFromDrag() {
+        if (!pendingBandPreviewValid) {
+            return true
+        }
+
+        var bandId = pendingBandPreviewId
+        var centerHz = pendingBandPreviewCenterHz
+        var widthHz = pendingBandPreviewWidthHz
+        pendingBandPreviewValid = false
+
+        if (!BandConfigController.previewBandSettings(bandId, centerHz, widthHz)) {
+            return false
+        }
+        plot.requestPaint()
+        return true
+    }
+
+    function finishBandPreviewFromDrag(bandId, centerHz, widthHz) {
+        pendingBandPreviewValid = false
+        bandPreviewTimer.stop()
+
+        if (!BandConfigController.previewBandSettings(bandId, centerHz, widthHz)) {
+            return
+        }
+        updateBandSettingsDraftWindow(bandId, centerHz, widthHz)
         plot.requestPaint()
     }
 
@@ -194,6 +234,13 @@ Item {
         onTriggered: {
             SpectrumController.requestSpectrum(pendingRequestMinHz, pendingRequestMaxHz)
         }
+    }
+
+    Timer {
+        id: bandPreviewTimer
+        interval: 33
+        repeat: false
+        onTriggered: flushBandPreviewFromDrag()
     }
 
     Connections {
@@ -494,7 +541,11 @@ Item {
                         }
 
                         onBandPreviewMoved: (movedBandId, nextCenter, nextWidth) => {
-                            updateBandPreviewFromDrag(movedBandId, nextCenter, nextWidth)
+                            queueBandPreviewFromDrag(movedBandId, nextCenter, nextWidth)
+                        }
+
+                        onBandPreviewFinished: (movedBandId, nextCenter, nextWidth) => {
+                            finishBandPreviewFromDrag(movedBandId, nextCenter, nextWidth)
                         }
                     }
                 }

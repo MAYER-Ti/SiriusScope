@@ -16,6 +16,7 @@ Item {
     property string currentUtcText: Sirius.WaterfallController.currentUtcText
     property var timeTicks: []
     property var timeTicksVersion: Sirius.WaterfallController.timeTicksVersion
+    property real pendingHistoryWheelSteps: 0
 
     function spanHz() {
         return Math.max(1.0, root.viewMaxHz - root.viewMinHz)
@@ -23,6 +24,33 @@ Item {
 
     function xForHz(hz) {
         return (hz - root.viewMinHz) / root.spanHz() * plotArea.width
+    }
+
+    function visibleRowCount() {
+        if (!root.ringBuffer) {
+            return 1
+        }
+        return Math.max(1, root.ringBuffer.height)
+    }
+
+    function rowGridStep(pixelHeight, rowCount) {
+        var targetLines = Math.max(2, Math.min(8, Math.floor(pixelHeight / 80) + 1))
+        return Math.max(1, Math.ceil(rowCount / Math.max(1, targetLines - 1)))
+    }
+
+    function queueHistoryWheel(angleDeltaY, pixelDeltaY) {
+        var deltaSteps = 0
+        if (angleDeltaY !== 0) {
+            deltaSteps = -angleDeltaY / 120.0
+        } else if (pixelDeltaY !== 0) {
+            deltaSteps = -pixelDeltaY / 80.0
+        }
+        if (deltaSteps === 0) {
+            return
+        }
+
+        root.pendingHistoryWheelSteps += deltaSteps
+        historyWheelTimer.restart()
     }
 
     onViewMinHzChanged: waterfallGrid.requestPaint()
@@ -35,6 +63,33 @@ Item {
             return
         }
         root.timeTicks = Sirius.WaterfallController.visibleTimeTicks(plotArea.height)
+    }
+
+    Timer {
+        id: historyWheelTimer
+        interval: 24
+        repeat: false
+
+        onTriggered: {
+            if (Math.abs(root.pendingHistoryWheelSteps) < 0.20) {
+                return
+            }
+
+            var steps = root.pendingHistoryWheelSteps > 0
+                ? Math.floor(root.pendingHistoryWheelSteps)
+                : Math.ceil(root.pendingHistoryWheelSteps)
+            if (steps === 0) {
+                steps = root.pendingHistoryWheelSteps > 0 ? 1 : -1
+                root.pendingHistoryWheelSteps = 0
+            } else {
+                root.pendingHistoryWheelSteps -= steps
+            }
+
+            Sirius.WaterfallController.scrollHistory(steps)
+            if (Math.abs(root.pendingHistoryWheelSteps) >= 1.0) {
+                historyWheelTimer.restart()
+            }
+        }
     }
 
     ColumnLayout {
@@ -124,16 +179,26 @@ Item {
                             ctx.stroke()
                         }
 
-                        for (var j = 0; j < root.timeTicks.length; j++) {
-                            var timeTick = root.timeTicks[j]
-                            var y = timeTick.y
-                            ctx.strokeStyle = timeTick.major
+                        var rowCount = root.visibleRowCount()
+                        var rowStep = root.rowGridStep(height, rowCount)
+                        var lastGridRow = -1
+                        function drawRowGridLine(rowIndex) {
+                            var y = rowIndex / rowCount * height
+                            ctx.strokeStyle = rowIndex === 0 || rowIndex === rowCount
                                 ? String(Sirius.Theme.gridMajor)
                                 : String(Sirius.Theme.gridSoft)
                             ctx.beginPath()
                             ctx.moveTo(0, y)
                             ctx.lineTo(width, y)
                             ctx.stroke()
+                            lastGridRow = rowIndex
+                        }
+
+                        for (var j = 0; j <= rowCount; j += rowStep) {
+                            drawRowGridLine(j)
+                        }
+                        if (lastGridRow !== rowCount) {
+                            drawRowGridLine(rowCount)
                         }
                     }
                 }
@@ -147,20 +212,6 @@ Item {
                     directionDeadZone: Sirius.WaterfallController.directionDeadZone
                     directionalAlpha: Sirius.WaterfallController.directionalAlpha
                     z: 3
-                }
-
-                WheelHandler {
-                    id: historyWheelHandler
-                    target: plotArea
-                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-
-                    onWheel: (event) => {
-                        const steps = -event.angleDelta.y / 120
-                        if (steps !== 0) {
-                            Sirius.WaterfallController.scrollHistory(steps)
-                        }
-                        event.accepted = true
-                    }
                 }
 
                 Repeater {
@@ -220,6 +271,19 @@ Item {
                             font.weight: Font.DemiBold
                         }
                     }
+                }
+            }
+
+            MouseArea {
+                id: historyWheelArea
+                anchors.fill: plotFrame
+                acceptedButtons: Qt.NoButton
+                hoverEnabled: false
+                z: 20
+
+                onWheel: (wheel) => {
+                    root.queueHistoryWheel(wheel.angleDelta.y, wheel.pixelDelta.y)
+                    wheel.accepted = true
                 }
             }
         }
