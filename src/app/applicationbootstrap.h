@@ -9,8 +9,15 @@
 #include "spectrumdecimator.h"
 #include "waterfallcontrollerstub.h"
 
+#include "hardware/interfaces/antenna_azimuth_source.h"
 #include "hardware/interfaces/antenna_control.h"
+#include "hardware/interfaces/bco_sample_source.h"
 #include "hardware/interfaces/bco_control.h"
+#include "hardware/simulator/simulator_antenna_azimuth_source.h"
+#include "hardware/simulator/simulator_antenna_control.h"
+#include "hardware/simulator/simulator_antenna_state.h"
+#include "hardware/simulator/simulator_bco_control.h"
+#include "hardware/simulator/simulator_bco_sample_source.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "infrastructure/interfaces/waterfall_storage.h"
 
@@ -49,9 +56,19 @@ public:
         return m_bcoControl.get();
     }
 
+    hardware::IBcoSampleSource* bcoSampleSource() noexcept
+    {
+        return m_bcoSampleSource.get();
+    }
+
     hardware::IAntennaControl* antennaControl() noexcept
     {
         return m_antennaControl.get();
+    }
+
+    hardware::IAntennaAzimuthSource* antennaAzimuthSource() noexcept
+    {
+        return m_antennaAzimuthSource.get();
     }
 
 private:
@@ -63,6 +80,9 @@ private:
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::IDiagnosticsSink> m_diagnosticsSink;
     std::unique_ptr<infrastructure::IWaterfallStorage> m_waterfallStorage;
+    std::unique_ptr<hardware::SimulatorBcoSampleSource> m_bcoSampleSource;
+    std::unique_ptr<hardware::SimulatorAntennaState> m_antennaState;
+    std::unique_ptr<hardware::SimulatorAntennaAzimuthSource> m_antennaAzimuthSource;
     std::unique_ptr<hardware::IBcoControl> m_bcoControl;
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
     BandListModel m_bandListModel;

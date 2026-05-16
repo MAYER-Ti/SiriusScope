@@ -74,6 +74,19 @@ set(SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES
     src/hardware/interfaces/bco_sample_source.h
 )
 
+set(SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES
+    src/hardware/simulator/simulator_antenna_azimuth_source.h
+    src/hardware/simulator/simulator_antenna_azimuth_source.cpp
+    src/hardware/simulator/simulator_antenna_control.h
+    src/hardware/simulator/simulator_antenna_control.cpp
+    src/hardware/simulator/simulator_antenna_state.h
+    src/hardware/simulator/simulator_antenna_state.cpp
+    src/hardware/simulator/simulator_bco_control.h
+    src/hardware/simulator/simulator_bco_control.cpp
+    src/hardware/simulator/simulator_bco_sample_source.h
+    src/hardware/simulator/simulator_bco_sample_source.cpp
+)
+
 set(SIRIUSSCOPE_INFRASTRUCTURE_INTERFACE_SOURCES
     src/infrastructure/interfaces/diagnostics_sink.h
     src/infrastructure/interfaces/result_table_storage.h
@@ -151,6 +164,25 @@ target_link_libraries(siriusscope_infrastructure_iface
         siriusscope_processing_iface
 )
 
+add_library(siriusscope_hardware STATIC
+    ${SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES}
+)
+
+target_compile_features(siriusscope_hardware
+    PUBLIC cxx_std_20
+)
+
+target_include_directories(siriusscope_hardware
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(siriusscope_hardware
+    PUBLIC
+        siriusscope_hardware_iface
+        siriusscope_infrastructure_iface
+)
+
 add_library(siriusscope_application STATIC
     ${SIRIUSSCOPE_APPLICATION_SOURCES}
 )
@@ -165,7 +197,7 @@ target_link_libraries(siriusscope_application
         siriusscope_core
         siriusscope_processing_iface
         siriusscope_infrastructure_iface
-        siriusscope_hardware_iface
+        siriusscope_hardware
 )
 
 target_compile_features(siriusscope_application

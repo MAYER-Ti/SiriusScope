@@ -54,9 +54,13 @@ void testBootstrapProvidesObjects(TestRunner& test)
     test.require(bootstrap.waterfallStorage() != nullptr,
                  "bootstrap provides waterfall storage placeholder");
     test.require(bootstrap.bcoControl() != nullptr,
-                 "bootstrap provides BCO control placeholder");
+                 "bootstrap provides BCO control");
+    test.require(bootstrap.bcoSampleSource() != nullptr,
+                 "bootstrap provides BCO sample source");
     test.require(bootstrap.antennaControl() != nullptr,
-                 "bootstrap provides antenna control placeholder");
+                 "bootstrap provides antenna control");
+    test.require(bootstrap.antennaAzimuthSource() != nullptr,
+                 "bootstrap provides antenna azimuth source");
 
     bootstrap.registerQmlSingletons();
 

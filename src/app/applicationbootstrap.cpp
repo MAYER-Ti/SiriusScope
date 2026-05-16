@@ -11,10 +11,23 @@ ApplicationBootstrap::ApplicationBootstrap()
     : m_waterfallController(&m_viewportModel)
     , m_diagnosticsSink(std::make_unique<infrastructure::NullDiagnosticsSink>())
     , m_waterfallStorage(std::make_unique<infrastructure::NullWaterfallStorage>())
-    , m_bcoControl(std::make_unique<hardware::StubBcoControl>())
-    , m_antennaControl(std::make_unique<hardware::StubAntennaControl>())
+    , m_bcoSampleSource(std::make_unique<hardware::SimulatorBcoSampleSource>(
+          hardware::SimulatorBcoSampleSourceConfig{},
+          m_diagnosticsSink.get()))
+    , m_antennaState(std::make_unique<hardware::SimulatorAntennaState>())
+    , m_antennaAzimuthSource(std::make_unique<hardware::SimulatorAntennaAzimuthSource>(
+          m_antennaState.get(),
+          hardware::SimulatorAntennaAzimuthSourceConfig{},
+          m_diagnosticsSink.get()))
+    , m_bcoControl(std::make_unique<hardware::SimulatorBcoControl>(m_bcoSampleSource.get(),
+                                                                   m_diagnosticsSink.get()))
+    , m_antennaControl(std::make_unique<hardware::SimulatorAntennaControl>(
+          m_antennaState.get(),
+          m_diagnosticsSink.get()))
     , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsSink.get())
 {
+    m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
+
     QObject::connect(&m_bandConfigController,
                      &BandConfigController::bandStateChanged,
                      &m_waterfallController,

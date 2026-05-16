@@ -20,6 +20,39 @@ target_link_libraries(tst_processing
 
 add_test(NAME tst_processing COMMAND tst_processing)
 
+add_executable(tst_simulator_bco_sample_source
+    hardware/tst_simulator_bco_sample_source.cpp
+)
+
+target_link_libraries(tst_simulator_bco_sample_source
+    PRIVATE
+        siriusscope_hardware
+)
+
+add_test(NAME tst_simulator_bco_sample_source COMMAND tst_simulator_bco_sample_source)
+
+add_executable(tst_simulator_bco_control
+    hardware/tst_simulator_bco_control.cpp
+)
+
+target_link_libraries(tst_simulator_bco_control
+    PRIVATE
+        siriusscope_hardware
+)
+
+add_test(NAME tst_simulator_bco_control COMMAND tst_simulator_bco_control)
+
+add_executable(tst_simulator_antenna
+    hardware/tst_simulator_antenna.cpp
+)
+
+target_link_libraries(tst_simulator_antenna
+    PRIVATE
+        siriusscope_hardware
+)
+
+add_test(NAME tst_simulator_antenna COMMAND tst_simulator_antenna)
+
 add_executable(tst_architecture_baseline
     infrastructure/tst_architecture_baseline.cpp
 )
