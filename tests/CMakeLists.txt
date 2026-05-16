@@ -123,6 +123,40 @@ target_include_directories(tst_antenna_controller_stub
 
 add_test(NAME tst_antenna_controller_stub COMMAND tst_antenna_controller_stub)
 
+add_executable(tst_band_list_model
+    app/tst_band_list_model.cpp
+)
+
+target_link_libraries(tst_band_list_model
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_band_list_model
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_band_list_model COMMAND tst_band_list_model)
+
+add_executable(tst_band_config_controller
+    app/tst_band_config_controller.cpp
+)
+
+target_link_libraries(tst_band_config_controller
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_band_config_controller
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_band_config_controller COMMAND tst_band_config_controller)
+
 add_executable(tst_application_bootstrap
     app/tst_application_bootstrap.cpp
 )
@@ -160,6 +194,12 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_antenna_controller_stub PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_band_list_model PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_band_config_controller PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_application_bootstrap PROPERTIES

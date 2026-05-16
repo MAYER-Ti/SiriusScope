@@ -24,7 +24,6 @@ Item {
     property real pendingRequestMaxHz: viewMaxHz
     property bool spacePressed: false
     property var bandSettingsWindows: ({})
-    property var bandSettingsSnapshots: ({})
 
     function scheduleSpectrumRequest() {
         pendingRequestMinHz = viewMinHz
@@ -64,12 +63,9 @@ Item {
 
     function thresholdForHz(hz) {
         var threshold = -1e9
-        for (var i = 0; i < BandModel.count; i++) {
-            var band = BandModel.get(i)
-            var half = band.widthHz * 0.5
-            var minHz = band.centerHz - half
-            var maxHz = band.centerHz + half
-            if (hz >= minHz && hz <= maxHz) {
+        for (var i = 0; i < BandListModel.count(); i++) {
+            var band = BandListModel.get(i)
+            if (hz >= band.minHz && hz <= band.maxHz) {
                 threshold = Math.max(threshold, band.thresholdAmplitude)
             }
         }
@@ -77,34 +73,21 @@ Item {
     }
 
     function bandIndexForId(bandId) {
-        for (var i = 0; i < BandModel.count; i++) {
-            if (BandModel.get(i).bandId === bandId) {
-                return i
-            }
-        }
-        return -1
+        return BandListModel.indexForBandId(bandId)
     }
 
     function openBandSettingsWindow(index) {
-        if (index < 0 || index >= BandModel.count) {
+        if (index < 0 || index >= BandListModel.count()) {
             return
         }
 
-        var band = BandModel.get(index)
+        var band = BandListModel.get(index)
         var key = String(band.bandId)
         var existingWindow = bandSettingsWindows[key]
         if (existingWindow) {
             existingWindow.raise()
             existingWindow.requestActivate()
             return
-        }
-
-        bandSettingsSnapshots[key] = {
-            centerHz: band.centerHz,
-            widthHz: band.widthHz,
-            thresholdAmplitude: band.thresholdAmplitude,
-            inputAttenuatorDb: band.inputAttenuatorDb,
-            outputAttenuatorDb: band.outputAttenuatorDb
         }
 
         var window = bandSettingsDialogComponent.createObject(root, {
@@ -114,6 +97,7 @@ Item {
             thresholdAmplitude: band.thresholdAmplitude,
             inputAttenuatorDb: band.inputAttenuatorDb,
             outputAttenuatorDb: band.outputAttenuatorDb,
+            polarization: band.polarization,
             globalMinHz: root.globalMinHz,
             globalMaxHz: root.globalMaxHz,
             minAmplitude: root.amplitudeMin,
@@ -126,64 +110,38 @@ Item {
 
         window.transientParent = root.Window.window
         bandSettingsWindows[key] = window
-        BandModel.setProperty(index, "settingsWindowOpen", true)
+        BandListModel.setSettingsWindowOpen(band.bandId, true)
 
         window.saveRequested.connect(function(bandId, centerHz, widthHz, thresholdAmplitude,
-                                             inputAttenuatorDb, outputAttenuatorDb) {
-            var bandIndex = bandIndexForId(bandId)
-            if (bandIndex < 0) {
+                                             inputAttenuatorDb, outputAttenuatorDb, polarization) {
+            var accepted = BandConfigController.applyBandSettings(bandId, centerHz, widthHz,
+                                                                  thresholdAmplitude,
+                                                                  inputAttenuatorDb,
+                                                                  outputAttenuatorDb,
+                                                                  polarization)
+            if (!accepted) {
+                window.showControllerError(qsTr("Настройки диапазона отклонены."))
                 return
             }
-            BandModel.setProperty(bandIndex, "centerHz", centerHz)
-            BandModel.setProperty(bandIndex, "widthHz", widthHz)
-            BandModel.setProperty(bandIndex, "thresholdAmplitude", thresholdAmplitude)
-            BandModel.setProperty(bandIndex, "inputAttenuatorDb", inputAttenuatorDb)
-            BandModel.setProperty(bandIndex, "outputAttenuatorDb", outputAttenuatorDb)
-            SpectrumController.applyBandSettings(bandId, centerHz, widthHz, thresholdAmplitude,
-                                                 inputAttenuatorDb, outputAttenuatorDb)
-            bandSettingsSnapshots[String(bandId)] = {
-                centerHz: centerHz,
-                widthHz: widthHz,
-                thresholdAmplitude: thresholdAmplitude,
-                inputAttenuatorDb: inputAttenuatorDb,
-                outputAttenuatorDb: outputAttenuatorDb
-            }
+            window.markSettingsSaved()
             plot.requestPaint()
         })
 
         window.thresholdPreviewChanged.connect(function(bandId, thresholdAmplitude) {
-            var bandIndex = bandIndexForId(bandId)
-            if (bandIndex < 0) {
-                return
+            if (BandConfigController.setBandThresholdPreview(bandId, thresholdAmplitude)) {
+                plot.requestPaint()
             }
-            BandModel.setProperty(bandIndex, "thresholdAmplitude", thresholdAmplitude)
-            plot.requestPaint()
         })
 
         window.canceled.connect(function(bandId) {
-            var snapshotKey = String(bandId)
-            var snapshot = bandSettingsSnapshots[snapshotKey]
-            var bandIndex = bandIndexForId(bandId)
-            if (!snapshot || bandIndex < 0) {
-                return
-            }
-            BandModel.setProperty(bandIndex, "centerHz", snapshot.centerHz)
-            BandModel.setProperty(bandIndex, "widthHz", snapshot.widthHz)
-            BandModel.setProperty(bandIndex, "thresholdAmplitude", snapshot.thresholdAmplitude)
-            BandModel.setProperty(bandIndex, "inputAttenuatorDb", snapshot.inputAttenuatorDb)
-            BandModel.setProperty(bandIndex, "outputAttenuatorDb", snapshot.outputAttenuatorDb)
-            SpectrumController.setBand(bandId, snapshot.centerHz, snapshot.widthHz, false)
+            BandConfigController.cancelBandSettingsPreview(bandId)
             plot.requestPaint()
         })
 
         window.windowClosed.connect(function(bandId) {
             var closedKey = String(bandId)
-            var bandIndex = bandIndexForId(bandId)
-            if (bandIndex >= 0) {
-                BandModel.setProperty(bandIndex, "settingsWindowOpen", false)
-            }
+            BandListModel.setSettingsWindowOpen(bandId, false)
             delete bandSettingsWindows[closedKey]
-            delete bandSettingsSnapshots[closedKey]
             window.destroy()
         })
 
@@ -192,13 +150,9 @@ Item {
     }
 
     function updateBandPreviewFromDrag(bandId, centerHz, widthHz) {
-        var index = bandIndexForId(bandId)
-        if (index < 0) {
+        if (!BandConfigController.previewBandSettings(bandId, centerHz, widthHz)) {
             return
         }
-        BandModel.setProperty(index, "centerHz", centerHz)
-        BandModel.setProperty(index, "widthHz", widthHz)
-        SpectrumController.setBand(bandId, centerHz, widthHz, false)
         var window = bandSettingsWindows[String(bandId)]
         if (window) {
             window.updateDraftFrequenciesHz(centerHz, widthHz)
@@ -383,10 +337,10 @@ Item {
                         ctx.globalAlpha = 0.55
                         ctx.strokeStyle = String(Theme.statusWarn)
                         ctx.lineWidth = 1
-                        for (var b = 0; b < BandModel.count; b++) {
-                            var thresholdBand = BandModel.get(b)
-                            var bandMin = thresholdBand.centerHz - thresholdBand.widthHz * 0.5
-                            var bandMax = thresholdBand.centerHz + thresholdBand.widthHz * 0.5
+                        for (var b = 0; b < BandListModel.count(); b++) {
+                            var thresholdBand = BandListModel.get(b)
+                            var bandMin = thresholdBand.minHz
+                            var bandMax = thresholdBand.maxHz
                             var clippedMin = Math.max(viewMinHz, bandMin)
                             var clippedMax = Math.min(viewMaxHz, bandMax)
                             if (clippedMax <= clippedMin) {
@@ -518,7 +472,7 @@ Item {
 
                 Repeater {
                     id: bandRepeater
-                    model: BandModel
+                    model: BandListModel
                     delegate: BandItem {
                         bandId: model.bandId
                         centerHz: model.centerHz

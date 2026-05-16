@@ -24,6 +24,10 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/antennacontrollerstub.cpp
     src/app/appstate.h
     src/app/appstate.cpp
+    src/app/bandconfigcontroller.h
+    src/app/bandconfigcontroller.cpp
+    src/app/bandlistmodel.h
+    src/app/bandlistmodel.cpp
     src/app/frequencygridmodel.h
     src/app/frequencygridmodel.cpp
     src/app/frequencyviewportmodel.h

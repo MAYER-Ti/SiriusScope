@@ -45,6 +45,10 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides waterfall controller");
     test.require(bootstrap.antennaController() != nullptr,
                  "bootstrap provides antenna controller");
+    test.require(bootstrap.bandListModel() != nullptr,
+                 "bootstrap provides band list model");
+    test.require(bootstrap.bandConfigController() != nullptr,
+                 "bootstrap provides band config controller");
     test.require(bootstrap.diagnosticsSink() != nullptr,
                  "bootstrap provides diagnostics placeholder");
     test.require(bootstrap.waterfallStorage() != nullptr,
@@ -65,6 +69,12 @@ void testBootstrapProvidesObjects(TestRunner& test)
     test.require(siriusscope::app::AntennaControllerQmlSingleton::instance
                      == bootstrap.antennaController(),
                  "bootstrap registers antenna controller singleton");
+    test.require(siriusscope::app::BandListModelQmlSingleton::instance
+                     == bootstrap.bandListModel(),
+                 "bootstrap registers band list model singleton");
+    test.require(siriusscope::app::BandConfigControllerQmlSingleton::instance
+                     == bootstrap.bandConfigController(),
+                 "bootstrap registers band config controller singleton");
 }
 
 } // namespace

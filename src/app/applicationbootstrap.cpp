@@ -13,9 +13,10 @@ ApplicationBootstrap::ApplicationBootstrap()
     , m_waterfallStorage(std::make_unique<infrastructure::NullWaterfallStorage>())
     , m_bcoControl(std::make_unique<hardware::StubBcoControl>())
     , m_antennaControl(std::make_unique<hardware::StubAntennaControl>())
+    , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsSink.get())
 {
-    QObject::connect(&m_spectrumController,
-                     &SpectrumControllerStub::bandStateChanged,
+    QObject::connect(&m_bandConfigController,
+                     &BandConfigController::bandStateChanged,
                      &m_waterfallController,
                      &WaterfallControllerStub::setSyntheticBand);
 }
@@ -29,6 +30,8 @@ void ApplicationBootstrap::registerQmlSingletons()
     SpectrumDecimatorQmlSingleton::instance = &m_spectrumDecimator;
     WaterfallControllerQmlSingleton::instance = &m_waterfallController;
     AntennaControllerQmlSingleton::instance = &m_antennaController;
+    BandListModelQmlSingleton::instance = &m_bandListModel;
+    BandConfigControllerQmlSingleton::instance = &m_bandConfigController;
 }
 
 } // namespace siriusscope::app

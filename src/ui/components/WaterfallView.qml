@@ -164,7 +164,7 @@ Item {
                 }
 
                 Repeater {
-                    model: Sirius.BandModel
+                    model: Sirius.BandListModel
                     delegate: Item {
                         id: bandOverlayDelegate
 

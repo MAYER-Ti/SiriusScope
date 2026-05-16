@@ -13,6 +13,7 @@ Window {
     property real thresholdAmplitude: 0
     property int inputAttenuatorDb: 0
     property int outputAttenuatorDb: 0
+    property string polarization: "horizontal"
     property real globalMinHz: 0
     property real globalMaxHz: 0
     property real minAmplitude: 0
@@ -23,7 +24,7 @@ Window {
     property bool _savedIndicatorActive: false
 
     signal saveRequested(int bandId, real centerHz, real widthHz, real thresholdAmplitude,
-                         int inputAttenuatorDb, int outputAttenuatorDb)
+                         int inputAttenuatorDb, int outputAttenuatorDb, string polarization)
     signal thresholdPreviewChanged(int bandId, real thresholdAmplitude)
     signal canceled(int bandId)
     signal windowClosed(int bandId)
@@ -32,7 +33,7 @@ Window {
     width: 520
     height: 460
     minimumWidth: 480
-    minimumHeight: 430
+    minimumHeight: 460
     modality: Qt.NonModal
     flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: Theme.panelBottom
@@ -43,6 +44,7 @@ Window {
         setFrequenciesHz(centerHz - widthHz * 0.5, centerHz + widthHz * 0.5)
         inputAttenuator.currentIndex = indexForAttenuator(inputAttenuatorDb)
         outputAttenuator.currentIndex = indexForAttenuator(outputAttenuatorDb)
+        polarizationMode.currentIndex = indexForPolarization(polarization)
         visible = true
     }
 
@@ -184,6 +186,23 @@ Window {
                     }
 
                     Label {
+                        text: qsTr("Тип поляризации")
+                        color: Theme.textSecondary
+                        font.family: Theme.monoFontFamily
+                        font.pixelSize: Theme.fontNormal
+                    }
+
+                    TextComboBox {
+                        id: polarizationMode
+                        Layout.fillWidth: true
+                        model: [
+                            { "value": "horizontal", "label": qsTr("Горизонтальная") },
+                            { "value": "vertical", "label": qsTr("Вертикальная") }
+                        ]
+                        onActivated: root._savedIndicatorActive = false
+                    }
+
+                    Label {
                         text: qsTr("Амплитудный фильтр")
                         color: Theme.textSecondary
                         font.family: Theme.monoFontFamily
@@ -310,8 +329,8 @@ Window {
                             saveRequested(root.bandId, nextCenterHz, nextWidthHz,
                                           root._thresholdDraft,
                                           Number(inputAttenuator.currentValue),
-                                          Number(outputAttenuator.currentValue))
-                            root._savedIndicatorActive = true
+                                          Number(outputAttenuator.currentValue),
+                                          currentPolarization())
                         }
                     }
                 }
@@ -427,6 +446,83 @@ Window {
         }
     }
 
+    component TextComboBox: ComboBox {
+        id: control
+        implicitHeight: 38
+        font.family: Theme.monoFontFamily
+        font.pixelSize: Theme.fontNormal
+
+        displayText: {
+            if (!model || currentIndex < 0 || currentIndex >= model.length) {
+                return ""
+            }
+            return model[currentIndex].label
+        }
+
+        contentItem: Text {
+            leftPadding: 10
+            rightPadding: control.indicator.width + 10
+            text: control.displayText
+            color: Theme.textPrimary
+            font: control.font
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        indicator: Text {
+            x: control.width - width - 10
+            y: (control.height - height) * 0.5
+            text: "\u25BE"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontNormal
+        }
+
+        background: Rectangle {
+            radius: Theme.radiusInset
+            color: control.down || control.popup.visible ? Theme.chipBackground : Theme.insetBackground
+            border.color: control.hovered || control.popup.visible ? Theme.signalCyan : Theme.panelBorder
+        }
+
+        delegate: ItemDelegate {
+            width: control.width
+            height: 38
+            highlighted: control.highlightedIndex === index
+
+            contentItem: Text {
+                text: modelData.label
+                color: parent.highlighted ? Theme.textPrimary : Theme.textSecondary
+                font.family: Theme.monoFontFamily
+                font.pixelSize: Theme.fontNormal
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 10
+            }
+
+            background: Rectangle {
+                color: parent.highlighted ? Theme.chipBackground : Theme.panelBottom
+            }
+        }
+
+        popup: Popup {
+            y: control.height + 2
+            width: control.width
+            implicitHeight: contentItem.implicitHeight
+            padding: 1
+
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: control.popup.visible ? control.delegateModel : null
+                currentIndex: control.highlightedIndex
+            }
+
+            background: Rectangle {
+                color: Theme.panelBottom
+                border.color: Theme.panelBorder
+                radius: Theme.radiusInset
+            }
+        }
+    }
+
     function setFrequenciesHz(leftHz, rightHz) {
         _updatingFields = true
         leftFrequencyField.text = hzToMhz(leftHz).toFixed(3)
@@ -468,6 +564,11 @@ Window {
             return false
         }
 
+        if (polarizationMode.currentIndex < 0) {
+            errorText.text = qsTr("Выберите тип поляризации.")
+            return false
+        }
+
         root._thresholdDraft = clampAmplitude(threshold)
         thresholdSlider.value = root._thresholdDraft
         errorText.text = ""
@@ -482,6 +583,16 @@ Window {
     function updateDraftFrequenciesHz(centerHz, widthHz) {
         _savedIndicatorActive = false
         setFrequenciesHz(centerHz - widthHz * 0.5, centerHz + widthHz * 0.5)
+    }
+
+    function markSettingsSaved() {
+        errorText.text = ""
+        _savedIndicatorActive = true
+    }
+
+    function showControllerError(message) {
+        _savedIndicatorActive = false
+        errorText.text = message
     }
 
     function parseNumber(text) {
@@ -504,6 +615,27 @@ Window {
         var values = [0, 10, 20, 30]
         for (var i = 0; i < values.length; i++) {
             if (values[i] === valueDb) {
+                return i
+            }
+        }
+        return 0
+    }
+
+    function currentPolarization() {
+        if (!polarizationMode.model || polarizationMode.currentIndex < 0
+                || polarizationMode.currentIndex >= polarizationMode.model.length) {
+            return "horizontal"
+        }
+        return polarizationMode.model[polarizationMode.currentIndex].value
+    }
+
+    function indexForPolarization(value) {
+        if (!polarizationMode.model) {
+            return 0
+        }
+        var normalized = String(value).toLowerCase()
+        for (var i = 0; i < polarizationMode.model.length; i++) {
+            if (polarizationMode.model[i].value === normalized) {
                 return i
             }
         }

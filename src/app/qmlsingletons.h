@@ -3,6 +3,8 @@
 
 #include "antennacontrollerstub.h"
 #include "appstate.h"
+#include "bandconfigcontroller.h"
+#include "bandlistmodel.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
@@ -134,6 +136,42 @@ public:
     inline static AntennaControllerStub *instance = nullptr;
 
     static AntennaControllerStub *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct BandListModelQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(BandListModel)
+    QML_NAMED_ELEMENT(BandListModel)
+    QML_SINGLETON
+
+public:
+    inline static BandListModel *instance = nullptr;
+
+    static BandListModel *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct BandConfigControllerQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(BandConfigController)
+    QML_NAMED_ELEMENT(BandConfigController)
+    QML_SINGLETON
+
+public:
+    inline static BandConfigController *instance = nullptr;
+
+    static BandConfigController *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);

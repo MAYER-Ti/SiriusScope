@@ -1,6 +1,8 @@
 #pragma once
 
 #include "antennacontrollerstub.h"
+#include "bandconfigcontroller.h"
+#include "bandlistmodel.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
@@ -29,6 +31,8 @@ public:
     SpectrumDecimator* spectrumDecimator() noexcept { return &m_spectrumDecimator; }
     WaterfallControllerStub* waterfallController() noexcept { return &m_waterfallController; }
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
+    BandListModel* bandListModel() noexcept { return &m_bandListModel; }
+    BandConfigController* bandConfigController() noexcept { return &m_bandConfigController; }
 
     infrastructure::IDiagnosticsSink* diagnosticsSink() noexcept
     {
@@ -61,6 +65,8 @@ private:
     std::unique_ptr<infrastructure::IWaterfallStorage> m_waterfallStorage;
     std::unique_ptr<hardware::IBcoControl> m_bcoControl;
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
+    BandListModel m_bandListModel;
+    BandConfigController m_bandConfigController;
 };
 
 } // namespace siriusscope::app
