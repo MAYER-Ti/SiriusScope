@@ -19,6 +19,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -107,8 +108,32 @@ private slots:
     void commitViewport();
 
 private:
+    struct HistoryLoadRequest
+    {
+        uint64_t requestId = 0;
+        WaterfallSessionId sessionId;
+        qint64 topUtcMs = 0;
+        qint64 bottomUtcMs = 0;
+        qint64 rowPeriodMs = 1000;
+        int visibleRowCount = 0;
+        int renderBinCount = 0;
+        double viewMinHz = 0.0;
+        double viewMaxHz = 0.0;
+    };
+
+    struct HistoryLoadResult
+    {
+        uint64_t requestId = 0;
+        QVector<WaterfallRowSlot> rowSlots;
+    };
+
     void enqueueSampleBatch(const hardware::BcoSampleBatch& batch);
     void processingLoop();
+    void startHistoryWorker();
+    void stopHistoryWorker();
+    void historyWorkerLoop();
+    HistoryLoadResult loadHistoryRows(const HistoryLoadRequest& request);
+    void applyHistoryLoadResult(HistoryLoadResult result);
     processing::SampleProcessingConfig makeProcessingConfig(
         const std::vector<core::BandConfig>& bandConfigs) const;
     void scheduleRetune(double minHz, double maxHz);
@@ -165,6 +190,13 @@ private:
     std::size_t m_droppedSampleCount = 0;
     bool m_workerRunning = false;
     bool m_stopRequested = false;
+
+    mutable std::mutex m_historyMutex;
+    std::condition_variable m_historyCondition;
+    std::thread m_historyWorker;
+    std::optional<HistoryLoadRequest> m_pendingHistoryRequest;
+    uint64_t m_latestHistoryRequestId = 0;
+    bool m_historyStopRequested = false;
 };
 
 } // namespace siriusscope::app

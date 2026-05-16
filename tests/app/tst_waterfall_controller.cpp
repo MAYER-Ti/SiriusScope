@@ -321,20 +321,28 @@ void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
 
     const std::uint64_t beforeScroll = buffer ? buffer->writeIndex() : 0;
     controller.scrollHistory(1000);
+    const bool olderRebuilt = waitUntil([buffer, beforeScroll] {
+        return buffer && buffer->writeIndex() >= beforeScroll + 1;
+    });
     const std::uint64_t afterOlderScroll = buffer ? buffer->writeIndex() : 0;
     controller.scrollHistory(1);
+    processEventsFor(50);
     const std::uint64_t afterOldestBoundary = buffer ? buffer->writeIndex() : 0;
     controller.scrollHistory(-1000);
+    const bool liveRebuilt = waitUntil([buffer, afterOldestBoundary] {
+        return buffer && buffer->writeIndex() >= afterOldestBoundary + 1;
+    });
     const std::uint64_t afterLiveScroll = buffer ? buffer->writeIndex() : 0;
     controller.scrollHistory(-1);
+    processEventsFor(50);
     const std::uint64_t afterLiveBoundary = buffer ? buffer->writeIndex() : 0;
 
     test.require(rowsReady, "controller appends enough rows for history scrolling");
-    test.require(afterOlderScroll == beforeScroll + 1,
+    test.require(olderRebuilt && afterOlderScroll == beforeScroll + 1,
                  "older-history scroll rebuilds render buffer once");
     test.require(afterOldestBoundary == afterOlderScroll,
                  "oldest-boundary scroll does not rebuild render buffer");
-    test.require(afterLiveScroll == afterOldestBoundary + 1,
+    test.require(liveRebuilt && afterLiveScroll == afterOldestBoundary + 1,
                  "scrolling back to live rebuilds render buffer once");
     test.require(afterLiveBoundary == afterLiveScroll,
                  "live-boundary scroll does not rebuild render buffer");

@@ -3,6 +3,7 @@
 
 #include <optional>
 
+#include <QMutex>
 #include <QString>
 #include <QVector>
 
@@ -159,6 +160,7 @@ private:
     qsizetype findSessionIndex(const WaterfallSessionId& id) const;
     void sortSessions();
 
+    mutable QMutex m_mutex;
     QVector<SessionData> m_sessions;
 };
 

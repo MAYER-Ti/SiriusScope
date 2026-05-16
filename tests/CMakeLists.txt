@@ -64,6 +64,23 @@ target_link_libraries(tst_architecture_baseline
 
 add_test(NAME tst_architecture_baseline COMMAND tst_architecture_baseline)
 
+add_executable(tst_binary_waterfall_session_storage
+    infrastructure/tst_binary_waterfall_session_storage.cpp
+)
+
+target_link_libraries(tst_binary_waterfall_session_storage
+    PRIVATE
+        Qt6::Core
+        siriusscope_infrastructure
+)
+
+target_include_directories(tst_binary_waterfall_session_storage
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_binary_waterfall_session_storage COMMAND tst_binary_waterfall_session_storage)
+
 add_executable(tst_waterfall_history
     app/tst_waterfall_history.cpp
     ../src/app/waterfallhistorymodel.cpp
@@ -291,6 +308,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_waterfall_timeline PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_binary_waterfall_session_storage PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_waterfall_row_resampler PROPERTIES

@@ -100,6 +100,14 @@ set(SIRIUSSCOPE_INFRASTRUCTURE_INTERFACE_SOURCES
     src/infrastructure/interfaces/waterfall_storage.h
 )
 
+set(SIRIUSSCOPE_INFRASTRUCTURE_SOURCES
+    src/infrastructure/storage/binary_waterfall_session_storage.h
+    src/infrastructure/storage/binary_waterfall_session_storage.cpp
+    src/infrastructure/storage/waterfall_storage_format.h
+    src/infrastructure/storage/waterfall_storage_paths.h
+    src/infrastructure/storage/waterfall_storage_paths.cpp
+)
+
 add_library(siriusscope_core STATIC
     ${SIRIUSSCOPE_CORE_SOURCES}
 )
@@ -170,6 +178,25 @@ target_link_libraries(siriusscope_infrastructure_iface
         siriusscope_processing_iface
 )
 
+add_library(siriusscope_infrastructure STATIC
+    ${SIRIUSSCOPE_INFRASTRUCTURE_SOURCES}
+)
+
+target_compile_features(siriusscope_infrastructure
+    PUBLIC cxx_std_20
+)
+
+target_include_directories(siriusscope_infrastructure
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(siriusscope_infrastructure
+    PUBLIC
+        Qt6::Core
+        siriusscope_infrastructure_iface
+)
+
 add_library(siriusscope_hardware STATIC
     ${SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES}
 )
@@ -203,6 +230,7 @@ target_link_libraries(siriusscope_application
         siriusscope_core
         siriusscope_processing_iface
         siriusscope_infrastructure_iface
+        siriusscope_infrastructure
         siriusscope_hardware
 )
 

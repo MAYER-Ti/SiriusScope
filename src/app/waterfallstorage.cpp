@@ -75,6 +75,7 @@ void InMemoryWaterfallStorage::appendRows(const QVector<WaterfallRow>& rows)
 
 QVector<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::listSessions() const
 {
+    QMutexLocker lock(&m_mutex);
     QVector<WaterfallSessionMetadata> sessions;
     sessions.reserve(m_sessions.size());
     for (const auto& sessionData : m_sessions) {
@@ -87,6 +88,7 @@ QVector<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::listSessions(
 std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::session(
     const WaterfallSessionId& id) const
 {
+    QMutexLocker lock(&m_mutex);
     const qsizetype index = findSessionIndex(id);
     if (index < 0) {
         return std::nullopt;
@@ -96,6 +98,7 @@ std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::session
 
 std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::latestSession() const
 {
+    QMutexLocker lock(&m_mutex);
     if (m_sessions.isEmpty()) {
         return std::nullopt;
     }
@@ -109,18 +112,26 @@ std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::latestS
 std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::previousSession(
     const WaterfallSessionId& id) const
 {
-    const auto current = session(id);
-    if (!current) {
-        return latestSession();
+    QMutexLocker lock(&m_mutex);
+    const qsizetype currentIndex = findSessionIndex(id);
+    if (currentIndex < 0) {
+        if (m_sessions.isEmpty()) {
+            return std::nullopt;
+        }
+        return std::max_element(m_sessions.cbegin(), m_sessions.cend(), [](const auto& lhs,
+                                                                           const auto& rhs) {
+            return sessionEarlier(lhs.metadata, rhs.metadata);
+        })->metadata;
     }
 
+    const auto current = m_sessions.at(currentIndex).metadata;
     std::optional<WaterfallSessionMetadata> previous;
     for (const auto& sessionData : m_sessions) {
         const auto& candidate = sessionData.metadata;
         if (candidate.id == id) {
             continue;
         }
-        if (!sessionEarlier(candidate, *current)) {
+        if (!sessionEarlier(candidate, current)) {
             continue;
         }
         if (!previous || sessionEarlier(*previous, candidate)) {
@@ -133,18 +144,20 @@ std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::previou
 std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::nextSession(
     const WaterfallSessionId& id) const
 {
-    const auto current = session(id);
-    if (!current) {
+    QMutexLocker lock(&m_mutex);
+    const qsizetype currentIndex = findSessionIndex(id);
+    if (currentIndex < 0) {
         return std::nullopt;
     }
 
+    const auto current = m_sessions.at(currentIndex).metadata;
     std::optional<WaterfallSessionMetadata> next;
     for (const auto& sessionData : m_sessions) {
         const auto& candidate = sessionData.metadata;
         if (candidate.id == id) {
             continue;
         }
-        if (!sessionEarlier(*current, candidate)) {
+        if (!sessionEarlier(current, candidate)) {
             continue;
         }
         if (!next || sessionEarlier(candidate, *next)) {
@@ -157,6 +170,7 @@ std::optional<WaterfallSessionMetadata> InMemoryWaterfallSessionStorage::nextSes
 WaterfallSessionMetadata InMemoryWaterfallSessionStorage::startSession(
     WaterfallSessionMetadata metadata)
 {
+    QMutexLocker lock(&m_mutex);
     if (!metadata.id.isValid()) {
         metadata.id = generatedSessionId(metadata.startUtcMs, m_sessions.size());
     }
@@ -180,6 +194,7 @@ WaterfallSessionMetadata InMemoryWaterfallSessionStorage::startSession(
 bool InMemoryWaterfallSessionStorage::closeSession(const WaterfallSessionId& id,
                                                    qint64 endUtcMs)
 {
+    QMutexLocker lock(&m_mutex);
     const qsizetype index = findSessionIndex(id);
     if (index < 0) {
         return false;
@@ -194,6 +209,7 @@ bool InMemoryWaterfallSessionStorage::closeSession(const WaterfallSessionId& id,
 void InMemoryWaterfallSessionStorage::appendRow(const WaterfallSessionId& id,
                                                 const WaterfallRow& row)
 {
+    QMutexLocker lock(&m_mutex);
     const qsizetype index = findSessionIndex(id);
     if (index < 0) {
         return;
@@ -225,6 +241,7 @@ QVector<WaterfallRow> InMemoryWaterfallSessionStorage::loadRows(
     qint64 toUtcMs,
     int maxRows) const
 {
+    QMutexLocker lock(&m_mutex);
     QVector<WaterfallRow> result;
     const qsizetype index = findSessionIndex(id);
     if (index < 0) {
@@ -251,6 +268,7 @@ QVector<WaterfallRow> InMemoryWaterfallSessionStorage::loadRows(
 
 int InMemoryWaterfallSessionStorage::rowCount(const WaterfallSessionId& id) const
 {
+    QMutexLocker lock(&m_mutex);
     const qsizetype index = findSessionIndex(id);
     return index < 0 ? 0 : static_cast<int>(m_sessions.at(index).rows.size());
 }

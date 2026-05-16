@@ -1,16 +1,40 @@
 #include "applicationbootstrap.h"
 
 #include "appstate.h"
+#include "infrastructure/storage/binary_waterfall_session_storage.h"
 #include "qmlsingletons.h"
 
+#include <QDir>
 #include <QObject>
+#include <QStandardPaths>
 
 namespace siriusscope::app {
+namespace {
+
+QString defaultWaterfallDataRootPath()
+{
+    const QString appDataPath =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (!appDataPath.isEmpty()) {
+        return QDir(appDataPath).filePath(QStringLiteral("SiriusScopeData"));
+    }
+
+    return QDir(QDir::currentPath()).filePath(QStringLiteral("SiriusScopeData"));
+}
+
+} // namespace
 
 ApplicationBootstrap::ApplicationBootstrap()
     : m_diagnosticsSink(std::make_unique<infrastructure::NullDiagnosticsSink>())
     , m_waterfallStorage(std::make_unique<infrastructure::NullWaterfallStorage>())
-    , m_waterfallSessionStorage(std::make_unique<InMemoryWaterfallSessionStorage>())
+    , m_waterfallSessionStorage(
+          std::make_unique<infrastructure::BinaryWaterfallSessionStorage>(
+              infrastructure::BinaryWaterfallSessionStorage::Config{
+                  defaultWaterfallDataRootPath(),
+                  20,
+                  false,
+              },
+              m_diagnosticsSink.get()))
     , m_bcoSampleSource(std::make_unique<hardware::SimulatorBcoSampleSource>(
           hardware::SimulatorBcoSampleSourceConfig{},
           m_diagnosticsSink.get()))

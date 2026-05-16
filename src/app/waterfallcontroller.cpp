@@ -117,6 +117,7 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
 
     m_processingConfig = makeProcessingConfig(bandConfigs);
 
+    startHistoryWorker();
     reloadHistoryFromStorage();
     updateRenderBuffer();
 
@@ -128,6 +129,7 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
 WaterfallController::~WaterfallController()
 {
     stop();
+    stopHistoryWorker();
 }
 
 QObject* WaterfallController::ringBuffer() const
@@ -241,6 +243,119 @@ void WaterfallController::setBandConfigs(std::vector<core::BandConfig> bandConfi
     }
 
     m_workerCondition.notify_all();
+}
+
+void WaterfallController::startHistoryWorker()
+{
+    std::lock_guard lock(m_historyMutex);
+    if (m_historyWorker.joinable()) {
+        return;
+    }
+
+    m_historyStopRequested = false;
+    m_historyWorker = std::thread(&WaterfallController::historyWorkerLoop, this);
+}
+
+void WaterfallController::stopHistoryWorker()
+{
+    {
+        std::lock_guard lock(m_historyMutex);
+        m_historyStopRequested = true;
+        m_pendingHistoryRequest.reset();
+    }
+    m_historyCondition.notify_all();
+
+    if (m_historyWorker.joinable() && m_historyWorker.get_id() != std::this_thread::get_id()) {
+        m_historyWorker.join();
+    }
+
+    {
+        std::lock_guard lock(m_historyMutex);
+        m_historyStopRequested = false;
+    }
+}
+
+void WaterfallController::historyWorkerLoop()
+{
+    for (;;) {
+        std::optional<HistoryLoadRequest> request;
+        {
+            std::unique_lock lock(m_historyMutex);
+            m_historyCondition.wait(lock, [this] {
+                return m_historyStopRequested || m_pendingHistoryRequest.has_value();
+            });
+
+            if (m_historyStopRequested) {
+                break;
+            }
+
+            request = std::move(m_pendingHistoryRequest);
+            m_pendingHistoryRequest.reset();
+        }
+
+        if (!request) {
+            continue;
+        }
+
+        auto result = loadHistoryRows(*request);
+        QMetaObject::invokeMethod(this,
+                                  [this, result = std::move(result)]() mutable {
+                                      applyHistoryLoadResult(std::move(result));
+                                  },
+                                  Qt::QueuedConnection);
+    }
+}
+
+WaterfallController::HistoryLoadResult WaterfallController::loadHistoryRows(
+    const HistoryLoadRequest& request)
+{
+    HistoryLoadResult result;
+    result.requestId = request.requestId;
+    result.rowSlots = QVector<WaterfallRowSlot>(request.visibleRowCount);
+
+    if (!m_sessionStorage || !request.sessionId.isValid() || request.visibleRowCount <= 0) {
+        return result;
+    }
+
+    const WaterfallTimelineMapper mapper(request.topUtcMs,
+                                         request.rowPeriodMs,
+                                         request.visibleRowCount,
+                                         request.visibleRowCount);
+    const qint64 marginMs = std::max<qint64>(1, request.rowPeriodMs / 2);
+    const auto rows = m_sessionStorage->loadRows(request.sessionId,
+                                                 request.bottomUtcMs - marginMs,
+                                                 request.topUtcMs + marginMs,
+                                                 request.visibleRowCount * 2);
+
+    for (const auto& row : rows) {
+        const int slotIndex = mapper.rowIndexForUtcMs(row.utcMs);
+        if (slotIndex < 0 || slotIndex >= result.rowSlots.size()) {
+            continue;
+        }
+
+        WaterfallRow projected = row;
+        projected.viewMinHz = request.viewMinHz;
+        projected.viewMaxHz = request.viewMaxHz;
+        projected.bins = WaterfallRowResampler::resample(row,
+                                                         request.viewMinHz,
+                                                         request.viewMaxHz,
+                                                         request.renderBinCount);
+        result.rowSlots[slotIndex] = WaterfallRowSlot{true, std::move(projected)};
+    }
+
+    return result;
+}
+
+void WaterfallController::applyHistoryLoadResult(HistoryLoadResult result)
+{
+    if (result.requestId != m_latestHistoryRequestId || !m_ringBuffer) {
+        return;
+    }
+
+    m_ringBuffer->replaceSlots(result.rowSlots, ++m_generationId);
+    ++m_timeTicksVersion;
+    emit timeTicksChanged();
+    setHistoryLoading(false);
 }
 
 QVariantList WaterfallController::visibleTimeTicks(int pixelHeight) const
@@ -558,40 +673,32 @@ void WaterfallController::updateRenderBuffer()
         return;
     }
 
-    QVector<WaterfallRowSlot> rowSlots(m_timelineViewport.visibleRowCount());
-
-    if (m_sessionStorage && m_timelineViewport.hasSession()) {
-        const WaterfallTimelineMapper mapper(m_timelineViewport.topUtcMs(),
-                                             m_timelineViewport.rowPeriodMs(),
-                                             m_timelineViewport.visibleRowCount(),
-                                             m_timelineViewport.visibleRowCount());
-        const qint64 marginMs = std::max<qint64>(1, m_timelineViewport.rowPeriodMs() / 2);
-        const auto rows = m_sessionStorage->loadRows(
-            m_timelineViewport.sessionId(),
-            m_timelineViewport.bottomUtcMs() - marginMs,
-            m_timelineViewport.topUtcMs() + marginMs,
-            m_timelineViewport.visibleRowCount() * 2);
-
-        for (const auto& row : rows) {
-            const int slotIndex = mapper.rowIndexForUtcMs(row.utcMs);
-            if (slotIndex < 0 || slotIndex >= rowSlots.size()) {
-                continue;
-            }
-
-            WaterfallRow projected = row;
-            projected.viewMinHz = m_viewMinHz;
-            projected.viewMaxHz = m_viewMaxHz;
-            projected.bins = WaterfallRowResampler::resample(row,
-                                                             m_viewMinHz,
-                                                             m_viewMaxHz,
-                                                             m_ringBuffer->nbins());
-            rowSlots[slotIndex] = WaterfallRowSlot{true, std::move(projected)};
-        }
+    if (!m_sessionStorage || !m_timelineViewport.hasSession()) {
+        m_ringBuffer->replaceSlots(QVector<WaterfallRowSlot>(m_timelineViewport.visibleRowCount()),
+                                   ++m_generationId);
+        ++m_timeTicksVersion;
+        emit timeTicksChanged();
+        setHistoryLoading(false);
+        return;
     }
 
-    m_ringBuffer->replaceSlots(rowSlots, ++m_generationId);
-    ++m_timeTicksVersion;
-    emit timeTicksChanged();
+    HistoryLoadRequest request;
+    request.requestId = ++m_latestHistoryRequestId;
+    request.sessionId = m_timelineViewport.sessionId();
+    request.topUtcMs = m_timelineViewport.topUtcMs();
+    request.bottomUtcMs = m_timelineViewport.bottomUtcMs();
+    request.rowPeriodMs = m_timelineViewport.rowPeriodMs();
+    request.visibleRowCount = m_timelineViewport.visibleRowCount();
+    request.renderBinCount = m_ringBuffer->nbins();
+    request.viewMinHz = m_viewMinHz;
+    request.viewMaxHz = m_viewMaxHz;
+
+    {
+        std::lock_guard lock(m_historyMutex);
+        m_pendingHistoryRequest = request;
+    }
+    setHistoryLoading(true);
+    m_historyCondition.notify_one();
 }
 
 void WaterfallController::notifyPresentationChanged(bool previousLiveMode,

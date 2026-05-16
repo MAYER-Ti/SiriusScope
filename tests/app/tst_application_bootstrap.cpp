@@ -2,6 +2,7 @@
 #include "app/qmlsingletons.h"
 
 #include <QCoreApplication>
+#include <QStandardPaths>
 
 #include <cstdlib>
 #include <iostream>
@@ -86,6 +87,7 @@ void testBootstrapProvidesObjects(TestRunner& test)
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+    QStandardPaths::setTestModeEnabled(true);
     TestRunner test;
 
     testBootstrapProvidesObjects(test);
