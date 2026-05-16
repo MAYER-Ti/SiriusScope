@@ -5,6 +5,9 @@
 
 #include <cstdint>
 
+inline constexpr uint16_t kWaterfallRenderAmplitudeMin = 1;
+inline constexpr uint16_t kWaterfallRenderAmplitudeMax = 127;
+
 struct WaterfallBeamBin
 {
     uint16_t left = 0;

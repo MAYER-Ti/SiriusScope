@@ -11,7 +11,8 @@ uint16_t interpolateValue(uint16_t leftValue, uint16_t rightValue, double frac)
 {
     const double value = static_cast<double>(leftValue) * (1.0 - frac)
         + static_cast<double>(rightValue) * frac;
-    return static_cast<uint16_t>(std::clamp(std::lround(value), 0L, 65535L));
+    return static_cast<uint16_t>(
+        std::clamp(std::lround(value), 0L, static_cast<long>(kWaterfallRenderAmplitudeMax)));
 }
 
 WaterfallBeamBin interpolateBins(const QVector<WaterfallBeamBin>& bins, double sourceBin)

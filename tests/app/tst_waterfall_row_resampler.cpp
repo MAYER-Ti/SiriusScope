@@ -47,7 +47,7 @@ bool allZero(const QVector<WaterfallBeamBin>& values)
 
 void testMatchingRange(TestRunner& test)
 {
-    const WaterfallRow row = makeRow(100.0, 200.0, {{0, 10}, {1000, 900}, {2000, 1800}});
+    const WaterfallRow row = makeRow(100.0, 200.0, {{0, 10}, {20, 18}, {40, 36}});
     const auto result = WaterfallRowResampler::resample(row, 100.0, 200.0, 3);
 
     test.require(result == row.bins, "matching range preserves two-beam bins");
@@ -57,21 +57,21 @@ void testZoomIn(TestRunner& test)
 {
     const WaterfallRow row = makeRow(100.0,
                                      200.0,
-                                     {{0, 4000}, {1000, 3000}, {2000, 2000}, {3000, 1000}, {4000, 0}});
+                                     {{0, 80}, {20, 60}, {40, 40}, {60, 20}, {80, 0}});
     const auto result = WaterfallRowResampler::resample(row, 125.0, 175.0, 3);
 
     test.require(result.size() == 3, "zoom-in result has requested size");
-    test.require(result.at(0) == WaterfallBeamBin{1000, 3000},
+    test.require(result.at(0) == WaterfallBeamBin{20, 60},
                  "zoom-in interpolates left edge for both beams");
-    test.require(result.at(1) == WaterfallBeamBin{2000, 2000},
+    test.require(result.at(1) == WaterfallBeamBin{40, 40},
                  "zoom-in interpolates middle for both beams");
-    test.require(result.at(2) == WaterfallBeamBin{3000, 1000},
+    test.require(result.at(2) == WaterfallBeamBin{60, 20},
                  "zoom-in interpolates right edge for both beams");
 }
 
 void testTargetWiderThanSource(TestRunner& test)
 {
-    const WaterfallRow row = makeRow(100.0, 200.0, {{100, 300}, {200, 400}, {300, 500}});
+    const WaterfallRow row = makeRow(100.0, 200.0, {{10, 30}, {20, 40}, {30, 50}});
     const auto result = WaterfallRowResampler::resample(row, 50.0, 250.0, 5);
 
     test.require(result.size() == 5, "wider target result has requested size");
@@ -83,7 +83,7 @@ void testTargetWiderThanSource(TestRunner& test)
 
 void testNoIntersection(TestRunner& test)
 {
-    const WaterfallRow row = makeRow(100.0, 200.0, {{100, 200}, {200, 300}, {300, 400}});
+    const WaterfallRow row = makeRow(100.0, 200.0, {{10, 20}, {20, 30}, {30, 40}});
     const auto result = WaterfallRowResampler::resample(row, 300.0, 400.0, 6);
 
     test.require(result.size() == 6, "non-intersection result has requested size");
@@ -92,17 +92,17 @@ void testNoIntersection(TestRunner& test)
 
 void testInvalidRangesAndSingleBin(TestRunner& test)
 {
-    const WaterfallRow invalidSource = makeRow(200.0, 100.0, {{100, 200}, {200, 300}});
+    const WaterfallRow invalidSource = makeRow(200.0, 100.0, {{10, 20}, {20, 30}});
     const auto invalidSourceResult =
         WaterfallRowResampler::resample(invalidSource, 100.0, 200.0, 4);
     test.require(allZero(invalidSourceResult), "invalid source range returns zero result");
 
-    const WaterfallRow row = makeRow(100.0, 200.0, {{100, 200}, {200, 300}, {300, 400}});
+    const WaterfallRow row = makeRow(100.0, 200.0, {{10, 20}, {20, 30}, {30, 40}});
     const auto invalidTargetResult = WaterfallRowResampler::resample(row, 200.0, 100.0, 4);
     test.require(allZero(invalidTargetResult), "invalid target range returns zero result");
 
     const auto singleBinResult = WaterfallRowResampler::resample(row, 100.0, 200.0, 1);
-    test.require(singleBinResult.size() == 1 && singleBinResult.first() == WaterfallBeamBin{100, 200},
+    test.require(singleBinResult.size() == 1 && singleBinResult.first() == WaterfallBeamBin{10, 20},
                  "single output bin samples target minimum");
 }
 

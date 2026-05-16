@@ -38,10 +38,14 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/spectrumdecimator.cpp
     src/app/syntheticwaterfalldatasource.h
     src/app/syntheticwaterfalldatasource.cpp
+    src/app/waterfallcontroller.h
+    src/app/waterfallcontroller.cpp
     src/app/waterfallcontrollerstub.h
     src/app/waterfallcontrollerstub.cpp
     src/app/waterfallcolormapper.h
     src/app/waterfallcolormapper.cpp
+    src/app/waterfallrenderbufferadapter.h
+    src/app/waterfallrenderbufferadapter.cpp
     src/app/waterfallrowresampler.h
     src/app/waterfallrowresampler.cpp
     src/app/waterfallhistorymodel.h

@@ -20,12 +20,16 @@ uint8_t alphaForBrightness(double brightness)
     if (brightness <= 0.0) {
         return 0;
     }
-    return toByte(std::clamp(0.20 + brightness * 0.80, 0.0, 1.0));
+    return 255;
 }
 
 double normalizedBrightness(const WaterfallBeamBin& bin, const WaterfallColorParams& params)
 {
     const uint16_t amplitude = std::max(bin.left, bin.right);
+    if (amplitude == 0) {
+        return 0.0;
+    }
+
     const double minAmplitude = static_cast<double>(params.amplitudeMin);
     const double maxAmplitude = static_cast<double>(params.amplitudeMax);
     if (maxAmplitude <= minAmplitude) {
@@ -34,15 +38,20 @@ double normalizedBrightness(const WaterfallBeamBin& bin, const WaterfallColorPar
 
     const double normalized = clamp01((static_cast<double>(amplitude) - minAmplitude)
                                       / (maxAmplitude - minAmplitude));
-    return std::pow(normalized, std::max(0.01, params.gamma));
+    const double shaped = std::pow(normalized, std::max(0.01, params.gamma));
+    return std::clamp(0.08 + shaped * 0.92, 0.0, 1.0);
 }
 
 double directionValue(const WaterfallBeamBin& bin, const WaterfallColorParams& params)
 {
-    constexpr double kEpsilon = 1.0e-9;
     const double left = static_cast<double>(bin.left);
     const double right = static_cast<double>(bin.right);
-    const double raw = (right - left) / (right + left + kEpsilon);
+    const double denominator = left + right;
+    if (denominator <= 0.0) {
+        return 0.0;
+    }
+
+    const double raw = (left - right) / denominator;
     const double deadZone = clamp01(params.directionDeadZone);
     const double absRaw = std::abs(raw);
 
@@ -67,17 +76,17 @@ Rgba8 WaterfallColorMapper::map(const WaterfallBeamBin& bin, const WaterfallColo
         const double direction = directionValue(bin, params);
         const double mixFactor = clamp01(std::abs(direction) * params.directionalAlpha);
 
-        if (direction < 0.0) {
+        if (direction > 0.0) {
             const double targetR = brightness;
-            const double targetG = brightness * 0.18;
-            const double targetB = brightness * 0.12;
+            const double targetG = brightness * 0.35;
+            const double targetB = brightness * 0.18;
             r = r * (1.0 - mixFactor) + targetR * mixFactor;
             g = g * (1.0 - mixFactor) + targetG * mixFactor;
             b = b * (1.0 - mixFactor) + targetB * mixFactor;
-        } else if (direction > 0.0) {
-            const double targetR = brightness * 0.12;
+        } else if (direction < 0.0) {
+            const double targetR = brightness * 0.16;
             const double targetG = brightness;
-            const double targetB = brightness * 0.18;
+            const double targetB = brightness * 0.35;
             r = r * (1.0 - mixFactor) + targetR * mixFactor;
             g = g * (1.0 - mixFactor) + targetG * mixFactor;
             b = b * (1.0 - mixFactor) + targetB * mixFactor;

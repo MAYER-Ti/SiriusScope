@@ -7,8 +7,8 @@
 
 struct WaterfallColorParams
 {
-    uint16_t amplitudeMin = 0;
-    uint16_t amplitudeMax = 65535;
+    uint16_t amplitudeMin = kWaterfallRenderAmplitudeMin;
+    uint16_t amplitudeMax = kWaterfallRenderAmplitudeMax;
     double gamma = 0.7;
     double directionDeadZone = 0.10;
     double directionalAlpha = 0.35;

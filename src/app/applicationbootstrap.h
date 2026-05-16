@@ -7,7 +7,7 @@
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
-#include "waterfallcontrollerstub.h"
+#include "waterfallcontroller.h"
 
 #include "hardware/interfaces/antenna_azimuth_source.h"
 #include "hardware/interfaces/antenna_control.h"
@@ -36,7 +36,7 @@ public:
     FrequencyGridModel* frequencyGridModel() noexcept { return &m_frequencyGridModel; }
     SpectrumControllerStub* spectrumController() noexcept { return &m_spectrumController; }
     SpectrumDecimator* spectrumDecimator() noexcept { return &m_spectrumDecimator; }
-    WaterfallControllerStub* waterfallController() noexcept { return &m_waterfallController; }
+    WaterfallController* waterfallController() noexcept { return m_waterfallController.get(); }
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
     BandListModel* bandListModel() noexcept { return &m_bandListModel; }
     BandConfigController* bandConfigController() noexcept { return &m_bandConfigController; }
@@ -76,7 +76,6 @@ private:
     FrequencyGridModel m_frequencyGridModel;
     SpectrumControllerStub m_spectrumController;
     SpectrumDecimator m_spectrumDecimator;
-    WaterfallControllerStub m_waterfallController;
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::IDiagnosticsSink> m_diagnosticsSink;
     std::unique_ptr<infrastructure::IWaterfallStorage> m_waterfallStorage;
@@ -87,6 +86,7 @@ private:
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
     BandListModel m_bandListModel;
     BandConfigController m_bandConfigController;
+    std::unique_ptr<WaterfallController> m_waterfallController;
 };
 
 } // namespace siriusscope::app

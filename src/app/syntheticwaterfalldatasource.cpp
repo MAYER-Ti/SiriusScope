@@ -34,7 +34,14 @@ int findBandIndex(double frequencyHz, const QVector<SyntheticBandRange>& bands)
 
 uint16_t toAmplitude(double normalized)
 {
-    return static_cast<uint16_t>(std::clamp(normalized, 0.0, 1.0) * 65535.0);
+    const double clamped = std::clamp(normalized, 0.0, 1.0);
+    if (clamped <= 0.0) {
+        return 0;
+    }
+
+    return static_cast<uint16_t>(
+        kWaterfallRenderAmplitudeMin
+        + std::lround(clamped * (kWaterfallRenderAmplitudeMax - kWaterfallRenderAmplitudeMin)));
 }
 
 WaterfallBeamBin splitByDirection(double amplitude, double directionBias)
@@ -49,9 +56,11 @@ WaterfallBeamBin splitByDirection(double amplitude, double directionBias)
 void addBin(WaterfallBeamBin& destination, const WaterfallBeamBin& source)
 {
     destination.left = static_cast<uint16_t>(
-        std::min<int>(65535, static_cast<int>(destination.left) + source.left));
+        std::min<int>(kWaterfallRenderAmplitudeMax,
+                      static_cast<int>(destination.left) + source.left));
     destination.right = static_cast<uint16_t>(
-        std::min<int>(65535, static_cast<int>(destination.right) + source.right));
+        std::min<int>(kWaterfallRenderAmplitudeMax,
+                      static_cast<int>(destination.right) + source.right));
 }
 
 SyntheticWaterfallSourceConfig defaultConfig()

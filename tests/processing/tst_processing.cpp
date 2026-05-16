@@ -114,6 +114,18 @@ bool hasMissingWaterfallCell(const WaterfallRow& row)
     });
 }
 
+const WaterfallCell* findValidWaterfallCell(const WaterfallRow* row)
+{
+    if (!row) {
+        return nullptr;
+    }
+
+    const auto found = std::find_if(row->cells.begin(), row->cells.end(), [](const auto& cell) {
+        return cell.status == WaterfallCellStatus::Valid;
+    });
+    return found == row->cells.end() ? nullptr : &(*found);
+}
+
 void testValidSamplePassesProcessing(TestRunner& test)
 {
     const auto config = makeConfig();
@@ -320,6 +332,55 @@ void testEmptyBatchDiagnostic(TestRunner& test)
     test.require(result.hasDiagnostic(ProcessingErrorCode::EmptyBatch), "empty batch is diagnosed");
 }
 
+void testSimulatorLikeBatchProducesWaterfallFrame(TestRunner& test)
+{
+    const auto config = makeConfig();
+    SampleProcessor processor(config);
+
+    const auto result = processor.processBatch(
+        SampleBatch{{makeSample(config, 1, 0, 0, 0, 80),
+                     makeSample(config, 1, 0, 1, 0, 70),
+                     makeSample(config, 2, 1, 0, 0, 60),
+                     makeSample(config, 2, 1, 1, 0, 55)}});
+
+    test.require(result.hasAcceptedSamples(), "simulator-like batch has accepted samples");
+    test.require(!result.waterfallFrame.rows.empty(),
+                 "simulator-like batch produces a non-empty WaterfallFrame");
+}
+
+void testSingleBeamWaterfallCellKeepsUsefulSignal(TestRunner& test)
+{
+    const auto config = makeConfig();
+    SampleProcessor processor(config);
+
+    const auto result = processor.processSample(makeSample(config, 1, 0, 0, 0, 42));
+    const auto* cell = findValidWaterfallCell(findWaterfallRow(result, 0));
+
+    test.require(cell != nullptr, "single-beam row has a valid cell");
+    test.require(cell != nullptr && cell->beamPresent.size() >= 2
+                     && cell->beamPresent[0] && !cell->beamPresent[1],
+                 "single-beam cell marks only beam 0 present");
+    test.require(cell != nullptr && cell->beamAmplitudes[0] == 42,
+                 "single-beam cell keeps useful amplitude");
+}
+
+void testTwoBeamWaterfallCellKeepsDirectionalInput(TestRunner& test)
+{
+    const auto config = makeConfig();
+    SampleProcessor processor(config);
+
+    const auto result = processor.processBatch(
+        SampleBatch{{makeSample(config, 1, 0, 0, 0, 90),
+                     makeSample(config, 1, 0, 1, 0, 30)}});
+    const auto* cell = findValidWaterfallCell(findWaterfallRow(result, 0));
+
+    test.require(cell != nullptr && cell->beamPresent[0] && cell->beamPresent[1],
+                 "two-beam cell marks both beams present");
+    test.require(cell != nullptr && cell->beamAmplitudes[0] == 90
+                     && cell->beamAmplitudes[1] == 30,
+                 "two-beam cell preserves directional amplitudes");
+}
+
 } // namespace
 
 int main()
@@ -341,6 +402,9 @@ int main()
     testBearingFrameCreatedForTwoBeams(test);
     testMissingBearingBeamDiagnosed(test);
     testEmptyBatchDiagnostic(test);
+    testSimulatorLikeBatchProducesWaterfallFrame(test);
+    testSingleBeamWaterfallCellKeepsUsefulSignal(test);
+    testTwoBeamWaterfallCellKeepsDirectionalInput(test);
 
     return test.result();
 }

@@ -9,7 +9,7 @@
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
-#include "waterfallcontrollerstub.h"
+#include "waterfallcontroller.h"
 
 #include <QJSEngine>
 #include <QQmlEngine>
@@ -110,14 +110,14 @@ public:
 struct WaterfallControllerQmlSingleton
 {
     Q_GADGET
-    QML_FOREIGN(WaterfallControllerStub)
+    QML_FOREIGN(WaterfallController)
     QML_NAMED_ELEMENT(WaterfallController)
     QML_SINGLETON
 
 public:
-    inline static WaterfallControllerStub *instance = nullptr;
+    inline static WaterfallController *instance = nullptr;
 
-    static WaterfallControllerStub *create(QQmlEngine *, QJSEngine *engine)
+    static WaterfallController *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
