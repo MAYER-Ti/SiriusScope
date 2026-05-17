@@ -38,6 +38,11 @@ bool magicEquals(const char* actual, const char* expected)
     return std::memcmp(actual, expected, 8) == 0;
 }
 
+bool isSupportedFormatVersion(std::uint32_t version)
+{
+    return version == kFormatVersion || version == kLegacyFormatVersion;
+}
+
 ResultTableBinFileHeader binHeader()
 {
     ResultTableBinFileHeader header{};
@@ -203,7 +208,7 @@ std::vector<core::ResultTableRow> BinaryResultTableStorage::readAll()
             break;
         }
         if (header.recordMagic != kResultTableRecordMagic
-            || header.recordVersion != kFormatVersion
+            || !isSupportedFormatVersion(header.recordVersion)
             || header.payloadSizeBytes > static_cast<std::uint32_t>(kMaxRecordPayloadBytes)) {
             publishWarning(QStringLiteral("Corrupted result table record at offset %1")
                                .arg(recordOffset));
@@ -218,7 +223,7 @@ std::vector<core::ResultTableRow> BinaryResultTableStorage::readAll()
             break;
         }
 
-        const auto row = deserializeRow(payload);
+        const auto row = deserializeRow(payload, header.recordVersion);
         if (!row) {
             publishWarning(QStringLiteral("Cannot deserialize result table record at offset %1")
                                .arg(recordOffset));
@@ -299,7 +304,22 @@ bool BinaryResultTableStorage::ensureBinHeader(QFile& file) const
         }
         return written;
     }
-    return readBinHeader(file, true);
+
+    auto header = readBinHeaderValue(file, true);
+    if (!header) {
+        return false;
+    }
+    if (header->formatVersion == kLegacyFormatVersion) {
+        header->formatVersion = kFormatVersion;
+        if (!file.seek(0) || !writeStruct(file, *header)) {
+            publishError(QStringLiteral("Cannot upgrade result_table.bin header"));
+            return false;
+        }
+        file.flush();
+        publishInfo(QStringLiteral("Result table binary file upgraded to format v%1")
+                        .arg(kFormatVersion));
+    }
+    return true;
 }
 
 bool BinaryResultTableStorage::ensureIndexHeader(QFile& file) const
@@ -307,16 +327,32 @@ bool BinaryResultTableStorage::ensureIndexHeader(QFile& file) const
     if (file.size() == 0) {
         return file.seek(0) && writeStruct(file, indexHeader());
     }
-    return readIndexHeader(file, true);
+
+    auto header = readIndexHeaderValue(file, true);
+    if (!header) {
+        return false;
+    }
+    if (header->formatVersion == kLegacyFormatVersion) {
+        header->formatVersion = kFormatVersion;
+        if (!file.seek(0) || !writeStruct(file, *header)) {
+            publishWarning(QStringLiteral("Cannot upgrade result_table.idx header"));
+            return false;
+        }
+        file.flush();
+    }
+    return true;
 }
 
-bool BinaryResultTableStorage::readBinHeader(QFile& file, bool publishDiagnostics) const
+std::optional<result_table_storage_format::ResultTableBinFileHeader>
+BinaryResultTableStorage::readBinHeaderValue(
+    QFile& file,
+    bool publishDiagnostics) const
 {
     if (!file.seek(0) || file.size() < static_cast<qint64>(sizeof(ResultTableBinFileHeader))) {
         if (publishDiagnostics) {
             publishError(QStringLiteral("Invalid result_table.bin header size"));
         }
-        return false;
+        return std::nullopt;
     }
 
     ResultTableBinFileHeader header{};
@@ -324,38 +360,41 @@ bool BinaryResultTableStorage::readBinHeader(QFile& file, bool publishDiagnostic
         if (publishDiagnostics) {
             publishError(QStringLiteral("Cannot read result_table.bin header"));
         }
-        return false;
+        return std::nullopt;
     }
     if (!magicEquals(header.magic, kResultTableBinMagic)) {
         if (publishDiagnostics) {
             publishError(QStringLiteral("Invalid result_table.bin magic"));
         }
-        return false;
+        return std::nullopt;
     }
-    if (header.formatVersion != kFormatVersion) {
+    if (!isSupportedFormatVersion(header.formatVersion)) {
         if (publishDiagnostics) {
             publishError(QStringLiteral("Unsupported result_table.bin format version %1")
                              .arg(header.formatVersion));
         }
-        return false;
+        return std::nullopt;
     }
     if (header.headerSize != sizeof(ResultTableBinFileHeader)
         || header.byteOrder != kByteOrderLittleEndian) {
         if (publishDiagnostics) {
             publishError(QStringLiteral("Invalid result_table.bin header fields"));
         }
-        return false;
+        return std::nullopt;
     }
-    return true;
+    return header;
 }
 
-bool BinaryResultTableStorage::readIndexHeader(QFile& file, bool publishDiagnostics) const
+std::optional<result_table_storage_format::ResultTableIndexFileHeader>
+BinaryResultTableStorage::readIndexHeaderValue(
+    QFile& file,
+    bool publishDiagnostics) const
 {
     if (!file.seek(0) || file.size() < static_cast<qint64>(sizeof(ResultTableIndexFileHeader))) {
         if (publishDiagnostics) {
             publishWarning(QStringLiteral("Invalid result_table.idx header size"));
         }
-        return false;
+        return std::nullopt;
     }
 
     ResultTableIndexFileHeader header{};
@@ -363,16 +402,29 @@ bool BinaryResultTableStorage::readIndexHeader(QFile& file, bool publishDiagnost
         if (publishDiagnostics) {
             publishWarning(QStringLiteral("Cannot read result_table.idx header"));
         }
-        return false;
+        return std::nullopt;
     }
     const bool valid = magicEquals(header.magic, kResultTableIndexMagic)
-        && header.formatVersion == kFormatVersion
+        && isSupportedFormatVersion(header.formatVersion)
         && header.headerSize == sizeof(ResultTableIndexFileHeader)
         && header.recordSize == sizeof(ResultTableIndexRecord);
     if (!valid && publishDiagnostics) {
         publishWarning(QStringLiteral("Invalid result_table.idx header"));
     }
-    return valid;
+    if (!valid) {
+        return std::nullopt;
+    }
+    return header;
+}
+
+bool BinaryResultTableStorage::readBinHeader(QFile& file, bool publishDiagnostics) const
+{
+    return readBinHeaderValue(file, publishDiagnostics).has_value();
+}
+
+bool BinaryResultTableStorage::readIndexHeader(QFile& file, bool publishDiagnostics) const
+{
+    return readIndexHeaderValue(file, publishDiagnostics).has_value();
 }
 
 bool BinaryResultTableStorage::appendIndexRecord(QFile& indexFile,
@@ -427,6 +479,7 @@ QByteArray BinaryResultTableStorage::serializeRow(const core::ResultTableRow& ro
 
     stream << static_cast<quint64>(row.sampleIndex);
     stream << static_cast<qint64>(row.resultTimeUtcNs);
+    stream << row.bearingAzimuthDeg;
     stream << row.antennaAzimuthDeg;
     stream << static_cast<qint32>(row.bandIndex);
     stream << static_cast<qint32>(row.quality ? 1 : 0);
@@ -449,7 +502,8 @@ QByteArray BinaryResultTableStorage::serializeRow(const core::ResultTableRow& ro
 }
 
 std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
-    const QByteArray& payload) const
+    const QByteArray& payload,
+    std::uint32_t recordVersion) const
 {
     QDataStream stream(payload);
     stream.setByteOrder(QDataStream::LittleEndian);
@@ -457,6 +511,7 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
 
     quint64 sampleIndex = 0;
     qint64 resultTimeUtcNs = 0;
+    double bearingAzimuthDeg = 0.0;
     double antennaAzimuthDeg = 0.0;
     qint32 bandIndex = 0;
     qint32 qualityState = 0;
@@ -465,7 +520,13 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
 
     stream >> sampleIndex;
     stream >> resultTimeUtcNs;
-    stream >> antennaAzimuthDeg;
+    if (recordVersion == kLegacyFormatVersion) {
+        stream >> antennaAzimuthDeg;
+        bearingAzimuthDeg = antennaAzimuthDeg;
+    } else {
+        stream >> bearingAzimuthDeg;
+        stream >> antennaAzimuthDeg;
+    }
     stream >> bandIndex;
     stream >> qualityState;
     stream >> qualityValue;
@@ -525,6 +586,7 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
     return core::ResultTableRow{
         static_cast<std::uint64_t>(sampleIndex),
         static_cast<std::int64_t>(resultTimeUtcNs),
+        bearingAzimuthDeg,
         antennaAzimuthDeg,
         static_cast<int>(bandIndex),
         std::move(frequenciesHz),

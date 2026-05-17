@@ -21,7 +21,7 @@ public:
         TimeTextRole = Qt::UserRole + 1,
         ResultTimeUtcNsRole,
         AzimuthTextRole,
-        AntennaAzimuthDegRole,
+        BearingAzimuthDegRole,
         BandIndexRole,
         BandTextRole,
         FrequenciesTextRole,

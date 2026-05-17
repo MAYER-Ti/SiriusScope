@@ -159,9 +159,9 @@ QVariant ResultTableModel::data(const QModelIndex& index, int role) const
     case ResultTimeUtcNsRole:
         return QVariant::fromValue(static_cast<qlonglong>(row.resultTimeUtcNs));
     case AzimuthTextRole:
-        return formatAzimuth(row.antennaAzimuthDeg);
-    case AntennaAzimuthDegRole:
-        return row.antennaAzimuthDeg;
+        return formatAzimuth(row.bearingAzimuthDeg);
+    case BearingAzimuthDegRole:
+        return row.bearingAzimuthDeg;
     case BandIndexRole:
         return row.bandIndex;
     case BandTextRole:
@@ -191,7 +191,7 @@ QHash<int, QByteArray> ResultTableModel::roleNames() const
         {TimeTextRole, QByteArrayLiteral("timeText")},
         {ResultTimeUtcNsRole, QByteArrayLiteral("resultTimeUtcNs")},
         {AzimuthTextRole, QByteArrayLiteral("azimuthText")},
-        {AntennaAzimuthDegRole, QByteArrayLiteral("antennaAzimuthDeg")},
+        {BearingAzimuthDegRole, QByteArrayLiteral("bearingAzimuthDeg")},
         {BandIndexRole, QByteArrayLiteral("bandIndex")},
         {BandTextRole, QByteArrayLiteral("bandText")},
         {FrequenciesTextRole, QByteArrayLiteral("frequenciesText")},

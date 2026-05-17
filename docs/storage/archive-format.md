@@ -121,7 +121,7 @@ Records are appended in arrival order and are expected to be time-sorted for nor
 ### `result_table/metadata.json`
 
 `metadata.json` is a human-readable descriptor for the result table store.
-Format version `1` stores:
+Format version `2` stores:
 
 - `schema`
 - `formatVersion`
@@ -139,7 +139,7 @@ The current schema name is `ResultTableStorage`; byte order is `little-endian`.
 
 ```text
 magic            "SSRTBIN\0"
-formatVersion    1
+formatVersion    2
 headerSize       sizeof(ResultTableBinFileHeader)
 byteOrder        0x04030201
 reserved0        0
@@ -149,7 +149,7 @@ It is followed by sequential length-prefixed row records. Each record has:
 
 ```text
 recordMagic       "SSTR" on little-endian disk
-recordVersion     1
+recordVersion     2
 payloadSizeBytes
 crc32             reserved, currently 0
 payload
@@ -160,6 +160,7 @@ The payload stores:
 ```text
 sampleIndex
 resultTimeUtcNs
+bearingAzimuthDeg
 antennaAzimuthDeg
 bandIndex
 qualityState
@@ -170,13 +171,19 @@ diagnosticCount
 diagnostics[]     ValidationCode + message bytes
 ```
 
+Version 2 stores both azimuth values. `bearingAzimuthDeg` is the calculated bearing
+shown in the result table and must match the bearing rendered by `AntennaIndicator`.
+`antennaAzimuthDeg` is retained only as scan context for storage/internal diagnostics and
+is not exposed by the result-table UI model. Legacy version 1 records stored only one
+azimuth value; readers may map it to both fields as a best-effort compatibility fallback.
+
 ### `result_table.idx`
 
 `result_table.idx` starts with `ResultTableIndexFileHeader`:
 
 ```text
 magic            "SSRTIDX\0"
-formatVersion    1
+formatVersion    2
 headerSize
 recordSize
 reserved0        0
@@ -192,7 +199,7 @@ recordByteSize
 bandIndex
 ```
 
-The v1 reader can restore rows by scanning `result_table.bin`; the index is
+The v2 reader can restore rows by scanning `result_table.bin`; the index is
 written for future range loading and fast history lookup.
 
 ### Result Table Reliability Rules
@@ -201,4 +208,4 @@ written for future range loading and fast history lookup.
 - Invalid or unsupported result-table headers make only result-table history unavailable.
 - Partial or corrupted records are diagnosed and reading stops at the damaged record.
 - Result-table storage diagnostics are reported through the common diagnostics sink.
-- `crc32` is reserved in v1 and written as `0`; mandatory CRC validation is a future extension.
+- `crc32` is reserved in v2 and written as `0`; mandatory CRC validation is a future extension.

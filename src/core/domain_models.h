@@ -312,6 +312,8 @@ struct ResultTableRow
     std::uint64_t sampleIndex = 0;
     //! Время результата в UTC, наносекунды.
     std::int64_t resultTimeUtcNs = 0;
+    //! Рассчитанный азимут пеленга, градусы.
+    double bearingAzimuthDeg = 0.0;
     //! Азимут антенны в момент результата, градусы.
     double antennaAzimuthDeg = 0.0;
     //! Связанный индекс полосы.

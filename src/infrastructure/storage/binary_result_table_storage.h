@@ -39,6 +39,12 @@ private:
     bool ensureStorageDir() const;
     bool ensureBinHeader(QFile& file) const;
     bool ensureIndexHeader(QFile& file) const;
+    std::optional<result_table_storage_format::ResultTableBinFileHeader> readBinHeaderValue(
+        QFile& file,
+        bool publishDiagnostics) const;
+    std::optional<result_table_storage_format::ResultTableIndexFileHeader> readIndexHeaderValue(
+        QFile& file,
+        bool publishDiagnostics) const;
     bool readBinHeader(QFile& file, bool publishDiagnostics) const;
     bool readIndexHeader(QFile& file, bool publishDiagnostics) const;
 
@@ -49,7 +55,8 @@ private:
     void writeMetadata(int rowCount) const;
 
     QByteArray serializeRow(const core::ResultTableRow& row) const;
-    std::optional<core::ResultTableRow> deserializeRow(const QByteArray& payload) const;
+    std::optional<core::ResultTableRow> deserializeRow(const QByteArray& payload,
+                                                       std::uint32_t recordVersion) const;
 
     void publish(DiagnosticSeverity severity, const QString& message) const;
     void publishInfo(const QString& message) const;

@@ -2,6 +2,7 @@
 #include "infrastructure/storage/result_table_storage_format.h"
 
 #include <QCoreApplication>
+#include <QDataStream>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -71,6 +72,7 @@ siriusscope::core::ResultTableRow makeRow(
     return siriusscope::core::ResultTableRow{
         sampleIndex,
         utcNs,
+        37.0,
         46.0,
         bandIndex,
         {3'000'000'000LL, 3'100'000'000LL},
@@ -107,6 +109,47 @@ void writeUnsupportedVersionFile(const QString& dataRootPath)
     file.write(reinterpret_cast<const char*>(&header), sizeof(header));
 }
 
+void writeLegacyV1File(const QString& dataRootPath)
+{
+    namespace format = siriusscope::infrastructure::result_table_storage_format;
+
+    QDir().mkpath(QDir(dataRootPath).filePath(QStringLiteral("result_table")));
+    QFile file(QDir(QDir(dataRootPath).filePath(QStringLiteral("result_table")))
+                   .filePath(QStringLiteral("result_table.bin")));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+
+    format::ResultTableBinFileHeader fileHeader{};
+    std::memcpy(fileHeader.magic, format::kResultTableBinMagic, sizeof(fileHeader.magic));
+    fileHeader.formatVersion = format::kLegacyFormatVersion;
+    fileHeader.headerSize = sizeof(fileHeader);
+    fileHeader.byteOrder = format::kByteOrderLittleEndian;
+    file.write(reinterpret_cast<const char*>(&fileHeader), sizeof(fileHeader));
+
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << static_cast<quint64>(12);
+    stream << static_cast<qint64>(1'700'000'000'000'000'000LL);
+    stream << 46.0;
+    stream << static_cast<qint32>(1);
+    stream << static_cast<qint32>(1);
+    stream << 0.84;
+    stream << static_cast<quint32>(1);
+    stream << static_cast<qint64>(3'000'000'000LL);
+    stream << static_cast<quint32>(0);
+
+    format::ResultTableRecordDiskHeader recordHeader{};
+    recordHeader.recordMagic = format::kResultTableRecordMagic;
+    recordHeader.recordVersion = format::kLegacyFormatVersion;
+    recordHeader.payloadSizeBytes = static_cast<quint32>(payload.size());
+    recordHeader.crc32 = 0;
+    file.write(reinterpret_cast<const char*>(&recordHeader), sizeof(recordHeader));
+    file.write(payload);
+}
+
 void testAppendCreatesFiles(TestRunner& test)
 {
     QTemporaryDir tempDir;
@@ -140,6 +183,8 @@ void testAppendReadAllRoundTrip(TestRunner& test)
     test.require(rows.size() == 1, "readAll returns appended row");
     test.require(rows.front().sampleIndex == row.sampleIndex, "sampleIndex round-trips");
     test.require(rows.front().resultTimeUtcNs == row.resultTimeUtcNs, "time round-trips");
+    test.require(rows.front().bearingAzimuthDeg == row.bearingAzimuthDeg,
+                 "bearing azimuth round-trips");
     test.require(rows.front().antennaAzimuthDeg == row.antennaAzimuthDeg,
                  "antenna azimuth round-trips");
     test.require(rows.front().bandIndex == row.bandIndex, "band index round-trips");
@@ -167,6 +212,23 @@ void testMultipleRowsSortedAndQualityNull(TestRunner& test)
     test.require(rows.size() == 2, "readAll returns both rows");
     test.require(rows.front().sampleIndex == 13, "readAll sorts by time");
     test.require(!rows.back().quality, "null quality round-trips");
+}
+
+void testLegacyV1RecordCompatibility(TestRunner& test)
+{
+    QTemporaryDir tempDir;
+    writeLegacyV1File(tempDir.path());
+
+    RecordingDiagnosticsSink diagnostics;
+    BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
+
+    const auto rows = storage.readAll();
+
+    test.require(rows.size() == 1, "legacy v1 row is readable");
+    test.require(rows.front().bearingAzimuthDeg == 46.0,
+                 "legacy v1 single azimuth maps to bearing azimuth");
+    test.require(rows.front().antennaAzimuthDeg == 46.0,
+                 "legacy v1 single azimuth maps to antenna azimuth");
 }
 
 void testEmptyStorage(TestRunner& test)
@@ -237,6 +299,7 @@ int main(int argc, char* argv[])
     testAppendCreatesFiles(test);
     testAppendReadAllRoundTrip(test);
     testMultipleRowsSortedAndQualityNull(test);
+    testLegacyV1RecordCompatibility(test);
     testEmptyStorage(test);
     testCorruptedFileDoesNotCrash(test);
     testUnsupportedVersionDiagnosed(test);

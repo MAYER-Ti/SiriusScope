@@ -74,6 +74,7 @@ core::ResultTableRow makeRow(std::uint64_t sampleIndex = 12,
     return core::ResultTableRow{
         sampleIndex,
         utcNs,
+        47.0,
         51.0,
         bandIndex,
         {3'000'000'000LL},
@@ -168,6 +169,11 @@ void testAppendValidBearingResult(TestRunner& test)
 
     test.require(delivered, "valid append reaches model");
     test.require(storage.appendCalls == 1, "valid append writes storage");
+    test.require(model.rows().front().bearingAzimuthDeg == 47.0,
+                 "controller preserves calculated bearing azimuth");
+    test.require(model.data(model.index(0, 0), ResultTableModel::AzimuthTextRole).toString()
+                     == QStringLiteral("47,0°"),
+                 "controller exposes calculated bearing azimuth to the table");
     test.require(model.rows().front().antennaAzimuthDeg == 50.0,
                  "controller uses append context antenna azimuth");
 }

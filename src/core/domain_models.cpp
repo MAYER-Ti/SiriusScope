@@ -342,6 +342,7 @@ DomainResult<ResultTableRow> ResultTableRow::fromBearingResult(
     ResultTableRow row{
         result.sampleIndex,
         result.resultTimeUtcNs,
+        result.bearingAzimuthDeg,
         antennaAzimuthDeg,
         result.bandIndex,
         result.frequenciesHz,
@@ -362,6 +363,7 @@ ValidationResult ResultTableRow::validate(const RuntimeCapabilities& capabilitie
     ValidationResult result;
     result.merge(validateCapabilities(capabilities));
     result.merge(validateBandIndex(bandIndex, capabilities));
+    result.merge(validateAzimuth(bearingAzimuthDeg));
     result.merge(validateAzimuth(antennaAzimuthDeg));
     result.merge(validateFrequencies(frequenciesHz));
     result.merge(validateQuality(quality));

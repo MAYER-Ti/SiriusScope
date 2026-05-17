@@ -7,7 +7,8 @@ namespace siriusscope::infrastructure::result_table_storage_format {
 inline constexpr char kResultTableBinMagic[8] = {'S', 'S', 'R', 'T', 'B', 'I', 'N', '\0'};
 inline constexpr char kResultTableIndexMagic[8] = {'S', 'S', 'R', 'T', 'I', 'D', 'X', '\0'};
 
-inline constexpr std::uint32_t kFormatVersion = 1;
+inline constexpr std::uint32_t kLegacyFormatVersion = 1;
+inline constexpr std::uint32_t kFormatVersion = 2;
 inline constexpr std::uint32_t kByteOrderLittleEndian = 0x04030201;
 inline constexpr std::uint32_t kResultTableRecordMagic = 0x52545353; // "SSTR" on little-endian disk
 

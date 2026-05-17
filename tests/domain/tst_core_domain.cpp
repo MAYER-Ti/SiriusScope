@@ -146,6 +146,10 @@ void testResultModels(TestRunner& test)
 
     const auto row = ResultTableRow::fromBearingResult(*bearing.value(), 46.0);
     test.require(row.hasValue(), "valid result table row is created from bearing result");
+    test.require((*row.value()).bearingAzimuthDeg == 45.0,
+                 "result row preserves bearing azimuth");
+    test.require((*row.value()).antennaAzimuthDeg == 46.0,
+                 "result row preserves antenna azimuth");
     test.require((*row.value()).bandIndex == 1, "result row preserves band index");
     test.require((*row.value()).frequenciesHz.size() == 1, "result row preserves frequency set");
 
@@ -194,9 +198,20 @@ void testResultModels(TestRunner& test)
     test.require(invalidTime.validation().contains(ValidationCode::InvalidTimeBase),
                  "negative result time is invalid");
 
-    ResultTableRow invalidRow{12, 1'000'000LL, -1.0, 1, {1'000'000'000LL}, std::nullopt, {}};
+    ResultTableRow invalidRow{12, 1'000'000LL, 45.0, -1.0, 1, {1'000'000'000LL}, std::nullopt, {}};
     test.require(invalidRow.validate().contains(ValidationCode::InvalidAzimuth),
                  "result row with invalid antenna azimuth is invalid");
+
+    ResultTableRow invalidBearingRow{12,
+                                     1'000'000LL,
+                                     360.0,
+                                     46.0,
+                                     1,
+                                     {1'000'000'000LL},
+                                     std::nullopt,
+                                     {}};
+    test.require(invalidBearingRow.validate().contains(ValidationCode::InvalidAzimuth),
+                 "result row with invalid bearing azimuth is invalid");
 }
 
 } // namespace

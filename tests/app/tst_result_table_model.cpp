@@ -37,6 +37,7 @@ siriusscope::core::ResultTableRow makeRow(std::uint64_t sampleIndex = 12,
     return siriusscope::core::ResultTableRow{
         sampleIndex,
         utcNs,
+        37.0,
         46.0,
         bandIndex,
         {3'000'000'000LL, 3'100'000'000LL},
@@ -65,7 +66,7 @@ void testRoleNames(TestRunner& test)
         "timeText",
         "resultTimeUtcNs",
         "azimuthText",
-        "antennaAzimuthDeg",
+        "bearingAzimuthDeg",
         "bandIndex",
         "bandText",
         "frequenciesText",
@@ -96,8 +97,11 @@ void testAppendAndData(TestRunner& test)
                      == row.resultTimeUtcNs,
                  "resultTimeUtcNs is preserved");
     test.require(dataAt(model, 0, ResultTableModel::AzimuthTextRole).toString()
-                     == QStringLiteral("46,0°"),
-                 "azimuthText uses antenna azimuth with one decimal");
+                     == QStringLiteral("37,0°"),
+                 "azimuthText uses bearing azimuth with one decimal");
+    test.require(dataAt(model, 0, ResultTableModel::BearingAzimuthDegRole).toDouble()
+                     == row.bearingAzimuthDeg,
+                 "bearingAzimuthDeg role returns numeric bearing azimuth");
     test.require(dataAt(model, 0, ResultTableModel::BandIndexRole).toInt() == 1,
                  "bandIndex is preserved");
     test.require(dataAt(model, 0, ResultTableModel::BandTextRole).toString()
