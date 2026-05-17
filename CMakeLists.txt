@@ -28,6 +28,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/bandconfigcontroller.cpp
     src/app/bandlistmodel.h
     src/app/bandlistmodel.cpp
+    src/app/diagnosticsservice.h
+    src/app/diagnosticsservice.cpp
     src/app/frequencygridmodel.h
     src/app/frequencygridmodel.cpp
     src/app/frequencyviewportmodel.h
@@ -36,6 +38,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/spectrumcontrollerstub.cpp
     src/app/spectrumdecimator.h
     src/app/spectrumdecimator.cpp
+    src/app/statusmodel.h
+    src/app/statusmodel.cpp
     src/app/syntheticwaterfalldatasource.h
     src/app/syntheticwaterfalldatasource.cpp
     src/app/waterfallcontroller.h
@@ -101,6 +105,8 @@ set(SIRIUSSCOPE_INFRASTRUCTURE_INTERFACE_SOURCES
 )
 
 set(SIRIUSSCOPE_INFRASTRUCTURE_SOURCES
+    src/infrastructure/logging/diagnostic_log_writer.h
+    src/infrastructure/logging/diagnostic_log_writer.cpp
     src/infrastructure/storage/binary_waterfall_session_storage.h
     src/infrastructure/storage/binary_waterfall_session_storage.cpp
     src/infrastructure/storage/waterfall_storage_format.h

@@ -5,10 +5,12 @@
 #include "appstate.h"
 #include "bandconfigcontroller.h"
 #include "bandlistmodel.h"
+#include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
+#include "statusmodel.h"
 #include "waterfallcontroller.h"
 
 #include <QJSEngine>
@@ -172,6 +174,42 @@ public:
     inline static BandConfigController *instance = nullptr;
 
     static BandConfigController *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct DiagnosticsServiceQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(DiagnosticsService)
+    QML_NAMED_ELEMENT(DiagnosticsService)
+    QML_SINGLETON
+
+public:
+    inline static DiagnosticsService *instance = nullptr;
+
+    static DiagnosticsService *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct StatusModelQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(StatusModel)
+    QML_NAMED_ELEMENT(StatusModel)
+    QML_SINGLETON
+
+public:
+    inline static StatusModel *instance = nullptr;
+
+    static StatusModel *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);

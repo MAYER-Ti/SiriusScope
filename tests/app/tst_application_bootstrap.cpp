@@ -51,7 +51,11 @@ void testBootstrapProvidesObjects(TestRunner& test)
     test.require(bootstrap.bandConfigController() != nullptr,
                  "bootstrap provides band config controller");
     test.require(bootstrap.diagnosticsSink() != nullptr,
-                 "bootstrap provides diagnostics placeholder");
+                 "bootstrap provides diagnostics sink");
+    test.require(bootstrap.diagnosticsService() != nullptr,
+                 "bootstrap provides diagnostics service");
+    test.require(bootstrap.statusModel() != nullptr,
+                 "bootstrap provides status model");
     test.require(bootstrap.waterfallStorage() != nullptr,
                  "bootstrap provides waterfall storage placeholder");
     test.require(bootstrap.bcoControl() != nullptr,
@@ -80,6 +84,12 @@ void testBootstrapProvidesObjects(TestRunner& test)
     test.require(siriusscope::app::BandConfigControllerQmlSingleton::instance
                      == bootstrap.bandConfigController(),
                  "bootstrap registers band config controller singleton");
+    test.require(siriusscope::app::DiagnosticsServiceQmlSingleton::instance
+                     == bootstrap.diagnosticsService(),
+                 "bootstrap registers diagnostics service singleton");
+    test.require(siriusscope::app::StatusModelQmlSingleton::instance
+                     == bootstrap.statusModel(),
+                 "bootstrap registers status model singleton");
 }
 
 } // namespace

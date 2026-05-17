@@ -42,6 +42,7 @@ class WaterfallController final : public QObject
     Q_OBJECT
     Q_PROPERTY(QObject *ringBuffer READ ringBuffer CONSTANT)
     Q_PROPERTY(bool liveMode READ liveMode NOTIFY liveModeChanged)
+    Q_PROPERTY(bool sourceActive READ sourceActive NOTIFY sourceActiveChanged)
     Q_PROPERTY(bool historyLoading READ historyLoading NOTIFY historyLoadingChanged)
     Q_PROPERTY(QString currentUtcText READ currentUtcText NOTIFY currentUtcTextChanged)
     Q_PROPERTY(bool sessionActive READ sessionActive NOTIFY recordingStateChanged)
@@ -69,6 +70,7 @@ public:
 
     QObject* ringBuffer() const;
     bool liveMode() const noexcept;
+    bool sourceActive() const noexcept { return m_sourceStarted; }
     bool historyLoading() const noexcept { return m_historyLoading; }
     QString currentUtcText() const;
     bool sessionActive() const noexcept { return m_sessionActive; }
@@ -96,6 +98,7 @@ public:
 
 signals:
     void liveModeChanged();
+    void sourceActiveChanged();
     void historyLoadingChanged();
     void currentUtcTextChanged();
     void recordingStateChanged();

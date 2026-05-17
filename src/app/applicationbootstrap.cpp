@@ -8,6 +8,8 @@
 #include <QObject>
 #include <QStandardPaths>
 
+#include <chrono>
+
 namespace siriusscope::app {
 namespace {
 
@@ -25,7 +27,11 @@ QString defaultWaterfallDataRootPath()
 } // namespace
 
 ApplicationBootstrap::ApplicationBootstrap()
-    : m_diagnosticsSink(std::make_unique<infrastructure::NullDiagnosticsSink>())
+    : m_diagnosticLogWriter(std::make_unique<infrastructure::DiagnosticLogWriter>(
+          infrastructure::DiagnosticLogWriter::Config{
+              defaultWaterfallDataRootPath(),
+          }))
+    , m_diagnosticsService(std::make_unique<DiagnosticsService>(m_diagnosticLogWriter.get()))
     , m_waterfallStorage(std::make_unique<infrastructure::NullWaterfallStorage>())
     , m_waterfallSessionStorage(
           std::make_unique<infrastructure::BinaryWaterfallSessionStorage>(
@@ -34,28 +40,49 @@ ApplicationBootstrap::ApplicationBootstrap()
                   20,
                   false,
               },
-              m_diagnosticsSink.get()))
+              m_diagnosticsService.get()))
     , m_bcoSampleSource(std::make_unique<hardware::SimulatorBcoSampleSource>(
           hardware::SimulatorBcoSampleSourceConfig{},
-          m_diagnosticsSink.get()))
+          m_diagnosticsService.get()))
     , m_antennaState(std::make_unique<hardware::SimulatorAntennaState>())
     , m_antennaAzimuthSource(std::make_unique<hardware::SimulatorAntennaAzimuthSource>(
           m_antennaState.get(),
           hardware::SimulatorAntennaAzimuthSourceConfig{},
-          m_diagnosticsSink.get()))
+          m_diagnosticsService.get()))
     , m_bcoControl(std::make_unique<hardware::SimulatorBcoControl>(m_bcoSampleSource.get(),
-                                                                   m_diagnosticsSink.get()))
+                                                                   m_diagnosticsService.get()))
     , m_antennaControl(std::make_unique<hardware::SimulatorAntennaControl>(
           m_antennaState.get(),
-          m_diagnosticsSink.get()))
-    , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsSink.get())
+          m_diagnosticsService.get()))
+    , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsService.get())
 {
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
     m_waterfallController = std::make_unique<WaterfallController>(&m_viewportModel,
                                                                   m_bcoSampleSource.get(),
                                                                   m_bandListModel.bandConfigs(),
                                                                   m_waterfallSessionStorage.get(),
-                                                                  m_diagnosticsSink.get());
+                                                                  m_diagnosticsService.get());
+
+    m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),
+                                                  &AppState::instance(),
+                                                  m_waterfallController.get(),
+                                                  &m_antennaController);
+
+    QObject::connect(&m_antennaController,
+                     &AntennaControllerStub::commandRejected,
+                     m_diagnosticsService.get(),
+                     [this](const QString& reason) {
+                         if (!m_diagnosticsService) {
+                             return;
+                         }
+
+                         m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
+                             infrastructure::DiagnosticSeverity::Warning,
+                             "AntennaController",
+                             reason.toStdString(),
+                             std::chrono::system_clock::now(),
+                         });
+                     });
 
     QObject::connect(&m_bandConfigController,
                      &BandConfigController::bandSettingsApplied,
@@ -82,6 +109,13 @@ ApplicationBootstrap::ApplicationBootstrap()
                      });
 
     m_waterfallController->start();
+
+    m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
+        infrastructure::DiagnosticSeverity::Info,
+        "Application",
+        "SiriusScope application bootstrap completed",
+        std::chrono::system_clock::now(),
+    });
 }
 
 void ApplicationBootstrap::registerQmlSingletons()
@@ -95,6 +129,8 @@ void ApplicationBootstrap::registerQmlSingletons()
     AntennaControllerQmlSingleton::instance = &m_antennaController;
     BandListModelQmlSingleton::instance = &m_bandListModel;
     BandConfigControllerQmlSingleton::instance = &m_bandConfigController;
+    DiagnosticsServiceQmlSingleton::instance = m_diagnosticsService.get();
+    StatusModelQmlSingleton::instance = m_statusModel.get();
 }
 
 } // namespace siriusscope::app

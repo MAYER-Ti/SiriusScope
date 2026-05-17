@@ -10,26 +10,17 @@ Rectangle {
     border.color: Theme.panelBorder
     border.width: 1
 
-    function modeText() {
-        if (AppState.mode === AppState.Test) {
-            return qsTr("генератор")
+    function statusColor(level) {
+        if (level === StatusModel.Good) {
+            return Theme.statusGood
         }
-        if (AppState.mode === AppState.Combat) {
-            return qsTr("аппаратура")
+        if (level === StatusModel.Warning) {
+            return Theme.statusWarn
         }
-        return qsTr("контроль")
-    }
-
-    function azimuthText(value) {
-        var normalized = value % 360
-        if (normalized < 0) {
-            normalized += 360
+        if (level === StatusModel.Error) {
+            return Theme.statusBad
         }
-        var text = normalized.toFixed(1).replace(".", ",")
-        while (text.length < 5) {
-            text = "0" + text
-        }
-        return text + "\u00B0"
+        return Theme.textVeryMuted
     }
 
     GridLayout {
@@ -45,57 +36,57 @@ Rectangle {
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("Программа")
-            value: qsTr("работает")
-            statusColor: Theme.statusGood
+            value: StatusModel.programValue
+            statusColor: root.statusColor(StatusModel.programLevel)
         }
 
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("Режим")
-            value: root.modeText()
-            statusColor: Theme.statusGood
+            value: StatusModel.modeValue
+            statusColor: root.statusColor(StatusModel.modeLevel)
         }
 
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("БЦО")
-            value: qsTr("поток активен")
-            statusColor: Theme.statusGood
+            value: StatusModel.bcoValue
+            statusColor: root.statusColor(StatusModel.bcoLevel)
         }
 
         StatusChip {
             Layout.fillWidth: true
-            label: qsTr("РПУ")
-            value: qsTr("готово")
-            statusColor: Theme.statusGood
+            label: qsTr("БЦО упр.")
+            value: StatusModel.bcoControlValue
+            statusColor: root.statusColor(StatusModel.bcoControlLevel)
         }
 
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("Поворот")
-            value: qsTr("подключено")
-            statusColor: Theme.statusGood
+            value: StatusModel.antennaValue
+            statusColor: root.statusColor(StatusModel.antennaLevel)
         }
 
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("Азимут")
-            value: root.azimuthText(AntennaController.azimuthDeg)
-            statusColor: Theme.statusGood
+            value: StatusModel.azimuthValue
+            statusColor: root.statusColor(StatusModel.azimuthLevel)
         }
 
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("Запись")
-            value: WaterfallController.recordingStatusText
-            statusColor: WaterfallController.sessionActive ? Theme.statusWarn : Theme.textVeryMuted
+            value: StatusModel.recordingValue
+            statusColor: root.statusColor(StatusModel.recordingLevel)
         }
 
         StatusChip {
             Layout.fillWidth: true
             label: qsTr("Диагностика")
-            value: WaterfallController.historyLoading ? qsTr("загрузка истории") : qsTr("ошибок нет")
-            statusColor: Theme.statusGood
+            value: StatusModel.diagnosticsValue
+            statusColor: root.statusColor(StatusModel.diagnosticsLevel)
         }
     }
 }

@@ -81,6 +81,23 @@ target_include_directories(tst_binary_waterfall_session_storage
 
 add_test(NAME tst_binary_waterfall_session_storage COMMAND tst_binary_waterfall_session_storage)
 
+add_executable(tst_diagnostic_log_writer
+    infrastructure/tst_diagnostic_log_writer.cpp
+)
+
+target_link_libraries(tst_diagnostic_log_writer
+    PRIVATE
+        Qt6::Core
+        siriusscope_infrastructure
+)
+
+target_include_directories(tst_diagnostic_log_writer
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_diagnostic_log_writer COMMAND tst_diagnostic_log_writer)
+
 add_executable(tst_waterfall_history
     app/tst_waterfall_history.cpp
     ../src/app/waterfallhistorymodel.cpp
@@ -280,6 +297,40 @@ target_include_directories(tst_band_config_controller
 
 add_test(NAME tst_band_config_controller COMMAND tst_band_config_controller)
 
+add_executable(tst_diagnostics_service
+    app/tst_diagnostics_service.cpp
+)
+
+target_link_libraries(tst_diagnostics_service
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_diagnostics_service
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_diagnostics_service COMMAND tst_diagnostics_service)
+
+add_executable(tst_status_model
+    app/tst_status_model.cpp
+)
+
+target_link_libraries(tst_status_model
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_status_model
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_status_model COMMAND tst_status_model)
+
 add_executable(tst_application_bootstrap
     app/tst_application_bootstrap.cpp
 )
@@ -313,6 +364,9 @@ if(WIN32)
         set_tests_properties(tst_binary_waterfall_session_storage PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
+        set_tests_properties(tst_diagnostic_log_writer PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
         set_tests_properties(tst_waterfall_row_resampler PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
@@ -338,6 +392,12 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_band_config_controller PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_diagnostics_service PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_status_model PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_application_bootstrap PROPERTIES

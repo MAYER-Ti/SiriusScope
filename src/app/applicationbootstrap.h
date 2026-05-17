@@ -3,10 +3,12 @@
 #include "antennacontrollerstub.h"
 #include "bandconfigcontroller.h"
 #include "bandlistmodel.h"
+#include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
+#include "statusmodel.h"
 #include "waterfallcontroller.h"
 #include "waterfallstorage.h"
 
@@ -21,6 +23,7 @@
 #include "hardware/simulator/simulator_bco_sample_source.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "infrastructure/interfaces/waterfall_storage.h"
+#include "infrastructure/logging/diagnostic_log_writer.h"
 
 #include <memory>
 
@@ -41,10 +44,12 @@ public:
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
     BandListModel* bandListModel() noexcept { return &m_bandListModel; }
     BandConfigController* bandConfigController() noexcept { return &m_bandConfigController; }
+    DiagnosticsService* diagnosticsService() noexcept { return m_diagnosticsService.get(); }
+    StatusModel* statusModel() noexcept { return m_statusModel.get(); }
 
     infrastructure::IDiagnosticsSink* diagnosticsSink() noexcept
     {
-        return m_diagnosticsSink.get();
+        return m_diagnosticsService.get();
     }
 
     infrastructure::IWaterfallStorage* waterfallStorage() noexcept
@@ -78,7 +83,8 @@ private:
     SpectrumControllerStub m_spectrumController;
     SpectrumDecimator m_spectrumDecimator;
     AntennaControllerStub m_antennaController;
-    std::unique_ptr<infrastructure::IDiagnosticsSink> m_diagnosticsSink;
+    std::unique_ptr<infrastructure::DiagnosticLogWriter> m_diagnosticLogWriter;
+    std::unique_ptr<DiagnosticsService> m_diagnosticsService;
     std::unique_ptr<infrastructure::IWaterfallStorage> m_waterfallStorage;
     std::unique_ptr<IWaterfallSessionStorage> m_waterfallSessionStorage;
     std::unique_ptr<hardware::SimulatorBcoSampleSource> m_bcoSampleSource;
@@ -89,6 +95,7 @@ private:
     BandListModel m_bandListModel;
     BandConfigController m_bandConfigController;
     std::unique_ptr<WaterfallController> m_waterfallController;
+    std::unique_ptr<StatusModel> m_statusModel;
 };
 
 } // namespace siriusscope::app

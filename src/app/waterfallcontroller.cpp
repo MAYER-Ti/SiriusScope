@@ -203,6 +203,8 @@ void WaterfallController::start()
     }
 
     m_sourceStarted = true;
+    emit sourceActiveChanged();
+    publish(infrastructure::DiagnosticSeverity::Info, "BCO sample source started");
 }
 
 void WaterfallController::stop()
@@ -210,6 +212,8 @@ void WaterfallController::stop()
     if (m_sampleSource && m_sourceStarted) {
         m_sampleSource->stop();
         m_sourceStarted = false;
+        emit sourceActiveChanged();
+        publish(infrastructure::DiagnosticSeverity::Info, "BCO sample source stopped");
     }
 
     {
@@ -458,6 +462,7 @@ void WaterfallController::startRecording()
 
     updateRenderBuffer();
     emit recordingStateChanged();
+    publish(infrastructure::DiagnosticSeverity::Info, "waterfall recording started");
     notifyPresentationChanged(previousLiveMode, previousUtcText, true);
 }
 
@@ -477,6 +482,7 @@ void WaterfallController::stopRecording()
     m_timelineViewport.setMode(WaterfallTimelineViewport::Mode::History);
 
     emit recordingStateChanged();
+    publish(infrastructure::DiagnosticSeverity::Info, "waterfall recording stopped");
     notifyPresentationChanged(previousLiveMode, previousUtcText, true);
 }
 
