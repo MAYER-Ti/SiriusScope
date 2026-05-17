@@ -79,6 +79,42 @@ DomainResult<PlannedScanPath> AntennaMotionPlanner::planSectorScan(
     path.safeStartCoordDeg = safeStartCoord;
     path.safeEndCoordDeg = safeEndCoord;
     path.spanDeg = span;
+    path.direction = ScanDirection::IncreasingSafeCoord;
+    path.crossesNorthDeg = path.requestedSector.isWrapAround();
+    return DomainResult<PlannedScanPath>::success(path);
+}
+
+DomainResult<PlannedScanPath> AntennaMotionPlanner::planSectorScanFromCurrentAzimuth(
+    double leftAngleDeg,
+    double rightAngleDeg,
+    double currentAzimuthDeg,
+    const ScanMotionOptions& options)
+{
+    const auto basePath = planSectorScan(leftAngleDeg, rightAngleDeg, options);
+    if (!basePath) {
+        return DomainResult<PlannedScanPath>::failure(basePath.validation());
+    }
+
+    auto path = *basePath.value();
+    const auto minCoord = path.safeStartCoordDeg;
+    const auto maxCoord = path.safeEndCoordDeg;
+    const auto currentCoord = toSafeCoord(currentAzimuthDeg);
+    const auto distanceToMin = std::abs(currentCoord - minCoord);
+    const auto distanceToMax = std::abs(currentCoord - maxCoord);
+
+    if (distanceToMin <= distanceToMax) {
+        path.safeStartCoordDeg = minCoord;
+        path.safeEndCoordDeg = maxCoord;
+        path.direction = ScanDirection::IncreasingSafeCoord;
+    } else {
+        path.safeStartCoordDeg = maxCoord;
+        path.safeEndCoordDeg = minCoord;
+        path.direction = ScanDirection::DecreasingSafeCoord;
+    }
+
+    path.startAzimuthDeg = fromSafeCoord(path.safeStartCoordDeg);
+    path.endAzimuthDeg = fromSafeCoord(path.safeEndCoordDeg);
+    path.spanDeg = std::abs(path.safeEndCoordDeg - path.safeStartCoordDeg);
     path.crossesNorthDeg = path.requestedSector.isWrapAround();
     return DomainResult<PlannedScanPath>::success(path);
 }

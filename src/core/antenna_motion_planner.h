@@ -11,6 +11,12 @@ struct ScanMotionOptions
     double angleToleranceDeg = 0.2;
 };
 
+enum class ScanDirection
+{
+    IncreasingSafeCoord,
+    DecreasingSafeCoord,
+};
+
 struct PlannedScanPath
 {
     ScanSector requestedSector;
@@ -19,6 +25,7 @@ struct PlannedScanPath
     double safeStartCoordDeg = 0.0;
     double safeEndCoordDeg = 0.0;
     double spanDeg = 0.0;
+    ScanDirection direction = ScanDirection::IncreasingSafeCoord;
     bool crossesNorthDeg = false;
 };
 
@@ -32,6 +39,12 @@ public:
     static DomainResult<PlannedScanPath> planSectorScan(
         double leftAngleDeg,
         double rightAngleDeg,
+        const ScanMotionOptions& options = {});
+
+    static DomainResult<PlannedScanPath> planSectorScanFromCurrentAzimuth(
+        double leftAngleDeg,
+        double rightAngleDeg,
+        double currentAzimuthDeg,
         const ScanMotionOptions& options = {});
 
     static double normalizeAzimuth(double azimuthDeg) noexcept;

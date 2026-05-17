@@ -4,10 +4,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace {
@@ -41,12 +43,17 @@ bool isInBlindZone(double azimuthDeg)
 
 hardware::AntennaSectorScanCommand makeScanCommand(double leftAngleDeg,
                                                    double rightAngleDeg,
-                                                   double speedDegPerSec = 30.0)
+                                                   double speedDegPerSec = 30.0,
+                                                   std::optional<double> currentAzimuthDeg = std::nullopt)
 {
-    const auto planned = core::AntennaMotionPlanner::planSectorScan(
-        leftAngleDeg,
-        rightAngleDeg,
-        core::ScanMotionOptions{speedDegPerSec, 5.0, 0.2});
+    const auto options = core::ScanMotionOptions{speedDegPerSec, 5.0, 0.2};
+    const auto planned = currentAzimuthDeg
+        ? core::AntennaMotionPlanner::planSectorScanFromCurrentAzimuth(
+              leftAngleDeg,
+              rightAngleDeg,
+              *currentAzimuthDeg,
+              options)
+        : core::AntennaMotionPlanner::planSectorScan(leftAngleDeg, rightAngleDeg, options);
 
     hardware::AntennaSectorScanCommand command;
     command.requestedSector = planned.value()->requestedSector;
@@ -55,6 +62,7 @@ hardware::AntennaSectorScanCommand makeScanCommand(double leftAngleDeg,
     command.safeStartCoordDeg = planned.value()->safeStartCoordDeg;
     command.safeEndCoordDeg = planned.value()->safeEndCoordDeg;
     command.speedDegPerSec = speedDegPerSec;
+    command.direction = planned.value()->direction;
     return command;
 }
 
@@ -133,6 +141,12 @@ void testAntennaControlCommands(TestRunner& test)
     const auto crossingResult = control.startSectorScan(crossingCommand);
     test.require(crossingResult.success, "startSectorScan accepts planned sector around blind zone");
 
+    const auto reverseCommand = makeScanCommand(40.0, 100.0, 30.0, 110.0);
+    const auto reverseResult = control.startSectorScan(reverseCommand);
+    test.require(reverseResult.success, "startSectorScan accepts reverse safe path");
+    test.require(reverseCommand.safeStartCoordDeg > reverseCommand.safeEndCoordDeg,
+                 "reverse command has decreasing safe path");
+
     auto invalidCommand = sectorCommand;
     invalidCommand.startAzimuthDeg = 180.0;
     const auto invalidResult = control.startSectorScan(invalidCommand);
@@ -188,6 +202,46 @@ void testAzimuthMovementStaysValid(TestRunner& test)
     test.require(noBlindZoneSamples, "movement samples avoid blind zone");
 }
 
+void testReverseSectorScanMovement(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state;
+    hardware::SimulatorAntennaControl control(&state);
+    hardware::SimulatorAntennaAzimuthSource source(
+        &state,
+        hardware::SimulatorAntennaAzimuthSourceConfig{
+            std::chrono::milliseconds(10),
+            100.0,
+            720.0,
+        });
+
+    const auto command = makeScanCommand(40.0, 100.0, 720.0, 110.0);
+    const auto scanResult = control.startSectorScan(command);
+    test.require(scanResult.success, "reverse sector scan command is accepted");
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool completed = false;
+    bool noBlindZoneSamples = true;
+
+    const auto startResult = source.start([&](const hardware::AntennaAzimuthSample& sample) {
+        std::lock_guard lock(mutex);
+        noBlindZoneSamples = noBlindZoneSamples && !isInBlindZone(sample.degrees);
+        completed = completed || std::abs(sample.degrees - 40.0) < 0.001;
+        condition.notify_one();
+    });
+
+    std::unique_lock lock(mutex);
+    const bool reachedEnd =
+        condition.wait_for(lock, std::chrono::milliseconds(500), [&] { return completed; });
+    lock.unlock();
+
+    source.stop();
+
+    test.require(startResult.success, "azimuth source starts for reverse scan movement");
+    test.require(reachedEnd, "reverse sector scan reaches left edge");
+    test.require(noBlindZoneSamples, "reverse sector scan samples avoid blind zone");
+}
+
 } // namespace
 
 int main()
@@ -197,6 +251,7 @@ int main()
     testAzimuthSourceStartStop(test);
     testAntennaControlCommands(test);
     testAzimuthMovementStaysValid(test);
+    testReverseSectorScanMovement(test);
 
     return test.result();
 }

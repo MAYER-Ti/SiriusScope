@@ -33,6 +33,8 @@ class ScanController final : public QObject
     Q_PROPERTY(QString scanStateText READ scanStateText NOTIFY scanStateChanged)
     Q_PROPERTY(double scanProgress READ scanProgress NOTIFY scanProgressChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY scanStateChanged)
+    Q_PROPERTY(double antennaSpeedDegPerSec READ antennaSpeedDegPerSec WRITE setAntennaSpeedDegPerSec
+                   NOTIFY antennaSpeedChanged)
     Q_PROPERTY(double scanSpeedDegPerSec READ scanSpeedDegPerSec WRITE setScanSpeedDegPerSec
                    NOTIFY scanSpeedChanged)
 
@@ -64,15 +66,21 @@ public:
     QString scanStateText() const;
     double scanProgress() const noexcept { return m_scanProgress; }
     QString lastError() const { return m_lastError; }
-    double scanSpeedDegPerSec() const noexcept { return m_scanSpeedDegPerSec; }
+    double antennaSpeedDegPerSec() const noexcept { return m_antennaSpeedDegPerSec; }
+    double scanSpeedDegPerSec() const noexcept { return m_antennaSpeedDegPerSec; }
 
     Q_INVOKABLE void selectSector(double leftAngleDeg, double rightAngleDeg);
     Q_INVOKABLE void clearSector();
+    Q_INVOKABLE void startSelectedSectorScan();
     Q_INVOKABLE void startSelectedSectorScan(double speedDegPerSec);
+    Q_INVOKABLE void startScan(double leftAngleDeg, double rightAngleDeg);
     Q_INVOKABLE void startScan(double leftAngleDeg, double rightAngleDeg, double speedDegPerSec);
     Q_INVOKABLE void stopScan();
+    Q_INVOKABLE void driveLeft();
     Q_INVOKABLE void driveLeft(double speedDegPerSec);
+    Q_INVOKABLE void driveRight();
     Q_INVOKABLE void driveRight(double speedDegPerSec);
+    Q_INVOKABLE void setAntennaSpeedDegPerSec(double speedDegPerSec);
     Q_INVOKABLE void setScanSpeedDegPerSec(double speedDegPerSec);
 
 signals:
@@ -80,6 +88,7 @@ signals:
     void selectedSectorChanged();
     void scanStateChanged();
     void scanProgressChanged();
+    void antennaSpeedChanged();
     void scanSpeedChanged();
     void scanCompleted(qulonglong sessionId, int frameCount);
     void scanCancelled(qulonglong sessionId);
@@ -116,6 +125,7 @@ private:
     core::ScanMotionOptions scanOptions(double speedDegPerSec) const;
     QString validationMessage(const core::ValidationResult& validation) const;
     bool validateSpeed(double speedDegPerSec, QString* error) const;
+    void storeAntennaSpeed(double speedDegPerSec);
     void publish(infrastructure::DiagnosticSeverity severity, const std::string& message) const;
 
     hardware::IAntennaControl* m_antennaControl = nullptr;
@@ -131,7 +141,7 @@ private:
     ScanState m_state = ScanState::Idle;
     double m_scanProgress = 0.0;
     QString m_lastError;
-    double m_scanSpeedDegPerSec = 10.0;
+    double m_antennaSpeedDegPerSec = 10.0;
     std::uint64_t m_nextSessionId = 1;
 };
 

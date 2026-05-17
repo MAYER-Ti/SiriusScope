@@ -12,7 +12,7 @@ Components.Panel {
     property bool hasSelectedSector: false
     property real selectedLeftAngle: 0
     property real selectedRightAngle: 0
-    property real scanSpeed: 10
+    property real antennaSpeed: 10
     property bool scanActive: false
     property real scanProgress: 0
     property string scanStateText: ""
@@ -23,12 +23,12 @@ Components.Panel {
         : "—"
 
     signal stopRequested()
-    signal driveLeftRequested(int speed)
-    signal driveRightRequested(int speed)
-    signal scanRequested(real leftAngle, real rightAngle, real speed)
+    signal driveLeftRequested()
+    signal driveRightRequested()
+    signal scanRequested(real leftAngle, real rightAngle)
     signal sectorSelected(real leftAngle, real rightAngle)
     signal sectorCleared()
-    signal scanSpeedChangeRequested(real speed)
+    signal antennaSpeedChangeRequested(real speed)
 
     contentMargins: 18
 
@@ -97,7 +97,7 @@ Components.Panel {
 
             Repeater {
                 model: [
-                    { label: qsTr("Скорость"), value: antennaIndicator.scanSpeed.toString() + "°/с", color: Theme.textSecondary, weight: 128 },
+                    { label: qsTr("Скорость"), value: Math.round(antennaIndicator.antennaSpeed).toString() + "°/с", color: Theme.textSecondary, weight: 128 },
                     { label: qsTr("ИРИ"), value: antennaIndicator.targetCount.toString(), color: Theme.textSecondary, weight: 90 },
                     { label: qsTr("Сектор"), value: antennaIndicator.selectedSectorText, color: Theme.textSecondary, weight: 142 },
                     { label: qsTr("Азимут"), value: antennaIndicator.azimuthDeg.toFixed(1).replace(".", ",") + "°", color: Theme.textPrimary, weight: 142 }
@@ -179,11 +179,9 @@ Components.Panel {
 
                     Repeater {
                         model: [
-                            { label: "←10", speed: 10, direction: -1, stop: false },
-                            { label: "←1", speed: 1, direction: -1, stop: false },
-                            { label: "■", speed: 0, direction: 0, stop: true },
-                            { label: "1→", speed: 1, direction: 1, stop: false },
-                            { label: "10→", speed: 10, direction: 1, stop: false }
+                            { label: "←", direction: -1, stop: false },
+                            { label: "■", direction: 0, stop: true },
+                            { label: "→", direction: 1, stop: false }
                         ]
 
                         ControlButton {
@@ -205,9 +203,9 @@ Components.Panel {
                                 if (modelData.stop) {
                                     antennaIndicator.stopRequested()
                                 } else if (modelData.direction < 0) {
-                                    antennaIndicator.driveLeftRequested(modelData.speed)
+                                    antennaIndicator.driveLeftRequested()
                                 } else {
-                                    antennaIndicator.driveRightRequested(modelData.speed)
+                                    antennaIndicator.driveRightRequested()
                                 }
                             }
                         }
@@ -216,51 +214,27 @@ Components.Panel {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 30
+                    Layout.preferredHeight: 32
                     spacing: 8
 
-                    Label {
-                        Layout.preferredWidth: 92
+                    ScanSpeedControl {
+                        Layout.preferredWidth: 196
                         Layout.fillHeight: true
-                        text: qsTr("Speed")
-                        color: Theme.textVeryMuted
-                        font.pixelSize: Theme.fontSmall
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-
-                    SpinBox {
-                        id: scanSpeedSpinBox
-                        Layout.preferredWidth: 96
-                        Layout.fillHeight: true
+                        value: antennaIndicator.antennaSpeed
+                        enabled: !antennaIndicator.scanActive
                         from: 1
                         to: 60
-                        value: Math.round(antennaIndicator.scanSpeed)
-                        enabled: !antennaIndicator.scanActive
-                        editable: true
-                        onValueModified: antennaIndicator.scanSpeedChangeRequested(value)
+                        onValueChangeRequested: function(value) {
+                            antennaIndicator.antennaSpeedChangeRequested(value)
+                        }
                     }
 
-                    ProgressBar {
+                    ScanProgressIndicator {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        from: 0
-                        to: 1
-                        value: antennaIndicator.scanProgress
-                        visible: antennaIndicator.scanActive
-                    }
-
-                    Label {
-                        Layout.preferredWidth: 92
-                        Layout.fillHeight: true
-                        text: antennaIndicator.scanActive
-                              ? Math.round(antennaIndicator.scanProgress * 100).toString() + "%"
-                              : antennaIndicator.scanStateText
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSmall
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: Text.AlignRight
-                        elide: Text.ElideRight
+                        scanActive: antennaIndicator.scanActive
+                        progress: antennaIndicator.scanProgress
+                        stateText: antennaIndicator.scanStateText
                     }
                 }
 
@@ -281,8 +255,7 @@ Components.Panel {
 
                     onClicked: antennaIndicator.scanRequested(
                         antennaIndicator.selectedLeftAngle,
-                        antennaIndicator.selectedRightAngle,
-                        antennaIndicator.scanSpeed)
+                        antennaIndicator.selectedRightAngle)
                 }
             }
         }

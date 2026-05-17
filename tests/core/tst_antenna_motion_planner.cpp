@@ -109,6 +109,50 @@ void testBlindZoneCrossingRequestPlannedSafely(TestRunner& test)
                  "safe path uses wrap-around sector");
 }
 
+void testCurrentAzimuthChoosesNearestStart(TestRunner& test)
+{
+    const auto nearLeft =
+        core::AntennaMotionPlanner::planSectorScanFromCurrentAzimuth(40.0, 100.0, 35.0);
+    test.require(nearLeft.hasValue(), "current-aware sector near left is accepted");
+    test.require(nearLeft && near(nearLeft.value()->startAzimuthDeg, 40.0),
+                 "current azimuth near left chooses left start");
+    test.require(nearLeft && near(nearLeft.value()->endAzimuthDeg, 100.0),
+                 "left-start scan ends at right side");
+    test.require(nearLeft
+                     && nearLeft.value()->direction == core::ScanDirection::IncreasingSafeCoord,
+                 "left-start scan increases safe coordinate");
+
+    const auto nearRight =
+        core::AntennaMotionPlanner::planSectorScanFromCurrentAzimuth(40.0, 100.0, 110.0);
+    test.require(nearRight.hasValue(), "current-aware sector near right is accepted");
+    test.require(nearRight && near(nearRight.value()->startAzimuthDeg, 100.0),
+                 "current azimuth near right chooses right start");
+    test.require(nearRight && near(nearRight.value()->endAzimuthDeg, 40.0),
+                 "right-start scan ends at left side");
+    test.require(nearRight
+                     && nearRight.value()->direction == core::ScanDirection::DecreasingSafeCoord,
+                 "right-start scan decreases safe coordinate");
+}
+
+void testReverseScanKeepsPositiveSpan(TestRunner& test)
+{
+    const auto planned =
+        core::AntennaMotionPlanner::planSectorScanFromCurrentAzimuth(40.0, 100.0, 110.0);
+
+    test.require(planned.hasValue(), "reverse scan path is planned");
+    test.require(planned && planned.value()->spanDeg > 0.0,
+                 "reverse scan keeps positive span");
+
+    if (planned) {
+        const auto currentCoord =
+            core::AntennaMotionPlanner::toSafeCoord(70.0);
+        const auto traveled = planned.value()->safeStartCoordDeg - currentCoord;
+        const auto progress = traveled / planned.value()->spanDeg;
+        test.require(progress > 0.0 && progress < 1.0,
+                     "reverse scan progress can be calculated");
+    }
+}
+
 } // namespace
 
 int main()
@@ -122,6 +166,8 @@ int main()
     testCrossingNorthAccepted(test);
     testSafeMappingReversible(test);
     testBlindZoneCrossingRequestPlannedSafely(test);
+    testCurrentAzimuthChoosesNearestStart(test);
+    testReverseScanKeepsPositiveSpan(test);
 
     return test.result();
 }

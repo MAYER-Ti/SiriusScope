@@ -45,8 +45,7 @@ ApplicationWindow {
                 onLiveRequested: WaterfallController.jumpToLive()
                 onRecordingStartRequested: WaterfallController.startRecording()
                 onRecordingStopRequested: WaterfallController.stopRecording()
-                onScanSectorRequested: ScanController.startSelectedSectorScan(
-                    ScanController.scanSpeedDegPerSec)
+                onScanSectorRequested: ScanController.startSelectedSectorScan()
             }
 
             RowLayout {
@@ -100,20 +99,20 @@ ApplicationWindow {
                         hasSelectedSector: ScanController.hasSelectedSector
                         selectedLeftAngle: ScanController.selectedLeftAngle
                         selectedRightAngle: ScanController.selectedRightAngle
-                        scanSpeed: ScanController.scanSpeedDegPerSec
+                        antennaSpeed: ScanController.antennaSpeedDegPerSec
                         scanActive: ScanController.scanActive
                         scanProgress: ScanController.scanProgress
                         scanStateText: ScanController.scanStateText
 
                         onStopRequested: ScanController.stopScan()
-                        onDriveLeftRequested: function(speed) {
-                            ScanController.driveLeft(speed)
+                        onDriveLeftRequested: {
+                            ScanController.driveLeft()
                         }
-                        onDriveRightRequested: function(speed) {
-                            ScanController.driveRight(speed)
+                        onDriveRightRequested: {
+                            ScanController.driveRight()
                         }
-                        onScanRequested: function(leftAngle, rightAngle, speed) {
-                            ScanController.startScan(leftAngle, rightAngle, speed)
+                        onScanRequested: function(leftAngle, rightAngle) {
+                            ScanController.startScan(leftAngle, rightAngle)
                         }
                         onSectorSelected: function(leftAngle, rightAngle) {
                             ScanController.selectSector(leftAngle, rightAngle)
@@ -121,8 +120,8 @@ ApplicationWindow {
                         onSectorCleared: {
                             ScanController.clearSector()
                         }
-                        onScanSpeedChangeRequested: function(speed) {
-                            ScanController.setScanSpeedDegPerSec(speed)
+                        onAntennaSpeedChangeRequested: function(speed) {
+                            ScanController.setAntennaSpeedDegPerSec(speed)
                         }
                     }
 

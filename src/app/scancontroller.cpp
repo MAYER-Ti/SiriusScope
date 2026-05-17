@@ -129,7 +129,7 @@ void ScanController::selectSector(double leftAngleDeg, double rightAngleDeg)
     const auto planned =
         core::AntennaMotionPlanner::planSectorScan(leftAngleDeg,
                                                    rightAngleDeg,
-                                                   scanOptions(m_scanSpeedDegPerSec));
+                                                   scanOptions(m_antennaSpeedDegPerSec));
     if (!planned) {
         const auto message = validationMessage(planned.validation());
         setLastError(message);
@@ -169,6 +169,11 @@ void ScanController::clearSector()
     emit selectedSectorChanged();
 }
 
+void ScanController::startSelectedSectorScan()
+{
+    startSelectedSectorScan(m_antennaSpeedDegPerSec);
+}
+
 void ScanController::startSelectedSectorScan(double speedDegPerSec)
 {
     if (!m_selectedSector) {
@@ -181,6 +186,11 @@ void ScanController::startSelectedSectorScan(double speedDegPerSec)
     startScan(m_selectedSector->startAzimuthDeg,
               m_selectedSector->endAzimuthDeg,
               speedDegPerSec);
+}
+
+void ScanController::startScan(double leftAngleDeg, double rightAngleDeg)
+{
+    startScan(leftAngleDeg, rightAngleDeg, m_antennaSpeedDegPerSec);
 }
 
 void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double speedDegPerSec)
@@ -199,15 +209,15 @@ void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double
                 "ScanController: scan rejected: " + speedError.toStdString());
         return;
     }
-    if (std::abs(m_scanSpeedDegPerSec - speedDegPerSec) > 0.001) {
-        m_scanSpeedDegPerSec = speedDegPerSec;
-        emit scanSpeedChanged();
+    if (std::abs(m_antennaSpeedDegPerSec - speedDegPerSec) > 0.001) {
+        storeAntennaSpeed(speedDegPerSec);
     }
 
     const auto planned =
-        core::AntennaMotionPlanner::planSectorScan(leftAngleDeg,
-                                                   rightAngleDeg,
-                                                   scanOptions(speedDegPerSec));
+        core::AntennaMotionPlanner::planSectorScanFromCurrentAzimuth(leftAngleDeg,
+                                                                     rightAngleDeg,
+                                                                     m_currentAzimuthDeg,
+                                                                     scanOptions(speedDegPerSec));
     if (!planned) {
         const auto message = validationMessage(planned.validation());
         setLastError(message);
@@ -281,17 +291,27 @@ void ScanController::driveLeft(double speedDegPerSec)
     startManualMove(hardware::AntennaManualMoveCommand::Direction::Left, speedDegPerSec);
 }
 
+void ScanController::driveLeft()
+{
+    driveLeft(m_antennaSpeedDegPerSec);
+}
+
 void ScanController::driveRight(double speedDegPerSec)
 {
     startManualMove(hardware::AntennaManualMoveCommand::Direction::Right, speedDegPerSec);
 }
 
-void ScanController::setScanSpeedDegPerSec(double speedDegPerSec)
+void ScanController::driveRight()
+{
+    driveRight(m_antennaSpeedDegPerSec);
+}
+
+void ScanController::setAntennaSpeedDegPerSec(double speedDegPerSec)
 {
     if (scanActive()) {
-        setLastError(QStringLiteral("cannot change scan speed while scan is active"));
+        setLastError(QStringLiteral("cannot change antenna speed while scan is active"));
         publish(infrastructure::DiagnosticSeverity::Warning,
-                "ScanController: scan speed change rejected while scan is active");
+                "ScanController: antenna speed change rejected while scan is active");
         return;
     }
 
@@ -299,17 +319,21 @@ void ScanController::setScanSpeedDegPerSec(double speedDegPerSec)
     if (!validateSpeed(speedDegPerSec, &speedError)) {
         setLastError(speedError);
         publish(infrastructure::DiagnosticSeverity::Warning,
-                "ScanController: scan speed rejected: " + speedError.toStdString());
+                "ScanController: antenna speed rejected: " + speedError.toStdString());
         return;
     }
 
-    if (std::abs(m_scanSpeedDegPerSec - speedDegPerSec) <= 0.001) {
+    if (std::abs(m_antennaSpeedDegPerSec - speedDegPerSec) <= 0.001) {
         return;
     }
 
-    m_scanSpeedDegPerSec = speedDegPerSec;
+    storeAntennaSpeed(speedDegPerSec);
     setLastError({});
-    emit scanSpeedChanged();
+}
+
+void ScanController::setScanSpeedDegPerSec(double speedDegPerSec)
+{
+    setAntennaSpeedDegPerSec(speedDegPerSec);
 }
 
 void ScanController::startAzimuthSource()
@@ -372,9 +396,11 @@ void ScanController::updateAzimuth(const hardware::AntennaAzimuthSample& sample)
 
     const auto safeCoord = core::AntennaMotionPlanner::toSafeCoord(normalized);
     const auto& path = m_activeSession->plannedPath;
-    const auto progress = std::clamp((safeCoord - path.safeStartCoordDeg) / path.spanDeg,
-                                     0.0,
-                                     1.0);
+    const auto traveled =
+        path.direction == core::ScanDirection::IncreasingSafeCoord
+        ? safeCoord - path.safeStartCoordDeg
+        : path.safeStartCoordDeg - safeCoord;
+    const auto progress = std::clamp(traveled / path.spanDeg, 0.0, 1.0);
     m_activeSession->progress = progress;
     setProgress(progress);
 
@@ -399,6 +425,7 @@ void ScanController::beginSectorScan()
     command.safeStartCoordDeg = path.safeStartCoordDeg;
     command.safeEndCoordDeg = path.safeEndCoordDeg;
     command.speedDegPerSec = m_activeSession->speedDegPerSec;
+    command.direction = path.direction;
 
     const auto result = m_antennaControl->startSectorScan(command);
     if (!result) {
@@ -574,7 +601,7 @@ bool ScanController::validateSpeed(double speedDegPerSec, QString* error) const
 {
     if (!std::isfinite(speedDegPerSec)) {
         if (error) {
-            *error = QStringLiteral("scan speed must be finite");
+            *error = QStringLiteral("antenna speed must be finite");
         }
         return false;
     }
@@ -582,12 +609,19 @@ bool ScanController::validateSpeed(double speedDegPerSec, QString* error) const
     if (speedDegPerSec < kMinScanSpeedDegPerSec
         || speedDegPerSec > kMaxScanSpeedDegPerSec) {
         if (error) {
-            *error = QStringLiteral("scan speed must be in range 1..60 deg/s");
+            *error = QStringLiteral("antenna speed must be in range 1..60 deg/s");
         }
         return false;
     }
 
     return true;
+}
+
+void ScanController::storeAntennaSpeed(double speedDegPerSec)
+{
+    m_antennaSpeedDegPerSec = speedDegPerSec;
+    emit antennaSpeedChanged();
+    emit scanSpeedChanged();
 }
 
 void ScanController::publish(infrastructure::DiagnosticSeverity severity,

@@ -295,6 +295,8 @@ qt6_add_qml_module(appSiriusScope
         src/ui/components/SpectrumView/BandSettingsDialog.qml
         src/ui/components/AntennaIndicator/ArcBand.qml
         src/ui/components/AntennaIndicator/Indicator.qml
+        src/ui/components/AntennaIndicator/ScanProgressIndicator.qml
+        src/ui/components/AntennaIndicator/ScanSpeedControl.qml
         src/ui/components/AntennaIndicator/TargetTracker.qml
         src/ui/components/AntennaIndicator/AntennaIndicator.qml
 )

@@ -101,6 +101,50 @@ void testSimulatorPathCompletesSectorScan(TestRunner& test)
     test.require(!controller.scanActive(), "completed simulator scan is inactive");
 }
 
+void testSimulatorPathCompletesReverseSectorScan(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state;
+    infrastructure::NullDiagnosticsSink diagnostics;
+    hardware::SimulatorAntennaControl control(&state, &diagnostics);
+    hardware::SimulatorAntennaAzimuthSource source(
+        &state,
+        hardware::SimulatorAntennaAzimuthSourceConfig{
+            std::chrono::milliseconds(5),
+            110.0,
+            720.0,
+        },
+        &diagnostics);
+    app::BearingFrameBus bus;
+    app::ScanController controller(&control, &source, &bus, &diagnostics);
+
+    int completedFrames = -1;
+    QObject::connect(&controller,
+                     &app::ScanController::scanCompleted,
+                     [&](qulonglong, int frameCount) {
+                         completedFrames = frameCount;
+                     });
+
+    waitUntil([&controller] {
+        return controller.currentAzimuthDeg() > 109.0;
+    });
+    controller.startScan(80.0, 100.0, 60.0);
+
+    const bool scanning = waitUntil([&controller] {
+        return controller.scanStateText() == QStringLiteral("scanning");
+    });
+    if (scanning) {
+        bus.publish({makeBearingFrame()});
+    }
+
+    const bool completed = waitUntil([&] {
+        return completedFrames == 1;
+    });
+
+    test.require(scanning, "simulator path starts reverse sector scan");
+    test.require(completed, "simulator path completes reverse sector scan");
+    test.require(!controller.scanActive(), "completed reverse simulator scan is inactive");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -109,6 +153,7 @@ int main(int argc, char *argv[])
     TestRunner test;
 
     testSimulatorPathCompletesSectorScan(test);
+    testSimulatorPathCompletesReverseSectorScan(test);
 
     return test.result();
 }

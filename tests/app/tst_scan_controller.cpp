@@ -222,23 +222,53 @@ void testStartStopAndManualCommands(TestRunner& test)
 {
     ControllerFixture fixture;
 
-    fixture.controller.driveLeft(10.0);
+    fixture.controller.setAntennaSpeedDegPerSec(15.0);
+    fixture.controller.driveLeft();
     test.require(fixture.control.manualCalls == 1, "driveLeft calls IAntennaControl");
     test.require(fixture.control.lastManualCommand.direction
                      == hardware::AntennaManualMoveCommand::Direction::Left,
                  "driveLeft sends left direction");
+    test.require(fixture.control.lastManualCommand.speedDegPerSec == 15.0,
+                 "driveLeft uses configured antenna speed");
+
+    fixture.controller.setAntennaSpeedDegPerSec(20.0);
+    fixture.controller.driveRight();
+    test.require(fixture.control.manualCalls == 2, "driveRight calls IAntennaControl");
+    test.require(fixture.control.lastManualCommand.direction
+                     == hardware::AntennaManualMoveCommand::Direction::Right,
+                 "driveRight sends right direction");
+    test.require(fixture.control.lastManualCommand.speedDegPerSec == 20.0,
+                 "driveRight uses configured antenna speed");
 
     fixture.controller.startScan(10.0, 60.0, 10.0);
     test.require(fixture.control.moveCalls == 1, "startScan calls moveToAzimuth");
     test.require(fixture.control.lastMoveAzimuth == 10.0, "startScan moves to planned start");
 
-    fixture.controller.driveRight(10.0);
-    test.require(fixture.control.manualCalls == 1,
+    fixture.controller.driveRight();
+    test.require(fixture.control.manualCalls == 2,
                  "manual movement is disabled while scan is active");
 
     fixture.controller.stopScan();
     test.require(fixture.control.stopCalls >= 1, "stopScan calls IAntennaControl::stop");
     test.require(!fixture.controller.scanActive(), "stopScan clears active scan");
+}
+
+void testCommonAntennaSpeedUsedBySelectedScan(TestRunner& test)
+{
+    ControllerFixture fixture;
+
+    fixture.controller.selectSector(10.0, 60.0);
+    fixture.controller.setAntennaSpeedDegPerSec(12.0);
+    fixture.controller.startSelectedSectorScan();
+    fixture.azimuthSource.emitAzimuth(10.0);
+
+    const bool scanStarted = waitUntil([&fixture] {
+        return fixture.control.scanCalls == 1;
+    });
+
+    test.require(scanStarted, "startSelectedSectorScan starts scan");
+    test.require(fixture.control.lastScanCommand.speedDegPerSec == 12.0,
+                 "startSelectedSectorScan uses configured antenna speed");
 }
 
 void testAzimuthProgressCompletionAndFrames(TestRunner& test)
@@ -274,20 +304,64 @@ void testAzimuthProgressCompletionAndFrames(TestRunner& test)
     test.require(!fixture.controller.scanActive(), "completed scan is no longer active");
 }
 
+void testReverseScanProgressAndCompletion(TestRunner& test)
+{
+    ControllerFixture fixture;
+    int completedFrames = -1;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::scanCompleted,
+                     [&](qulonglong, int frameCount) {
+                         completedFrames = frameCount;
+                     });
+
+    fixture.azimuthSource.emitAzimuth(110.0);
+    waitUntil([&fixture] {
+        return std::abs(fixture.controller.currentAzimuthDeg() - 110.0) < 0.001;
+    });
+
+    fixture.controller.startScan(40.0, 100.0, 10.0);
+    test.require(fixture.control.lastMoveAzimuth == 100.0,
+                 "scan near right side moves to right edge first");
+
+    fixture.azimuthSource.emitAzimuth(100.0);
+    const bool scanStarted = waitUntil([&fixture] {
+        return fixture.control.scanCalls == 1;
+    });
+    test.require(scanStarted, "reverse scan starts at right edge");
+    test.require(fixture.control.lastScanCommand.direction
+                     == core::ScanDirection::DecreasingSafeCoord,
+                 "reverse scan command carries decreasing direction");
+
+    fixture.azimuthSource.emitAzimuth(70.0);
+    const bool progressUpdated = waitUntil([&fixture] {
+        return fixture.controller.scanProgress() > 0.4;
+    });
+
+    fixture.azimuthSource.emitAzimuth(40.0);
+    const bool completed = waitUntil([&] {
+        return completedFrames == 0;
+    });
+
+    test.require(progressUpdated, "reverse scan progress grows during movement");
+    test.require(completed, "reverse scan completes when left edge is reached");
+}
+
 void testSpeedChangeRejectedDuringScan(TestRunner& test)
 {
     ControllerFixture fixture;
-    fixture.controller.setScanSpeedDegPerSec(12.0);
-    fixture.controller.startSelectedSectorScan(12.0);
+    fixture.controller.setAntennaSpeedDegPerSec(12.0);
+    fixture.controller.startSelectedSectorScan();
     test.require(!fixture.controller.scanActive(),
                  "startSelectedSectorScan without sector is rejected");
 
     fixture.controller.selectSector(10.0, 60.0);
-    fixture.controller.startSelectedSectorScan(12.0);
-    fixture.controller.setScanSpeedDegPerSec(20.0);
+    fixture.controller.startSelectedSectorScan();
+    fixture.controller.setAntennaSpeedDegPerSec(20.0);
 
+    test.require(fixture.controller.antennaSpeedDegPerSec() == 12.0,
+                 "antenna speed cannot change while scan is active");
     test.require(fixture.controller.scanSpeedDegPerSec() == 12.0,
-                 "scan speed cannot change while scan is active");
+                 "legacy scan speed alias keeps antenna speed");
 }
 
 void testDiagnosticsOnFailure(TestRunner& test)
@@ -324,7 +398,9 @@ int main(int argc, char *argv[])
     testSelectAndClearSector(test);
     testStartRejectsInvalidAndAlreadyActive(test);
     testStartStopAndManualCommands(test);
+    testCommonAntennaSpeedUsedBySelectedScan(test);
     testAzimuthProgressCompletionAndFrames(test);
+    testReverseScanProgressAndCompletion(test);
     testSpeedChangeRejectedDuringScan(test);
     testDiagnosticsOnFailure(test);
     testAzimuthSampleUpdatesCurrentValue(test);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/antenna_motion_planner.h"
 #include "core/domain_models.h"
 #include "core/operation_result.h"
 
@@ -13,6 +14,7 @@ struct AntennaSectorScanCommand
     double safeStartCoordDeg = 0.0;
     double safeEndCoordDeg = 0.0;
     double speedDegPerSec = 10.0;
+    core::ScanDirection direction = core::ScanDirection::IncreasingSafeCoord;
 };
 
 struct AntennaManualMoveCommand

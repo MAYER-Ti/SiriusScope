@@ -159,17 +159,22 @@ void SimulatorAntennaAzimuthSource::updateAzimuth()
         const auto currentCoord =
             core::AntennaMotionPlanner::toSafeCoord(m_state->currentAzimuthDeg());
         const auto targetCoord = command->safeEndCoordDeg;
-        const auto distance = targetCoord - currentCoord;
+        const auto directionSign =
+            command->direction == core::ScanDirection::IncreasingSafeCoord ? 1.0 : -1.0;
+        const auto distance = (targetCoord - currentCoord) * directionSign;
         const auto step = movementStep(command->speedDegPerSec, m_config.updatePeriod);
 
-        if (step <= 0.0 || std::abs(distance) <= step) {
+        if (step <= 0.0 || distance <= step) {
             m_state->setCurrentAzimuthDeg(command->endAzimuthDeg);
             m_state->setMoving(false);
             return;
         }
 
         m_state->setCurrentAzimuthDeg(
-            core::AntennaMotionPlanner::fromSafeCoord(currentCoord + step));
+            core::AntennaMotionPlanner::fromSafeCoord(
+                std::clamp(currentCoord + directionSign * step,
+                           0.0,
+                           core::AntennaMotionPlanner::maxSafeCoordDeg)));
         return;
     }
 

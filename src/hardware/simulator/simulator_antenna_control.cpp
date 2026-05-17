@@ -102,8 +102,10 @@ core::OperationResult SimulatorAntennaControl::startSectorScan(
     }
 
     if (command.safeStartCoordDeg < 0.0
+        || command.safeStartCoordDeg > core::AntennaMotionPlanner::maxSafeCoordDeg
+        || command.safeEndCoordDeg < 0.0
         || command.safeEndCoordDeg > core::AntennaMotionPlanner::maxSafeCoordDeg
-        || command.safeStartCoordDeg >= command.safeEndCoordDeg) {
+        || std::abs(command.safeStartCoordDeg - command.safeEndCoordDeg) <= 0.001) {
         const auto message = "scan sector safe path is invalid";
         publish(infrastructure::DiagnosticSeverity::Warning, message);
         return core::OperationResult::failure(message);
