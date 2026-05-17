@@ -1,4 +1,8 @@
 #include "app/bearingframebus.h"
+#include "app/interfaces/processing_flush_control.h"
+#include "app/interfaces/result_table_sink.h"
+#include "app/interfaces/scan_acquisition_recorder.h"
+#include "app/interfaces/scan_recording_control.h"
 #include "app/scancontroller.h"
 
 #include <QCoreApplication>
@@ -12,6 +16,7 @@
 #include <functional>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,6 +65,20 @@ void processEventsFor(int durationMs)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         QThread::msleep(5);
     }
+}
+
+bool containsEventsInOrder(const std::vector<std::string>& events,
+                           const std::vector<std::string>& expected)
+{
+    auto current = events.cbegin();
+    for (const auto& item : expected) {
+        current = std::find(current, events.cend(), item);
+        if (current == events.cend()) {
+            return false;
+        }
+        ++current;
+    }
+    return true;
 }
 
 class FakeAntennaControl final : public hardware::IAntennaControl
@@ -171,6 +190,209 @@ private:
     std::vector<infrastructure::DiagnosticEvent> events;
 };
 
+class RecordingScanAcquisitionRecorder final : public app::IScanAcquisitionRecorder
+{
+public:
+    explicit RecordingScanAcquisitionRecorder(std::vector<std::string>* eventLog = nullptr)
+        : events(eventLog)
+    {
+    }
+
+    core::OperationResult begin(const app::ScanAcquisitionMetadata& metadata) override
+    {
+        if (activeSession) {
+            return core::OperationResult::failure("active");
+        }
+        if (failBegin) {
+            return core::OperationResult::failure("begin failed");
+        }
+
+        ++beginCalls;
+        if (events) {
+            events->push_back("acquisition.begin");
+        }
+        activeSession = app::ScanAcquisitionSession{metadata, {}};
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult append(
+        const processing::BearingFrameObservation& observation) override
+    {
+        if (!activeSession) {
+            return core::OperationResult::failure("inactive");
+        }
+        if (failAppend) {
+            return core::OperationResult::failure("append failed");
+        }
+
+        ++appendCalls;
+        if (events) {
+            events->push_back("acquisition.append");
+        }
+        activeSession->observations.push_back(observation);
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult close(const app::ScanAcquisitionMetadata& finalMetadata) override
+    {
+        if (!activeSession) {
+            return core::OperationResult::failure("inactive");
+        }
+
+        ++closeCalls;
+        if (events) {
+            events->push_back("acquisition.close");
+        }
+        activeSession->metadata = finalMetadata;
+        closedSessions.push_back(std::move(*activeSession));
+        activeSession.reset();
+        return core::OperationResult::ok();
+    }
+
+    std::vector<processing::BearingFrameObservation> observations(
+        std::uint64_t scanSessionId) const override
+    {
+        if (activeSession && activeSession->metadata.scanSessionId == scanSessionId) {
+            return activeSession->observations;
+        }
+        const auto found =
+            std::find_if(closedSessions.cbegin(),
+                         closedSessions.cend(),
+                         [scanSessionId](const app::ScanAcquisitionSession& session) {
+                             return session.metadata.scanSessionId == scanSessionId;
+                         });
+        return found == closedSessions.cend()
+            ? std::vector<processing::BearingFrameObservation>{}
+            : found->observations;
+    }
+
+    bool active() const noexcept override { return activeSession.has_value(); }
+
+    int beginCalls = 0;
+    int appendCalls = 0;
+    int closeCalls = 0;
+    bool failBegin = false;
+    bool failAppend = false;
+    std::optional<app::ScanAcquisitionSession> activeSession;
+    std::vector<app::ScanAcquisitionSession> closedSessions;
+    std::vector<std::string>* events = nullptr;
+};
+
+class FakeProcessingFlushControl final : public app::IProcessingFlushControl
+{
+public:
+    explicit FakeProcessingFlushControl(std::vector<std::string>* eventLog = nullptr)
+        : events(eventLog)
+    {
+    }
+
+    core::OperationResult flushProcessing(std::chrono::milliseconds) override
+    {
+        ++flushCalls;
+        if (events) {
+            events->push_back("processing.flush");
+        }
+        if (onFlush) {
+            onFlush();
+        }
+        if (failFlush) {
+            return core::OperationResult::failure("flush failed");
+        }
+        return core::OperationResult::ok();
+    }
+
+    int flushCalls = 0;
+    bool failFlush = false;
+    std::function<void()> onFlush;
+    std::vector<std::string>* events = nullptr;
+};
+
+class FakeScanRecordingControl final : public app::IScanRecordingControl
+{
+public:
+    explicit FakeScanRecordingControl(std::vector<std::string>* eventLog = nullptr)
+        : events(eventLog)
+    {
+    }
+
+    core::OperationResult beginScanRecording(std::uint64_t scanSessionId) override
+    {
+        ++beginCalls;
+        activeSessionId = scanSessionId;
+        if (events) {
+            events->push_back("recording.begin");
+        }
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult endScanRecording(std::uint64_t scanSessionId) override
+    {
+        ++endCalls;
+        endedSessionId = scanSessionId;
+        activeSessionId.reset();
+        if (events) {
+            events->push_back("recording.end");
+        }
+        return core::OperationResult::ok();
+    }
+
+    int beginCalls = 0;
+    int endCalls = 0;
+    std::optional<std::uint64_t> activeSessionId;
+    std::uint64_t endedSessionId = 0;
+    std::vector<std::string>* events = nullptr;
+};
+
+class RecordingResultTableSink final : public app::IResultTableSink
+{
+public:
+    explicit RecordingResultTableSink(std::vector<std::string>* eventLog = nullptr)
+        : events(eventLog)
+    {
+    }
+
+    core::OperationResult appendBearingResults(
+        std::uint64_t scanSessionId,
+        const std::vector<core::BearingResult>& results) override
+    {
+        ++appendCalls;
+        lastSessionId = scanSessionId;
+        lastResultCount = static_cast<int>(results.size());
+        if (events) {
+            events->push_back("result.append");
+        }
+        return core::OperationResult::ok();
+    }
+
+    int appendCalls = 0;
+    int lastResultCount = 0;
+    std::uint64_t lastSessionId = 0;
+    std::vector<std::string>* events = nullptr;
+};
+
+class RecordingBearingService final : public processing::BearingService
+{
+public:
+    explicit RecordingBearingService(std::vector<std::string>* eventLog = nullptr)
+        : events(eventLog)
+    {
+    }
+
+    processing::BearingCalculationResult calculate(
+        const std::vector<processing::BearingFrameObservation>& observations,
+        const core::TimeBase& timeBase,
+        const core::RuntimeCapabilities& capabilities =
+            core::defaultRuntimeCapabilities()) const override
+    {
+        if (events) {
+            events->push_back("bearing.calculate");
+        }
+        return processing::BearingService::calculate(observations, timeBase, capabilities);
+    }
+
+    std::vector<std::string>* events = nullptr;
+};
+
 processing::BearingInputFrame makeBearingFrame(std::uint64_t sampleIndex)
 {
     processing::BearingInputFrame frame;
@@ -193,12 +415,25 @@ processing::BearingInputFrame makeBearingFrame(std::uint64_t sampleIndex)
 
 struct ControllerFixture
 {
+    std::vector<std::string> events;
     FakeAntennaControl control;
     FakeAzimuthSource azimuthSource;
     app::BearingFrameBus bus;
-    processing::BearingService bearingService;
+    RecordingBearingService bearingService{&events};
+    RecordingScanAcquisitionRecorder recorder{&events};
+    FakeProcessingFlushControl flushControl{&events};
+    FakeScanRecordingControl recordingControl{&events};
+    RecordingResultTableSink resultTableSink{&events};
     RecordingDiagnosticsSink diagnostics;
-    app::ScanController controller{&control, &azimuthSource, &bus, &bearingService, &diagnostics};
+    app::ScanController controller{&control,
+                                   &azimuthSource,
+                                   &bus,
+                                   &bearingService,
+                                   &recorder,
+                                   &flushControl,
+                                   &recordingControl,
+                                   &resultTableSink,
+                                   &diagnostics};
 };
 
 void testSelectAndClearSector(TestRunner& test)
@@ -283,6 +518,31 @@ void testCommonAntennaSpeedUsedBySelectedScan(TestRunner& test)
                  "startSelectedSectorScan uses configured antenna speed");
 }
 
+void testAcquisitionOpensOnlyWhenSectorScanBegins(TestRunner& test)
+{
+    ControllerFixture fixture;
+
+    fixture.controller.startScan(10.0, 60.0, 10.0);
+    processEventsFor(40);
+
+    test.require(fixture.controller.scanStateText() == QStringLiteral("moving to start"),
+                 "startScan enters MovingToStart first");
+    test.require(fixture.recorder.beginCalls == 0,
+                 "startScan does not open acquisition while moving to start");
+    test.require(fixture.recordingControl.beginCalls == 0,
+                 "startScan does not start scan recording while moving to start");
+
+    fixture.azimuthSource.emitAzimuth(10.0);
+    const bool opened = waitUntil([&fixture] {
+        return fixture.recorder.beginCalls == 1
+            && fixture.controller.scanStateText() == QStringLiteral("scanning");
+    });
+
+    test.require(opened, "beginSectorScan opens acquisition");
+    test.require(fixture.recordingControl.beginCalls == 1,
+                 "beginSectorScan starts waterfall scan recording");
+}
+
 void testBearingFramesOutsideScanIgnored(TestRunner& test)
 {
     ControllerFixture fixture;
@@ -294,6 +554,76 @@ void testBearingFramesOutsideScanIgnored(TestRunner& test)
                  "bearing frames outside scanning do not create target azimuths");
     test.require(fixture.controller.targetBearings().empty(),
                  "bearing frames outside scanning do not create target bearings");
+    test.require(fixture.recorder.appendCalls == 0,
+                 "bearing frames outside scanning do not enter acquisition");
+}
+
+void testFlushDrainFramesBeforeClose(TestRunner& test)
+{
+    ControllerFixture fixture;
+    int completedFrames = -1;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::scanCompleted,
+                     [&](qulonglong, int frameCount) {
+                         completedFrames = frameCount;
+                     });
+
+    fixture.flushControl.onFlush = [&fixture] {
+        fixture.bus.publish({makeBearingFrame(77)});
+    };
+
+    fixture.controller.startScan(10.0, 60.0, 10.0);
+    fixture.azimuthSource.emitAzimuth(10.0);
+    const bool scanStarted = waitUntil([&fixture] {
+        return fixture.recorder.beginCalls == 1;
+    });
+
+    fixture.azimuthSource.emitAzimuth(60.0);
+    const bool completed = waitUntil([&] {
+        return completedFrames == 1;
+    });
+
+    test.require(scanStarted, "scan starts before flush-drain test");
+    test.require(completed, "scan completes after flush-drained frame");
+    test.require(fixture.flushControl.flushCalls == 1,
+                 "completeScan asks processing path to flush");
+    test.require(fixture.recorder.closeCalls == 1,
+                 "completeScan closes acquisition");
+    test.require(fixture.resultTableSink.appendCalls == 1,
+                 "calculated results are forwarded to result table sink");
+}
+
+void testStopScanClosesAcquisitionAndRecording(TestRunner& test)
+{
+    ControllerFixture fixture;
+    int cancelledSessionId = -1;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::scanCancelled,
+                     [&](qulonglong sessionId) {
+                         cancelledSessionId = static_cast<int>(sessionId);
+                     });
+
+    fixture.controller.startScan(10.0, 60.0, 10.0);
+    fixture.azimuthSource.emitAzimuth(10.0);
+    const bool opened = waitUntil([&fixture] {
+        return fixture.recorder.beginCalls == 1;
+    });
+
+    fixture.bus.publish({makeBearingFrame(1)});
+    waitUntil([&fixture] {
+        return fixture.recorder.appendCalls == 1;
+    });
+
+    fixture.controller.stopScan();
+
+    test.require(opened, "scan acquisition opened before cancellation");
+    test.require(cancelledSessionId == 1, "stopScan emits cancelled session id");
+    test.require(fixture.recorder.closeCalls == 1,
+                 "stopScan closes active acquisition");
+    test.require(fixture.recordingControl.endCalls == 1,
+                 "stopScan ends scan recording");
+    test.require(fixture.resultTableSink.appendCalls == 0,
+                 "cancelled scan does not append bearing results");
 }
 
 void testAzimuthProgressCompletionAndFrames(TestRunner& test)
@@ -333,6 +663,10 @@ void testAzimuthProgressCompletionAndFrames(TestRunner& test)
     test.require(progressUpdated, "scan progress grows during movement");
     test.require(completed, "scan completes when target is reached");
     test.require(bearingResultCount == 1, "scan with bearing frame emits one result");
+    test.require(fixture.recorder.appendCalls == 1,
+                 "bearing frame during Scanning is appended to acquisition");
+    test.require(fixture.recorder.closeCalls == 1,
+                 "completed scan closes acquisition before calculation result is emitted");
     test.require(fixture.controller.targetAzimuthsDeg().size() == 1,
                  "targetAzimuthsDeg exposes calculated bearing");
     test.require(fixture.controller.targetBearings().size() == 1,
@@ -391,8 +725,8 @@ void testReverseScanProgressAndCompletion(TestRunner& test)
                  "empty scan has no target azimuths");
     test.require(fixture.controller.targetBearings().empty(),
                  "empty scan has no target bearing details");
-    test.require(fixture.diagnostics.contains("no bearing frames collected"),
-                 "empty scan is diagnosed");
+    test.require(fixture.diagnostics.contains("scan acquisition has no observations"),
+                 "empty scan acquisition is diagnosed");
 }
 
 void testRepeatScanClearsOldBearingResults(TestRunner& test)
@@ -440,6 +774,54 @@ void testRepeatScanClearsOldBearingResults(TestRunner& test)
     test.require(secondCompleted, "second scan completes");
     test.require(fixture.controller.targetBearings().empty(),
                  "empty second scan keeps bearing details empty");
+}
+
+void testScanLifecycleEventOrder(TestRunner& test)
+{
+    ControllerFixture fixture;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::bearingResultsReady,
+                     [&](qulonglong, int) {
+                         fixture.events.push_back("bearing.resultsReady");
+                     });
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::scanCompleted,
+                     [&](qulonglong, int) {
+                         fixture.events.push_back("scan.completed");
+                     });
+
+    fixture.controller.startScan(10.0, 60.0, 10.0);
+    fixture.azimuthSource.emitAzimuth(10.0);
+    const bool opened = waitUntil([&fixture] {
+        return fixture.recorder.beginCalls == 1;
+    });
+    if (opened) {
+        fixture.bus.publish({makeBearingFrame(1)});
+    }
+    const bool appended = waitUntil([&fixture] {
+        return fixture.recorder.appendCalls == 1;
+    });
+
+    fixture.azimuthSource.emitAzimuth(60.0);
+    const bool completed = waitUntil([&fixture] {
+        return containsEventsInOrder(fixture.events,
+                                     {"scan.completed"});
+    });
+
+    test.require(opened, "lifecycle order test opens acquisition");
+    test.require(appended, "lifecycle order test appends observation");
+    test.require(completed, "lifecycle order test completes scan");
+    test.require(containsEventsInOrder(fixture.events,
+                                       {"acquisition.begin",
+                                        "acquisition.append",
+                                        "processing.flush",
+                                        "recording.end",
+                                        "acquisition.close",
+                                        "bearing.calculate",
+                                        "bearing.resultsReady",
+                                        "result.append",
+                                        "scan.completed"}),
+                 "scan lifecycle events occur in the expected order");
 }
 
 void testSpeedChangeRejectedDuringScan(TestRunner& test)
@@ -495,10 +877,14 @@ int main(int argc, char *argv[])
     testStartRejectsInvalidAndAlreadyActive(test);
     testStartStopAndManualCommands(test);
     testCommonAntennaSpeedUsedBySelectedScan(test);
+    testAcquisitionOpensOnlyWhenSectorScanBegins(test);
     testBearingFramesOutsideScanIgnored(test);
+    testFlushDrainFramesBeforeClose(test);
+    testStopScanClosesAcquisitionAndRecording(test);
     testAzimuthProgressCompletionAndFrames(test);
     testReverseScanProgressAndCompletion(test);
     testRepeatScanClearsOldBearingResults(test);
+    testScanLifecycleEventOrder(test);
     testSpeedChangeRejectedDuringScan(test);
     testDiagnosticsOnFailure(test);
     testAzimuthSampleUpdatesCurrentValue(test);

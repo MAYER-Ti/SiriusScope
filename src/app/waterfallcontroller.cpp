@@ -252,6 +252,31 @@ void WaterfallController::setBandConfigs(std::vector<core::BandConfig> bandConfi
     m_workerCondition.notify_all();
 }
 
+core::OperationResult WaterfallController::flushProcessing(std::chrono::milliseconds timeout)
+{
+    if (timeout.count() < 0) {
+        return core::OperationResult::failure("processing flush timeout is invalid");
+    }
+
+    std::unique_lock lock(m_workerMutex);
+    if (!m_workerRunning) {
+        return core::OperationResult::failure("processing worker is not running");
+    }
+
+    const auto requestId = ++m_flushRequestId;
+    m_workerCondition.notify_all();
+
+    const bool completed =
+        m_workerCondition.wait_for(lock, timeout, [this, requestId] {
+            return m_completedFlushRequestId >= requestId || !m_workerRunning;
+        });
+    if (!completed || m_completedFlushRequestId < requestId) {
+        return core::OperationResult::failure("processing flush timed out");
+    }
+
+    return core::OperationResult::ok();
+}
+
 void WaterfallController::startHistoryWorker()
 {
     std::lock_guard lock(m_historyMutex);
@@ -532,6 +557,7 @@ void WaterfallController::processingLoop()
     processing::SampleProcessor processor(config);
     std::vector<core::SignalSample> pendingSamples;
     std::size_t pendingEmptyBatches = 0;
+    std::uint64_t workerFlushRequestId = 0;
     auto nextFlush = std::chrono::steady_clock::now()
         + std::chrono::milliseconds(std::max(1, m_controllerConfig.sourceFlushIntervalMs));
 
@@ -540,19 +566,26 @@ void WaterfallController::processingLoop()
         std::size_t droppedBatches = 0;
         std::size_t droppedSamples = 0;
         bool configChanged = false;
+        bool flushRequested = false;
+        std::uint64_t flushRequestId = 0;
 
         {
             std::unique_lock lock(m_workerMutex);
-            m_workerCondition.wait_until(lock, nextFlush, [this, workerConfigRevision] {
-                return m_stopRequested
-                    || !m_queuedBatches.empty()
-                    || m_configRevision != workerConfigRevision;
-            });
+            m_workerCondition.wait_until(lock,
+                                         nextFlush,
+                                         [this, workerConfigRevision, &workerFlushRequestId] {
+                                             return m_stopRequested
+                                                 || !m_queuedBatches.empty()
+                                                 || m_configRevision != workerConfigRevision
+                                                 || m_flushRequestId > workerFlushRequestId;
+                                         });
 
             if (m_stopRequested) {
                 break;
             }
 
+            flushRequested = m_flushRequestId > workerFlushRequestId;
+            flushRequestId = m_flushRequestId;
             batches.swap(m_queuedBatches);
             droppedBatches = m_droppedBatchCount;
             droppedSamples = m_droppedSampleCount;
@@ -565,6 +598,20 @@ void WaterfallController::processingLoop()
                 configChanged = true;
             }
         }
+
+        const auto completeFlush = [&] {
+            if (!flushRequested) {
+                return;
+            }
+
+            {
+                std::lock_guard lock(m_workerMutex);
+                workerFlushRequestId = std::max(workerFlushRequestId, flushRequestId);
+                m_completedFlushRequestId =
+                    std::max(m_completedFlushRequestId, flushRequestId);
+            }
+            m_workerCondition.notify_all();
+        };
 
         if (configChanged) {
             processor = processing::SampleProcessor(config);
@@ -592,7 +639,7 @@ void WaterfallController::processingLoop()
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (now < nextFlush) {
+        if (!flushRequested && now < nextFlush) {
             continue;
         }
 
@@ -607,6 +654,7 @@ void WaterfallController::processingLoop()
             processingBatch.samples.empty() && pendingEmptyBatches > 0;
         pendingEmptyBatches = 0;
         if (processingBatch.samples.empty() && !shouldProcessEmptyBatch) {
+            completeFlush();
             continue;
         }
 
@@ -618,6 +666,7 @@ void WaterfallController::processingLoop()
             }
 
             if (processingResult.waterfallFrame.rows.empty()) {
+                completeFlush();
                 continue;
             }
 
@@ -640,6 +689,8 @@ void WaterfallController::processingLoop()
             publish(infrastructure::DiagnosticSeverity::Error,
                     "processor exception: unknown failure");
         }
+
+        completeFlush();
     }
 }
 

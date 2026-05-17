@@ -1,4 +1,5 @@
 #include "app/bearingframebus.h"
+#include "app/inmemoryscanacquisitionrecorder.h"
 #include "app/scancontroller.h"
 #include "hardware/simulator/simulator_antenna_azimuth_source.h"
 #include "hardware/simulator/simulator_antenna_control.h"
@@ -87,7 +88,16 @@ void testSimulatorPathCompletesSectorScan(TestRunner& test)
         &diagnostics);
     app::BearingFrameBus bus;
     processing::BearingService bearingService;
-    app::ScanController controller(&control, &source, &bus, &bearingService, &diagnostics);
+    app::InMemoryScanAcquisitionRecorder recorder;
+    app::ScanController controller(&control,
+                                   &source,
+                                   &bus,
+                                   &bearingService,
+                                   &recorder,
+                                   nullptr,
+                                   nullptr,
+                                   nullptr,
+                                   &diagnostics);
 
     int completedFrames = -1;
     QObject::connect(&controller,
@@ -129,7 +139,16 @@ void testSimulatorPathCompletesReverseSectorScan(TestRunner& test)
         &diagnostics);
     app::BearingFrameBus bus;
     processing::BearingService bearingService;
-    app::ScanController controller(&control, &source, &bus, &bearingService, &diagnostics);
+    app::InMemoryScanAcquisitionRecorder recorder;
+    app::ScanController controller(&control,
+                                   &source,
+                                   &bus,
+                                   &bearingService,
+                                   &recorder,
+                                   nullptr,
+                                   nullptr,
+                                   nullptr,
+                                   &diagnostics);
 
     int completedFrames = -1;
     QObject::connect(&controller,

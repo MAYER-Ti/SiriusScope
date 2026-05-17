@@ -98,6 +98,10 @@ ScanController::ScanController(hardware::IAntennaControl* antennaControl,
                                hardware::IAntennaAzimuthSource* azimuthSource,
                                BearingFrameBus* bearingFrameBus,
                                processing::BearingService* bearingService,
+                               IScanAcquisitionRecorder* scanAcquisitionRecorder,
+                               IProcessingFlushControl* processingFlushControl,
+                               IScanRecordingControl* scanRecordingControl,
+                               IResultTableSink* resultTableSink,
                                infrastructure::IDiagnosticsSink* diagnosticsSink,
                                QObject* parent)
     : QObject(parent)
@@ -105,6 +109,10 @@ ScanController::ScanController(hardware::IAntennaControl* antennaControl,
     , m_azimuthSource(azimuthSource)
     , m_bearingFrameBus(bearingFrameBus)
     , m_bearingService(bearingService)
+    , m_scanAcquisitionRecorder(scanAcquisitionRecorder)
+    , m_processingFlushControl(processingFlushControl)
+    , m_scanRecordingControl(scanRecordingControl)
+    , m_resultTableSink(resultTableSink)
     , m_diagnosticsSink(diagnosticsSink)
 {
     if (m_bearingFrameBus) {
@@ -282,6 +290,10 @@ void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double
         failScan(QStringLiteral("antenna control is not configured"));
         return;
     }
+    if (!m_scanAcquisitionRecorder) {
+        failScan(QStringLiteral("scan acquisition recorder is not configured"));
+        return;
+    }
 
     storeSelectedSector(planned.value()->requestedSector);
     clearBearingResults();
@@ -330,6 +342,9 @@ void ScanController::stopScan()
     if (m_antennaControl) {
         m_antennaControl->stop();
     }
+
+    closeActiveAcquisitionWithoutCalculation(sessionId);
+    endScanRecording(sessionId);
 
     m_activeSession.reset();
     setProgress(0.0);
@@ -486,8 +501,37 @@ void ScanController::beginSectorScan()
         return;
     }
 
+    const auto sessionId = m_activeSession->id;
+    if (m_scanRecordingControl) {
+        const auto recordingResult = m_scanRecordingControl->beginScanRecording(sessionId);
+        if (!recordingResult) {
+            publish(infrastructure::DiagnosticSeverity::Warning,
+                    "ScanController: scan recording start failed: " + recordingResult.message);
+        }
+    }
+
+    ScanAcquisitionMetadata metadata;
+    metadata.scanSessionId = sessionId;
+    metadata.requestedSector = m_activeSession->requestedSector;
+    metadata.startedAt = std::chrono::system_clock::now();
+    metadata.finishedAt = metadata.startedAt;
+    metadata.startAzimuthDeg = m_currentAzimuthDeg;
+    metadata.endAzimuthDeg = m_currentAzimuthDeg;
+    metadata.speedDegPerSec = m_activeSession->speedDegPerSec;
+
+    const auto beginResult = m_scanAcquisitionRecorder->begin(metadata);
+    if (!beginResult) {
+        failScan(QString::fromStdString(
+            "scan acquisition start failed: " + beginResult.message));
+        return;
+    }
+    m_activeSession->acquisitionMetadata = metadata;
+    m_activeSession->timeBase.reset();
+
     setProgress(0.0);
     setState(ScanState::Scanning);
+    publish(infrastructure::DiagnosticSeverity::Info,
+            "ScanController: scan acquisition session opened");
     publish(infrastructure::DiagnosticSeverity::Info,
             "ScanController: sector scan command accepted");
 }
@@ -500,32 +544,91 @@ void ScanController::completeScan()
 
     setState(ScanState::Completing);
     const auto sessionId = m_activeSession->id;
-    const int frameCount =
-        static_cast<int>(m_activeSession->bearingObservations.size());
     m_activeSession->finishedAt = std::chrono::system_clock::now();
 
     if (m_antennaControl) {
         m_antennaControl->stop();
     }
 
+    if (m_processingFlushControl) {
+        const auto flushResult =
+            m_processingFlushControl->flushProcessing(std::chrono::milliseconds{1500});
+        if (!flushResult) {
+            publish(infrastructure::DiagnosticSeverity::Warning,
+                    "ScanController: processing flush before bearing calculation failed: "
+                        + flushResult.message);
+        }
+    }
+
+    QMetaObject::invokeMethod(this,
+                              [this, sessionId] {
+                                  finalizeCompletedScan(sessionId);
+                              },
+                              Qt::QueuedConnection);
+}
+
+void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
+{
+    if (!m_activeSession || m_activeSession->id != sessionId) {
+        return;
+    }
+
+    const auto finishedAt = m_activeSession->finishedAt == std::chrono::system_clock::time_point{}
+        ? std::chrono::system_clock::now()
+        : m_activeSession->finishedAt;
+
     core::TimeBase timeBase;
     if (m_activeSession->timeBase) {
         timeBase = *m_activeSession->timeBase;
     } else if (auto created = core::TimeBase::create(
-                   toUtcNs(m_activeSession->startedAt),
+                   toUtcNs(m_activeSession->acquisitionMetadata.startedAt),
                    0,
                    core::DomainConstraints::defaultSamplePeriodNs)) {
         timeBase = *created.value();
+        m_activeSession->timeBase = timeBase;
+    }
+
+    auto finalMetadata = m_activeSession->acquisitionMetadata;
+    finalMetadata.finishedAt = finishedAt;
+    finalMetadata.endAzimuthDeg = m_activeSession->lastAzimuthDeg;
+    finalMetadata.timeBase = m_activeSession->timeBase;
+
+    endScanRecording(sessionId);
+
+    bool acquisitionClosed = false;
+    if (m_scanAcquisitionRecorder && m_scanAcquisitionRecorder->active()) {
+        const auto closeResult = m_scanAcquisitionRecorder->close(finalMetadata);
+        if (!closeResult) {
+            publish(infrastructure::DiagnosticSeverity::Error,
+                    "ScanController: scan acquisition close failed: " + closeResult.message);
+        } else {
+            acquisitionClosed = true;
+        }
+    }
+
+    auto observations = m_scanAcquisitionRecorder
+        ? m_scanAcquisitionRecorder->observations(sessionId)
+        : std::vector<processing::BearingFrameObservation>{};
+    const int frameCount = static_cast<int>(observations.size());
+    if (acquisitionClosed) {
+        publish(infrastructure::DiagnosticSeverity::Info,
+                "ScanController: scan acquisition session closed, observations="
+                    + std::to_string(frameCount));
     }
 
     if (m_bearingService) {
+        publish(infrastructure::DiagnosticSeverity::Info,
+                "ScanController: bearing calculation started");
         const auto calculation = m_bearingService->calculate(
-            m_activeSession->bearingObservations,
+            observations,
             timeBase,
             core::defaultRuntimeCapabilities());
         m_lastBearingResults = calculation.results;
         rebuildBearingPresentation();
         publishProcessingDiagnostics(calculation.diagnostics);
+        publish(infrastructure::DiagnosticSeverity::Info,
+                "ScanController: bearing calculation completed, results="
+                    + std::to_string(m_lastBearingResults.size()));
     } else {
         m_lastBearingResults.clear();
         rebuildBearingPresentation();
@@ -538,13 +641,22 @@ void ScanController::completeScan()
                              static_cast<int>(m_lastBearingResults.size()));
     emit bearingResultsCalculated(static_cast<qulonglong>(sessionId), m_targetBearings);
 
+    if (m_resultTableSink) {
+        const auto result = m_resultTableSink->appendBearingResults(sessionId,
+                                                                    m_lastBearingResults);
+        if (!result) {
+            publish(infrastructure::DiagnosticSeverity::Warning,
+                    "ScanController: result table append failed: " + result.message);
+        }
+    }
+
     m_activeSession.reset();
     setProgress(1.0);
     setState(ScanState::Completed);
 
     if (frameCount == 0) {
         publish(infrastructure::DiagnosticSeverity::Warning,
-                "ScanController: no bearing frames collected during scan");
+                "ScanController: scan acquisition has no observations");
     }
 
     publish(infrastructure::DiagnosticSeverity::Info,
@@ -559,6 +671,9 @@ void ScanController::failScan(const QString& reason)
         m_antennaControl->stop();
     }
 
+    closeActiveAcquisitionWithoutCalculation(sessionId);
+    endScanRecording(sessionId);
+
     m_activeSession.reset();
     setLastError(reason);
     setProgress(0.0);
@@ -568,19 +683,67 @@ void ScanController::failScan(const QString& reason)
     emit scanFailed(static_cast<qulonglong>(sessionId), reason);
 }
 
+void ScanController::closeActiveAcquisitionWithoutCalculation(std::uint64_t sessionId)
+{
+    if (!m_activeSession || !m_scanAcquisitionRecorder || !m_scanAcquisitionRecorder->active()) {
+        return;
+    }
+
+    auto finalMetadata = m_activeSession->acquisitionMetadata;
+    finalMetadata.finishedAt = std::chrono::system_clock::now();
+    finalMetadata.endAzimuthDeg = m_activeSession->lastAzimuthDeg;
+    finalMetadata.timeBase = m_activeSession->timeBase;
+
+    const auto result = m_scanAcquisitionRecorder->close(finalMetadata);
+    if (!result) {
+        publish(infrastructure::DiagnosticSeverity::Error,
+                "ScanController: scan acquisition close failed: " + result.message);
+        return;
+    }
+
+    const auto observationCount =
+        m_scanAcquisitionRecorder->observations(sessionId).size();
+    publish(infrastructure::DiagnosticSeverity::Info,
+            "ScanController: scan acquisition session closed, observations="
+                + std::to_string(observationCount));
+}
+
+void ScanController::endScanRecording(std::uint64_t sessionId)
+{
+    if (!m_scanRecordingControl) {
+        return;
+    }
+
+    const auto result = m_scanRecordingControl->endScanRecording(sessionId);
+    if (!result) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "ScanController: scan recording stop failed: " + result.message);
+    }
+}
+
 void ScanController::onBearingFrames(std::vector<processing::BearingInputFrame> frames)
 {
-    if (!m_activeSession || m_state != ScanState::Scanning || frames.empty()) {
+    const bool acceptsFrames = m_state == ScanState::Scanning
+        || (m_state == ScanState::Completing
+            && m_scanAcquisitionRecorder
+            && m_scanAcquisitionRecorder->active());
+    if (!m_activeSession || !acceptsFrames || frames.empty()) {
+        return;
+    }
+    if (!m_scanAcquisitionRecorder || !m_scanAcquisitionRecorder->active()) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "ScanController: bearing frame ignored because scan acquisition is not active");
         return;
     }
 
     if (!m_activeSession->timeBase) {
         auto created = core::TimeBase::create(
-            toUtcNs(m_activeSession->startedAt),
+            toUtcNs(m_activeSession->acquisitionMetadata.startedAt),
             minSampleIndex(frames),
             core::DomainConstraints::defaultSamplePeriodNs);
         if (created) {
             m_activeSession->timeBase = *created.value();
+            m_activeSession->acquisitionMetadata.timeBase = m_activeSession->timeBase;
         } else {
             publish(infrastructure::DiagnosticSeverity::Error,
                     "ScanController: failed to create bearing timebase");
@@ -590,12 +753,17 @@ void ScanController::onBearingFrames(std::vector<processing::BearingInputFrame> 
     const auto observedUtcNs = toUtcNs(std::chrono::system_clock::now());
     const auto azimuthDeg = m_activeSession->lastAzimuthDeg;
     for (auto& frame : frames) {
-        m_activeSession->bearingObservations.push_back(
-            processing::BearingFrameObservation{
-                std::move(frame),
-                azimuthDeg,
-                observedUtcNs,
-            });
+        processing::BearingFrameObservation observation{
+            std::move(frame),
+            azimuthDeg,
+            observedUtcNs,
+        };
+        const auto appendResult = m_scanAcquisitionRecorder->append(observation);
+        if (!appendResult) {
+            publish(infrastructure::DiagnosticSeverity::Error,
+                    "ScanController: failed to append scan acquisition observation: "
+                        + appendResult.message);
+        }
     }
 }
 

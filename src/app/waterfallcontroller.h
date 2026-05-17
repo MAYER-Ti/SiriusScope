@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/interfaces/processing_flush_control.h"
 #include "core/domain_models.h"
 #include "hardware/interfaces/bco_sample_source.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
@@ -39,7 +40,7 @@ struct WaterfallControllerConfig
     std::size_t maxQueuedBatches = 32;
 };
 
-class WaterfallController final : public QObject
+class WaterfallController final : public QObject, public IProcessingFlushControl
 {
     Q_OBJECT
     Q_PROPERTY(QObject *ringBuffer READ ringBuffer CONSTANT)
@@ -92,6 +93,7 @@ public:
     void start();
     void stop();
     void setBandConfigs(std::vector<core::BandConfig> bandConfigs);
+    core::OperationResult flushProcessing(std::chrono::milliseconds timeout) override;
 
     Q_INVOKABLE QVariantList visibleTimeTicks(int pixelHeight) const;
     Q_INVOKABLE void scrollHistory(int wheelSteps);
@@ -195,6 +197,8 @@ private:
     std::size_t m_configRevision = 0;
     std::size_t m_droppedBatchCount = 0;
     std::size_t m_droppedSampleCount = 0;
+    std::uint64_t m_flushRequestId = 0;
+    std::uint64_t m_completedFlushRequestId = 0;
     bool m_workerRunning = false;
     bool m_stopRequested = false;
 

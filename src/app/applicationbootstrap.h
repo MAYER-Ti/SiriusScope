@@ -7,12 +7,19 @@
 #include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
+#include "inmemoryscanacquisitionrecorder.h"
+#include "interfaces/processing_flush_control.h"
+#include "interfaces/result_table_sink.h"
+#include "interfaces/scan_acquisition_recorder.h"
+#include "interfaces/scan_recording_control.h"
+#include "nullresulttablesink.h"
 #include "processing/bearing_service.h"
 #include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "statusmodel.h"
 #include "waterfallcontroller.h"
+#include "waterfallscanrecordingadapter.h"
 #include "waterfallstorage.h"
 
 #include "hardware/interfaces/antenna_azimuth_source.h"
@@ -51,6 +58,22 @@ public:
     StatusModel* statusModel() noexcept { return m_statusModel.get(); }
     ScanController* scanController() noexcept { return m_scanController.get(); }
     BearingFrameBus* bearingFrameBus() noexcept { return m_bearingFrameBus.get(); }
+    IScanAcquisitionRecorder* scanAcquisitionRecorder() noexcept
+    {
+        return m_scanAcquisitionRecorder.get();
+    }
+    IProcessingFlushControl* processingFlushControl() noexcept
+    {
+        return m_waterfallController.get();
+    }
+    IScanRecordingControl* scanRecordingControl() noexcept
+    {
+        return m_scanRecordingControl.get();
+    }
+    IResultTableSink* resultTableSink() noexcept
+    {
+        return m_resultTableSink.get();
+    }
 
     infrastructure::IDiagnosticsSink* diagnosticsSink() noexcept
     {
@@ -99,6 +122,9 @@ private:
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
     std::unique_ptr<BearingFrameBus> m_bearingFrameBus;
     std::unique_ptr<processing::BearingService> m_bearingService;
+    std::unique_ptr<IScanAcquisitionRecorder> m_scanAcquisitionRecorder;
+    std::unique_ptr<IScanRecordingControl> m_scanRecordingControl;
+    std::unique_ptr<IResultTableSink> m_resultTableSink;
     BandListModel m_bandListModel;
     BandConfigController m_bandConfigController;
     std::unique_ptr<WaterfallController> m_waterfallController;

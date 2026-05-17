@@ -36,6 +36,16 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/frequencygridmodel.cpp
     src/app/frequencyviewportmodel.h
     src/app/frequencyviewportmodel.cpp
+    src/app/inmemoryscanacquisitionrecorder.h
+    src/app/inmemoryscanacquisitionrecorder.cpp
+    src/app/interfaces/processing_flush_control.h
+    src/app/interfaces/result_table_sink.h
+    src/app/interfaces/scan_acquisition_recorder.h
+    src/app/interfaces/scan_recording_control.h
+    src/app/nullresulttablesink.h
+    src/app/nullresulttablesink.cpp
+    src/app/scanacquisitionsession.h
+    src/app/scanacquisitionsession.cpp
     src/app/scancontroller.h
     src/app/scancontroller.cpp
     src/app/spectrumcontrollerstub.h
@@ -48,6 +58,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/syntheticwaterfalldatasource.cpp
     src/app/waterfallcontroller.h
     src/app/waterfallcontroller.cpp
+    src/app/waterfallscanrecordingadapter.h
+    src/app/waterfallscanrecordingadapter.cpp
     src/app/waterfallcontrollerstub.h
     src/app/waterfallcontrollerstub.cpp
     src/app/waterfallcolormapper.h

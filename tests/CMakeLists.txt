@@ -336,6 +336,22 @@ target_include_directories(tst_diagnostics_service
 
 add_test(NAME tst_diagnostics_service COMMAND tst_diagnostics_service)
 
+add_executable(tst_scan_acquisition_recorder
+    app/tst_scan_acquisition_recorder.cpp
+)
+
+target_link_libraries(tst_scan_acquisition_recorder
+    PRIVATE
+        siriusscope_application
+)
+
+target_include_directories(tst_scan_acquisition_recorder
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_scan_acquisition_recorder COMMAND tst_scan_acquisition_recorder)
+
 add_executable(tst_scan_controller
     app/tst_scan_controller.cpp
 )
@@ -369,6 +385,23 @@ target_include_directories(tst_scan_controller_simulator
 )
 
 add_test(NAME tst_scan_controller_simulator COMMAND tst_scan_controller_simulator)
+
+add_executable(tst_waterfall_scan_recording_adapter
+    app/tst_waterfall_scan_recording_adapter.cpp
+)
+
+target_link_libraries(tst_waterfall_scan_recording_adapter
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_waterfall_scan_recording_adapter
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_waterfall_scan_recording_adapter COMMAND tst_waterfall_scan_recording_adapter)
 
 add_executable(tst_status_model
     app/tst_status_model.cpp
@@ -453,10 +486,16 @@ if(WIN32)
         set_tests_properties(tst_diagnostics_service PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
+        set_tests_properties(tst_scan_acquisition_recorder PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
         set_tests_properties(tst_scan_controller PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_scan_controller_simulator PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_waterfall_scan_recording_adapter PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_status_model PROPERTIES

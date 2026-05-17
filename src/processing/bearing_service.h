@@ -35,8 +35,9 @@ class BearingService
 {
 public:
     explicit BearingService(BearingServiceConfig config = {});
+    virtual ~BearingService() = default;
 
-    BearingCalculationResult calculate(
+    virtual BearingCalculationResult calculate(
         const std::vector<BearingFrameObservation>& observations,
         const core::TimeBase& timeBase,
         const core::RuntimeCapabilities& capabilities =

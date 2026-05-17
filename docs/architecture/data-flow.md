@@ -154,7 +154,7 @@ Operator selects sector in AntennaIndicator
     -> BCO samples are collected during scan
     -> SampleProcessor prepares BearingInputFrame
     -> BearingFrameBus
-    -> ScanController stores BearingFrameObservation values with current antenna azimuth
+    -> ScanAcquisitionSession stores BearingFrameObservation values with current antenna azimuth
     -> BearingService
     -> BearingResult per BandItem
     -> AntennaIndicator model
@@ -169,6 +169,7 @@ Operator selects sector in AntennaIndicator
 * QML must call an application-level scan command.
 * Antenna blind zone handling belongs to antenna-control/application logic, not QML visuals.
 * `ScanController` coordinates scan sessions and passes collected `BearingFrameObservation` data to `BearingService`; it must not implement the bearing formula itself.
+* `ScanController` must open scan acquisition only after the antenna starts the sector pass; frames collected while moving to the sector start are not part of bearing calculation.
 * Bearing calculation must be performed outside QML.
 * Bearing results must be computed per `BandItem`.
 * Bearing result color must match the related `BandItem` color.
@@ -187,6 +188,23 @@ A `BearingResult` should conceptually contain:
 * diagnostic flags if needed.
 
 Exact fields may evolve, but the result must remain independent from QML item state.
+
+### 5.5 Scan acquisition session
+
+When sector scanning starts, SiriusScope opens a dedicated scan acquisition
+session. During this session, the application collects BCO-derived data prepared
+by `SampleProcessor` as `BearingInputFrame` values and binds them to the current
+antenna azimuth.
+
+After the antenna completes the selected sector, the processing path is flushed,
+the scan acquisition session is closed, and the collected
+`BearingFrameObservation` values are passed to `BearingService`. Waterfall
+recording may be started and stopped along the same scan lifecycle, but bearing
+calculation uses the scan acquisition session, not Waterfall pixels.
+
+Bearing results are displayed on `AntennaIndicator` using the color of the
+corresponding `BandItem` and are forwarded through application-level sinks for
+the final result table and archive storage.
 
 ## 6. Waterfall display flow
 

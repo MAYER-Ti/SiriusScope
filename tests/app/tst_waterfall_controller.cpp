@@ -10,6 +10,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -298,6 +299,48 @@ void testProcessingPublishesBearingFrames(TestRunner& test)
     test.require(published, "WaterfallController publishes bearing frames to bus");
 }
 
+void testFlushProcessingDrainsQueuedBatches(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    app::BearingFrameBus bearingFrameBus;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 128;
+    config.visibleRowCount = 16;
+    config.sourceFlushIntervalMs = 60'000;
+
+    std::mutex mutex;
+    int receivedFrameCount = 0;
+    bearingFrameBus.subscribe([&](std::vector<processing::BearingInputFrame> frames) {
+        std::lock_guard lock(mutex);
+        receivedFrameCount += static_cast<int>(frames.size());
+    });
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config,
+                                                     &bearingFrameBus);
+    controller.start();
+
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 10, 0, 0, 90),
+                                               makeSample(bands, 10, 0, 1, 40)}});
+    const auto flushResult = controller.flushProcessing(std::chrono::milliseconds{1500});
+
+    const bool published = waitUntil([&] {
+        std::lock_guard lock(mutex);
+        return receivedFrameCount > 0;
+    });
+
+    test.require(flushResult.success, "flushProcessing returns success");
+    test.require(published, "flushProcessing drains queued batches into bearing frames");
+}
+
 void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
 {
     FrequencyViewportModel viewport;
@@ -466,6 +509,7 @@ int main(int argc, char *argv[])
     testInactiveSessionIgnoresRenderableRows(test);
     testInputBatchUpdatesModel(test);
     testProcessingPublishesBearingFrames(test);
+    testFlushProcessingDrainsQueuedBatches(test);
     testScrollHistoryNoopDoesNotRebuildEmptyHistory(test);
     testScrollHistoryRebuildsOnlyWhenWindowChanges(test);
     testEmptyBatchDoesNotCrashAndReportsDiagnostic(test);

@@ -1,6 +1,11 @@
 #pragma once
 
 #include "core/antenna_motion_planner.h"
+#include "app/interfaces/processing_flush_control.h"
+#include "app/interfaces/result_table_sink.h"
+#include "app/interfaces/scan_acquisition_recorder.h"
+#include "app/interfaces/scan_recording_control.h"
+#include "app/scanacquisitionsession.h"
 #include "hardware/interfaces/antenna_azimuth_source.h"
 #include "hardware/interfaces/antenna_control.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
@@ -59,6 +64,10 @@ public:
                             hardware::IAntennaAzimuthSource* azimuthSource,
                             BearingFrameBus* bearingFrameBus,
                             processing::BearingService* bearingService,
+                            IScanAcquisitionRecorder* scanAcquisitionRecorder,
+                            IProcessingFlushControl* processingFlushControl,
+                            IScanRecordingControl* scanRecordingControl,
+                            IResultTableSink* resultTableSink,
                             infrastructure::IDiagnosticsSink* diagnosticsSink,
                             QObject* parent = nullptr);
     ~ScanController() override;
@@ -117,7 +126,7 @@ private:
         double progress = 0.0;
         double speedDegPerSec = 10.0;
         std::optional<core::TimeBase> timeBase;
-        std::vector<processing::BearingFrameObservation> bearingObservations;
+        ScanAcquisitionMetadata acquisitionMetadata;
     };
 
     void startAzimuthSource();
@@ -125,8 +134,11 @@ private:
     void updateAzimuth(const hardware::AntennaAzimuthSample& sample);
     void beginSectorScan();
     void completeScan();
+    void finalizeCompletedScan(std::uint64_t sessionId);
     void failScan(const QString& reason);
     void onBearingFrames(std::vector<processing::BearingInputFrame> frames);
+    void closeActiveAcquisitionWithoutCalculation(std::uint64_t sessionId);
+    void endScanRecording(std::uint64_t sessionId);
     void clearBearingResults();
     void rebuildBearingPresentation();
     void publishProcessingDiagnostics(
@@ -147,6 +159,10 @@ private:
     hardware::IAntennaAzimuthSource* m_azimuthSource = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
     processing::BearingService* m_bearingService = nullptr;
+    IScanAcquisitionRecorder* m_scanAcquisitionRecorder = nullptr;
+    IProcessingFlushControl* m_processingFlushControl = nullptr;
+    IScanRecordingControl* m_scanRecordingControl = nullptr;
+    IResultTableSink* m_resultTableSink = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     int m_bearingFrameSubscriptionId = 0;
 

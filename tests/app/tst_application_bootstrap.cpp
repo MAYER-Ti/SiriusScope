@@ -60,6 +60,14 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides scan controller");
     test.require(bootstrap.bearingFrameBus() != nullptr,
                  "bootstrap provides bearing frame bus");
+    test.require(bootstrap.scanAcquisitionRecorder() != nullptr,
+                 "bootstrap provides scan acquisition recorder");
+    test.require(bootstrap.processingFlushControl() != nullptr,
+                 "bootstrap provides processing flush control");
+    test.require(bootstrap.scanRecordingControl() != nullptr,
+                 "bootstrap provides scan recording control");
+    test.require(bootstrap.resultTableSink() != nullptr,
+                 "bootstrap provides result table sink");
     test.require(bootstrap.waterfallStorage() != nullptr,
                  "bootstrap provides waterfall storage placeholder");
     test.require(bootstrap.bcoControl() != nullptr,

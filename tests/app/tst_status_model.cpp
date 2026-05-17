@@ -149,6 +149,10 @@ void testInitialStatuses(TestRunner& test)
                                        &azimuthSource,
                                        nullptr,
                                        &bearingService,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
@@ -191,6 +195,10 @@ void testModeAndSourceStatuses(TestRunner& test)
                                        &azimuthSource,
                                        nullptr,
                                        &bearingService,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
@@ -228,6 +236,10 @@ void testDiagnosticRules(TestRunner& test)
                                        &azimuthSource,
                                        nullptr,
                                        &bearingService,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
@@ -299,6 +311,10 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
                                        &azimuthSource,
                                        nullptr,
                                        &bearingService,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
