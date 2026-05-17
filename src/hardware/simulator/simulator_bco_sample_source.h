@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hardware/interfaces/bco_sample_source.h"
+#include "hardware/simulator/simulator_radio_scene.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 
 #include <chrono>
@@ -13,6 +14,8 @@
 #include <vector>
 
 namespace siriusscope::hardware {
+
+class SimulatorAntennaState;
 
 struct SimulatorBcoSampleSourceConfig
 {
@@ -27,6 +30,7 @@ class SimulatorBcoSampleSource final : public IBcoSampleSource
 public:
     explicit SimulatorBcoSampleSource(
         SimulatorBcoSampleSourceConfig config = {},
+        SimulatorAntennaState* antennaState = nullptr,
         infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr);
     ~SimulatorBcoSampleSource() override;
 
@@ -42,7 +46,9 @@ private:
     void publish(infrastructure::DiagnosticSeverity severity, const std::string& message) const;
 
     SimulatorBcoSampleSourceConfig m_config;
+    SimulatorAntennaState* m_antennaState = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
+    SimulatorRadioScene m_scene;
 
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;

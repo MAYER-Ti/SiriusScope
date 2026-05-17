@@ -41,10 +41,11 @@ ApplicationBootstrap::ApplicationBootstrap()
                   false,
               },
               m_diagnosticsService.get()))
+    , m_antennaState(std::make_unique<hardware::SimulatorAntennaState>())
     , m_bcoSampleSource(std::make_unique<hardware::SimulatorBcoSampleSource>(
           hardware::SimulatorBcoSampleSourceConfig{},
+          m_antennaState.get(),
           m_diagnosticsService.get()))
-    , m_antennaState(std::make_unique<hardware::SimulatorAntennaState>())
     , m_antennaAzimuthSource(std::make_unique<hardware::SimulatorAntennaAzimuthSource>(
           m_antennaState.get(),
           hardware::SimulatorAntennaAzimuthSourceConfig{},

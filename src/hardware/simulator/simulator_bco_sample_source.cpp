@@ -1,5 +1,7 @@
 #include "hardware/simulator/simulator_bco_sample_source.h"
 
+#include "hardware/simulator/simulator_antenna_state.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -18,6 +20,9 @@ constexpr std::array<std::int64_t, 5> kDefaultCentersHz = {
     9'550'000'000LL,
     14'250'000'000LL,
 };
+
+constexpr double kPi = 3.141592653589793238462643383279502884;
+constexpr double kBeamHalfSeparationDeg = 30.0;
 
 constexpr std::array<std::int64_t, 5> kDefaultWidthsHz = {
     500'000'000LL,
@@ -52,71 +57,107 @@ std::int64_t clampOffset(const core::BandConfig& config, std::int64_t offsetHz)
     return std::clamp(offsetHz, -maxOffsetHz, maxOffsetHz);
 }
 
-std::int64_t deterministicOffset(const core::BandConfig& config, std::uint64_t signalStep)
+const core::BandConfig* findEnabledBandConfig(const std::vector<core::BandConfig>& configs,
+                                              int bandIndex)
 {
-    switch (config.bandIndex) {
-    case 0:
-        return clampOffset(config, -80'000'000LL);
-    case 1:
-        return clampOffset(config, 30'000'000LL);
-    case 2:
-        return 0;
-    case 3: {
-        const bool highSide = ((signalStep / 8U) % 2U) == 0U;
-        return clampOffset(config, highSide ? 120'000'000LL : -120'000'000LL);
-    }
-    case 4: {
-        const auto maxOffsetHz = config.widthHz / 2;
-        if (maxOffsetHz <= 0) {
-            return 0;
-        }
-
-        const auto sweepStep = static_cast<std::int64_t>(signalStep % 11U) - 5;
-        const auto sweep = sweepStep * (maxOffsetHz / 6);
-        return clampOffset(config, sweep);
-    }
-    default:
-        return 0;
-    }
+    const auto found =
+        std::find_if(configs.begin(), configs.end(), [bandIndex](const auto& config) {
+            return config.enabled && config.bandIndex == bandIndex;
+        });
+    return found == configs.end() ? nullptr : &(*found);
 }
 
-int deterministicAmplitude(int bandIndex, int beamIndex, std::uint64_t signalStep)
+double normalize360(double value)
 {
-    int baseAmplitude = 32;
-    switch (bandIndex) {
-    case 0:
-        baseAmplitude = 96 + static_cast<int>(signalStep % 4U);
-        break;
-    case 1:
-        baseAmplitude = 88 + static_cast<int>((signalStep / 2U) % 5U);
-        break;
-    case 2:
-        baseAmplitude = 102;
-        break;
-    case 3:
-        baseAmplitude = ((signalStep / 8U) % 2U) == 0U ? 76 : 24;
-        break;
-    case 4:
-        baseAmplitude = 18 + static_cast<int>(signalStep % 3U);
-        break;
-    default:
-        baseAmplitude = 40;
-        break;
+    if (!std::isfinite(value)) {
+        return 0.0;
     }
 
-    const int beamDelta = beamIndex == 0 ? 0 : 7;
-    return std::clamp(baseAmplitude - beamDelta,
+    auto normalized = std::fmod(value, core::DomainConstraints::maxAzimuthDeg);
+    if (normalized < core::DomainConstraints::minAzimuthDeg) {
+        normalized += core::DomainConstraints::maxAzimuthDeg;
+    }
+    if (normalized >= core::DomainConstraints::maxAzimuthDeg) {
+        normalized = core::DomainConstraints::minAzimuthDeg;
+    }
+
+    return normalized;
+}
+
+double signedAngularDeltaDeg(double fromDeg, double toDeg)
+{
+    double delta = normalize360(toDeg) - normalize360(fromDeg);
+    if (delta > 180.0) {
+        delta -= 360.0;
+    }
+    if (delta < -180.0) {
+        delta += 360.0;
+    }
+
+    return delta;
+}
+
+double beamGain(double deltaDeg, double sigmaDeg)
+{
+    if (!std::isfinite(sigmaDeg) || sigmaDeg <= 0.0) {
+        return 0.0;
+    }
+
+    const double x = deltaDeg / sigmaDeg;
+    return std::exp(-0.5 * x * x);
+}
+
+int toBcoAmplitude(double value)
+{
+    if (!std::isfinite(value)) {
+        return core::DomainConstraints::minAmplitude;
+    }
+
+    return std::clamp(static_cast<int>(std::lround(value)),
                       core::DomainConstraints::minAmplitude,
                       core::DomainConstraints::maxAmplitude);
+}
+
+std::array<int, 2> sourceBeamAmplitudes(const SimulatedRadioSource& source,
+                                        double antennaAzimuthDeg)
+{
+    const double beam0Axis = antennaAzimuthDeg - kBeamHalfSeparationDeg;
+    const double beam1Axis = antennaAzimuthDeg + kBeamHalfSeparationDeg;
+    const double delta0 = signedAngularDeltaDeg(beam0Axis, source.azimuthDeg);
+    const double delta1 = signedAngularDeltaDeg(beam1Axis, source.azimuthDeg);
+    const double peakAmplitude = static_cast<double>(source.peakAmplitude);
+
+    return {
+        toBcoAmplitude(peakAmplitude * beamGain(delta0, source.beamSigmaDeg)),
+        toBcoAmplitude(peakAmplitude * beamGain(delta1, source.beamSigmaDeg)),
+    };
+}
+
+std::int64_t sourceFrequencyOffset(const SimulatedRadioSource& source,
+                                   std::uint64_t signalStep)
+{
+    if (!source.frequencyDriftEnabled || source.driftPeriodSteps == 0) {
+        return source.frequencyOffsetHz;
+    }
+
+    const double phase =
+        2.0 * kPi * static_cast<double>(signalStep % source.driftPeriodSteps)
+        / static_cast<double>(source.driftPeriodSteps);
+    return source.frequencyOffsetHz
+        + static_cast<std::int64_t>(
+            std::llround(std::sin(phase) * static_cast<double>(source.driftSpanHz)));
 }
 
 } // namespace
 
 SimulatorBcoSampleSource::SimulatorBcoSampleSource(
     SimulatorBcoSampleSourceConfig config,
+    SimulatorAntennaState* antennaState,
     infrastructure::IDiagnosticsSink* diagnosticsSink)
     : m_config(std::move(config))
+    , m_antennaState(antennaState)
     , m_diagnosticsSink(diagnosticsSink)
+    , m_scene(makeDefaultSimulatorRadioScene())
     , m_bandConfigs(makeDefaultBandConfigs())
     , m_nextSampleIndex(m_config.firstSampleIndex)
 {
@@ -196,6 +237,7 @@ std::vector<core::BandConfig> SimulatorBcoSampleSource::bandConfigs() const
 BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
 {
     std::vector<core::BandConfig> configs;
+    SimulatorRadioScene scene;
     std::uint64_t nextSampleIndex = 0;
     std::uint64_t signalStep = 0;
     std::uint64_t sampleIndexStep = 1;
@@ -204,6 +246,7 @@ BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
     {
         std::lock_guard lock(m_mutex);
         configs = m_bandConfigs;
+        scene = m_scene;
         nextSampleIndex = m_nextSampleIndex;
         signalStep = m_signalStep;
         sampleIndexStep = std::max<std::uint64_t>(1, m_config.sampleIndexStep);
@@ -211,48 +254,58 @@ BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
     }
 
     BcoSampleBatch batch;
-    if (configs.empty() || samplesPerBatch == 0) {
+    constexpr std::size_t kBeamPairSize = 2;
+    if (configs.empty() || scene.sources.empty() || samplesPerBatch < kBeamPairSize) {
         return batch;
     }
 
     batch.samples.reserve(samplesPerBatch);
+    const double antennaAzimuthDeg =
+        m_antennaState ? m_antennaState->currentAzimuthDeg() : 0.0;
 
-    std::size_t skippedDisabledConfigs = 0;
-    while (batch.samples.size() < samplesPerBatch) {
-        const auto& config = configs[static_cast<std::size_t>(signalStep % configs.size())];
-        if (!config.enabled) {
+    std::size_t skippedSources = 0;
+    while (batch.samples.size() + kBeamPairSize <= samplesPerBatch) {
+        const auto& source =
+            scene.sources[static_cast<std::size_t>(signalStep % scene.sources.size())];
+        const auto* config = findEnabledBandConfig(configs, source.bandIndex);
+        if (!config) {
             ++signalStep;
-            ++skippedDisabledConfigs;
-            if (skippedDisabledConfigs >= configs.size()) {
+            ++skippedSources;
+            if (skippedSources >= scene.sources.size()) {
                 break;
             }
             continue;
         }
-        skippedDisabledConfigs = 0;
 
-        const auto offsetHz = deterministicOffset(config, signalStep);
+        const auto offsetHz = clampOffset(*config, sourceFrequencyOffset(source, signalStep));
         const auto sampleIndex = nextSampleIndex;
+        const auto amplitudes = sourceBeamAmplitudes(source, antennaAzimuthDeg);
 
-        for (int beamIndex = 0; beamIndex < core::DomainConstraints::currentBeamCount; ++beamIndex) {
-            if (batch.samples.size() >= samplesPerBatch) {
-                break;
-            }
-
-            const core::BeamSample beamSample{
-                sampleIndex,
-                offsetHz,
-                deterministicAmplitude(config.bandIndex, beamIndex, signalStep),
-                beamIndex,
-            };
-            const auto sample = core::SignalSample::create(beamSample, config);
+        std::vector<core::SignalSample> generatedPair;
+        generatedPair.reserve(kBeamPairSize);
+        for (int beamIndex = 0; beamIndex < static_cast<int>(kBeamPairSize); ++beamIndex) {
+            const core::BeamSample beamSample{sampleIndex,
+                                              offsetHz,
+                                              amplitudes[static_cast<std::size_t>(beamIndex)],
+                                              beamIndex};
+            const auto sample = core::SignalSample::create(beamSample, *config);
             if (sample) {
-                batch.samples.push_back(*sample.value());
+                generatedPair.push_back(*sample.value());
             }
         }
 
-        nextSampleIndex += sampleIndexStep;
         ++signalStep;
+        if (generatedPair.size() != kBeamPairSize) {
+            ++skippedSources;
+            if (skippedSources >= scene.sources.size()) {
+                break;
+            }
+            continue;
+        }
 
+        skippedSources = 0;
+        batch.samples.insert(batch.samples.end(), generatedPair.begin(), generatedPair.end());
+        nextSampleIndex += sampleIndexStep;
     }
 
     {

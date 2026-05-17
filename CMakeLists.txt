@@ -113,6 +113,8 @@ set(SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES
     src/hardware/simulator/simulator_antenna_state.cpp
     src/hardware/simulator/simulator_bco_control.h
     src/hardware/simulator/simulator_bco_control.cpp
+    src/hardware/simulator/simulator_radio_scene.h
+    src/hardware/simulator/simulator_radio_scene.cpp
     src/hardware/simulator/simulator_bco_sample_source.h
     src/hardware/simulator/simulator_bco_sample_source.cpp
 )

@@ -115,8 +115,8 @@ private:
     std::unique_ptr<DiagnosticsService> m_diagnosticsService;
     std::unique_ptr<infrastructure::IWaterfallStorage> m_waterfallStorage;
     std::unique_ptr<IWaterfallSessionStorage> m_waterfallSessionStorage;
-    std::unique_ptr<hardware::SimulatorBcoSampleSource> m_bcoSampleSource;
     std::unique_ptr<hardware::SimulatorAntennaState> m_antennaState;
+    std::unique_ptr<hardware::SimulatorBcoSampleSource> m_bcoSampleSource;
     std::unique_ptr<hardware::SimulatorAntennaAzimuthSource> m_antennaAzimuthSource;
     std::unique_ptr<hardware::IBcoControl> m_bcoControl;
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
