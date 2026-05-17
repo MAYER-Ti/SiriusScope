@@ -55,6 +55,7 @@ ApplicationBootstrap::ApplicationBootstrap()
           m_antennaState.get(),
           m_diagnosticsService.get()))
     , m_bearingFrameBus(std::make_unique<BearingFrameBus>())
+    , m_bearingService(std::make_unique<processing::BearingService>())
     , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsService.get())
 {
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
@@ -69,6 +70,7 @@ ApplicationBootstrap::ApplicationBootstrap()
     m_scanController = std::make_unique<ScanController>(m_antennaControl.get(),
                                                         m_antennaAzimuthSource.get(),
                                                         m_bearingFrameBus.get(),
+                                                        m_bearingService.get(),
                                                         m_diagnosticsService.get());
 
     m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),

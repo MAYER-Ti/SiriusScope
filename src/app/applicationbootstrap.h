@@ -7,6 +7,7 @@
 #include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
+#include "processing/bearing_service.h"
 #include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
@@ -97,6 +98,7 @@ private:
     std::unique_ptr<hardware::IBcoControl> m_bcoControl;
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
     std::unique_ptr<BearingFrameBus> m_bearingFrameBus;
+    std::unique_ptr<processing::BearingService> m_bearingService;
     BandListModel m_bandListModel;
     BandConfigController m_bandConfigController;
     std::unique_ptr<WaterfallController> m_waterfallController;

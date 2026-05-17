@@ -19,7 +19,7 @@ SiriusScope сейчас находится в состоянии развито
 - Waterfall пока опирается на синтетический источник и in-memory storage, что полезно для прототипа, но недостаточно для продукта с сохранением истории между запусками.
 - `SpectrumControllerStub`, `WaterfallControllerStub`, `AntennaControllerStub` и аналогичные классы являются временными решениями для связывания UI и прототипного поведения.
 - Hardware layer и Infrastructure layer в основном находятся в scaffold-состоянии: реальные UDP/TCP-адаптеры, протокольные парсеры, persistent storage, diagnostics и composition root еще должны быть оформлены.
-- Полный use-case пеленгования пока не реализован: отсутствуют полноценные `ScanController`, `BearingService`, `ResultTableModel`, хранение результатов и сквозная связь с источниками данных.
+- Полный use-case пеленгования реализован частично: `ScanController` и `BearingService` уже дают первый вертикальный срез до `AntennaIndicator`, но еще отсутствуют `ResultTableModel`, хранение результатов и полная сквозная связь с будущими аппаратными источниками.
 
 Текущее состояние допустимо как промежуточный этап, но дальнейшая разработка должна смещаться от UI-заглушек к явным application/core/processing/infrastructure/hardware границам.
 
@@ -217,6 +217,12 @@ User selects sector
 - `BearingService`;
 - `BearingInputFrame`;
 - `BearingResult`.
+
+Current implementation note: `BearingService` lives in the Processing Layer and
+calculates an MVP two-beam bearing estimate from `BearingFrameObservation`
+values. `ScanController` enriches `BearingInputFrame` with antenna azimuth,
+publishes QML-ready bearing marks, and exposes a signal for the future
+`ResultTableController`; persistent result-table storage remains a later stage.
 
 На первом этапе алгоритм может быть минимальным или упрощенным, например тестовым алгоритмом для simulator path. Важно, чтобы место алгоритма было архитектурно правильным: вне QML, независимо от visual item state и с возможностью unit/integration testing.
 

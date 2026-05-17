@@ -5,10 +5,13 @@
 
 #include <QMetaObject>
 #include <QStringList>
+#include <QVariant>
+#include <QVariantMap>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <iterator>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -42,17 +45,66 @@ std::string formatAngle(double value)
     return stream.str();
 }
 
+std::int64_t toUtcNs(std::chrono::system_clock::time_point timePoint)
+{
+    const auto ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(timePoint.time_since_epoch())
+            .count();
+    return ns < 0 ? 0 : static_cast<std::int64_t>(ns);
+}
+
+std::uint64_t minSampleIndex(const std::vector<processing::BearingInputFrame>& frames)
+{
+    auto minIndex = std::numeric_limits<std::uint64_t>::max();
+    for (const auto& frame : frames) {
+        minIndex = std::min(minIndex, frame.sampleIndexStart);
+        for (const auto& candidate : frame.candidates) {
+            minIndex = std::min(minIndex, candidate.sampleIndexStart);
+        }
+    }
+
+    return minIndex == std::numeric_limits<std::uint64_t>::max() ? 0 : minIndex;
+}
+
+infrastructure::DiagnosticSeverity mapSeverity(
+    processing::ProcessingDiagnosticSeverity severity)
+{
+    switch (severity) {
+    case processing::ProcessingDiagnosticSeverity::Info:
+        return infrastructure::DiagnosticSeverity::Info;
+    case processing::ProcessingDiagnosticSeverity::Warning:
+        return infrastructure::DiagnosticSeverity::Warning;
+    case processing::ProcessingDiagnosticSeverity::Error:
+        return infrastructure::DiagnosticSeverity::Error;
+    }
+
+    return infrastructure::DiagnosticSeverity::Warning;
+}
+
+QString frequencyMHzText(const std::vector<std::int64_t>& frequenciesHz)
+{
+    QStringList parts;
+    for (const auto frequencyHz : frequenciesHz) {
+        parts.push_back(QString::number(static_cast<double>(frequencyHz) / 1'000'000.0,
+                                        'f',
+                                        1));
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
 } // namespace
 
 ScanController::ScanController(hardware::IAntennaControl* antennaControl,
                                hardware::IAntennaAzimuthSource* azimuthSource,
                                BearingFrameBus* bearingFrameBus,
+                               processing::BearingService* bearingService,
                                infrastructure::IDiagnosticsSink* diagnosticsSink,
                                QObject* parent)
     : QObject(parent)
     , m_antennaControl(antennaControl)
     , m_azimuthSource(azimuthSource)
     , m_bearingFrameBus(bearingFrameBus)
+    , m_bearingService(bearingService)
     , m_diagnosticsSink(diagnosticsSink)
 {
     if (m_bearingFrameBus) {
@@ -232,6 +284,7 @@ void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double
     }
 
     storeSelectedSector(planned.value()->requestedSector);
+    clearBearingResults();
 
     ScanSession session;
     session.id = m_nextSessionId++;
@@ -448,12 +501,42 @@ void ScanController::completeScan()
     setState(ScanState::Completing);
     const auto sessionId = m_activeSession->id;
     const int frameCount =
-        static_cast<int>(m_activeSession->collectedBearingFrames.size());
+        static_cast<int>(m_activeSession->bearingObservations.size());
     m_activeSession->finishedAt = std::chrono::system_clock::now();
 
     if (m_antennaControl) {
         m_antennaControl->stop();
     }
+
+    core::TimeBase timeBase;
+    if (m_activeSession->timeBase) {
+        timeBase = *m_activeSession->timeBase;
+    } else if (auto created = core::TimeBase::create(
+                   toUtcNs(m_activeSession->startedAt),
+                   0,
+                   core::DomainConstraints::defaultSamplePeriodNs)) {
+        timeBase = *created.value();
+    }
+
+    if (m_bearingService) {
+        const auto calculation = m_bearingService->calculate(
+            m_activeSession->bearingObservations,
+            timeBase,
+            core::defaultRuntimeCapabilities());
+        m_lastBearingResults = calculation.results;
+        rebuildBearingPresentation();
+        publishProcessingDiagnostics(calculation.diagnostics);
+    } else {
+        m_lastBearingResults.clear();
+        rebuildBearingPresentation();
+        publish(infrastructure::DiagnosticSeverity::Error,
+                "ScanController: bearing service is not configured");
+    }
+
+    emit bearingResultsChanged();
+    emit bearingResultsReady(static_cast<qulonglong>(sessionId),
+                             static_cast<int>(m_lastBearingResults.size()));
+    emit bearingResultsCalculated(static_cast<qulonglong>(sessionId), m_targetBearings);
 
     m_activeSession.reset();
     setProgress(1.0);
@@ -491,10 +574,86 @@ void ScanController::onBearingFrames(std::vector<processing::BearingInputFrame> 
         return;
     }
 
-    m_activeSession->collectedBearingFrames.insert(
-        m_activeSession->collectedBearingFrames.end(),
-        std::make_move_iterator(frames.begin()),
-        std::make_move_iterator(frames.end()));
+    if (!m_activeSession->timeBase) {
+        auto created = core::TimeBase::create(
+            toUtcNs(m_activeSession->startedAt),
+            minSampleIndex(frames),
+            core::DomainConstraints::defaultSamplePeriodNs);
+        if (created) {
+            m_activeSession->timeBase = *created.value();
+        } else {
+            publish(infrastructure::DiagnosticSeverity::Error,
+                    "ScanController: failed to create bearing timebase");
+        }
+    }
+
+    const auto observedUtcNs = toUtcNs(std::chrono::system_clock::now());
+    const auto azimuthDeg = m_activeSession->lastAzimuthDeg;
+    for (auto& frame : frames) {
+        m_activeSession->bearingObservations.push_back(
+            processing::BearingFrameObservation{
+                std::move(frame),
+                azimuthDeg,
+                observedUtcNs,
+            });
+    }
+}
+
+void ScanController::clearBearingResults()
+{
+    if (m_lastBearingResults.empty() && m_targetBearings.empty()
+        && m_targetAzimuthsDeg.empty()) {
+        return;
+    }
+
+    m_lastBearingResults.clear();
+    m_targetBearings.clear();
+    m_targetAzimuthsDeg.clear();
+    emit bearingResultsChanged();
+}
+
+void ScanController::rebuildBearingPresentation()
+{
+    m_targetBearings.clear();
+    m_targetAzimuthsDeg.clear();
+
+    for (const auto& result : m_lastBearingResults) {
+        m_targetAzimuthsDeg.push_back(result.bearingAzimuthDeg);
+
+        QVariantList frequenciesHz;
+        for (const auto frequencyHz : result.frequenciesHz) {
+            frequenciesHz.push_back(
+                QVariant::fromValue(static_cast<qlonglong>(frequencyHz)));
+        }
+
+        QVariantMap bearing;
+        bearing.insert(QStringLiteral("azimuthDeg"), result.bearingAzimuthDeg);
+        bearing.insert(QStringLiteral("bandIndex"), result.bandIndex);
+        bearing.insert(QStringLiteral("quality"), result.quality.value_or(0.0));
+        bearing.insert(QStringLiteral("frequencyMHz"), frequencyMHzText(result.frequenciesHz));
+        bearing.insert(QStringLiteral("frequenciesHz"), frequenciesHz);
+        bearing.insert(QStringLiteral("sampleIndex"),
+                       QVariant::fromValue(static_cast<qulonglong>(result.sampleIndex)));
+        bearing.insert(QStringLiteral("resultTimeUtcNs"),
+                       QVariant::fromValue(static_cast<qlonglong>(result.resultTimeUtcNs)));
+        m_targetBearings.push_back(std::move(bearing));
+    }
+}
+
+void ScanController::publishProcessingDiagnostics(
+    const std::vector<processing::ProcessingDiagnostic>& diagnostics) const
+{
+    for (const auto& diagnostic : diagnostics) {
+        if (diagnostic.code == processing::ProcessingErrorCode::None
+            && diagnostic.message.empty()) {
+            continue;
+        }
+
+        publish(mapSeverity(diagnostic.severity),
+                diagnostic.message.empty()
+                    ? "BearingService: processing diagnostic"
+                    : "BearingService: " + diagnostic.message);
+    }
 }
 
 void ScanController::startManualMove(hardware::AntennaManualMoveCommand::Direction direction,

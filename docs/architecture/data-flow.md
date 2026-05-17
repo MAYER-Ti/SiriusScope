@@ -154,7 +154,7 @@ Operator selects sector in AntennaIndicator
     -> BCO samples are collected during scan
     -> SampleProcessor prepares BearingInputFrame
     -> BearingFrameBus
-    -> ScanController stores frames for the active scan session
+    -> ScanController stores BearingFrameObservation values with current antenna azimuth
     -> BearingService
     -> BearingResult per BandItem
     -> AntennaIndicator model
@@ -168,11 +168,12 @@ Operator selects sector in AntennaIndicator
 * QML must not directly command the antenna hardware.
 * QML must call an application-level scan command.
 * Antenna blind zone handling belongs to antenna-control/application logic, not QML visuals.
-* The current ScanController stage stops at collecting `BearingInputFrame`; final bearing calculation, result-table rows, and result storage are downstream `BearingService` work.
+* `ScanController` coordinates scan sessions and passes collected `BearingFrameObservation` data to `BearingService`; it must not implement the bearing formula itself.
 * Bearing calculation must be performed outside QML.
 * Bearing results must be computed per `BandItem`.
 * Bearing result color must match the related `BandItem` color.
 * ResultTable rows must be generated from domain/application results, not manually assembled in QML.
+* The current `BearingService` formula is an MVP two-beam estimate. It is isolated in the Processing Layer so it can be replaced after calibration without rewriting QML, `ScanController`, simulator, or storage integrations.
 
 ### 5.4 Bearing result output
 

@@ -79,6 +79,8 @@ set(SIRIUSSCOPE_CORE_SOURCES
 )
 
 set(SIRIUSSCOPE_PROCESSING_SOURCES
+    src/processing/bearing_service.h
+    src/processing/bearing_service.cpp
     src/processing/sample_processor.h
     src/processing/sample_processor.cpp
 )

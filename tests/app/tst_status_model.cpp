@@ -105,7 +105,8 @@ std::vector<core::BandConfig> makeBandConfigs()
     return bands;
 }
 
-bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500)
+template <typename Predicate>
+bool waitUntil(Predicate predicate, int timeoutMs = 1500)
 {
     QElapsedTimer timer;
     timer.start();
@@ -143,7 +144,12 @@ void testInitialStatuses(TestRunner& test)
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;
-    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
+    processing::BearingService bearingService;
+    app::ScanController scanController(nullptr,
+                                       &azimuthSource,
+                                       nullptr,
+                                       &bearingService,
+                                       &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,
@@ -180,7 +186,12 @@ void testModeAndSourceStatuses(TestRunner& test)
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;
-    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
+    processing::BearingService bearingService;
+    app::ScanController scanController(nullptr,
+                                       &azimuthSource,
+                                       nullptr,
+                                       &bearingService,
+                                       &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,
@@ -212,7 +223,12 @@ void testDiagnosticRules(TestRunner& test)
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;
-    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
+    processing::BearingService bearingService;
+    app::ScanController scanController(nullptr,
+                                       &azimuthSource,
+                                       nullptr,
+                                       &bearingService,
+                                       &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,
@@ -278,7 +294,12 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;
-    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
+    processing::BearingService bearingService;
+    app::ScanController scanController(nullptr,
+                                       &azimuthSource,
+                                       nullptr,
+                                       &bearingService,
+                                       &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,

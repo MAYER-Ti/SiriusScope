@@ -95,7 +95,8 @@ ApplicationWindow {
                         Layout.verticalStretchFactor: 72
                         Layout.minimumHeight: 330
                         azimuthDeg: ScanController.currentAzimuthDeg
-                        targetAzimuthsDeg: []
+                        targetAzimuthsDeg: ScanController.targetAzimuthsDeg
+                        targetBearings: ScanController.targetBearings
                         hasSelectedSector: ScanController.hasSelectedSector
                         selectedLeftAngle: ScanController.selectedLeftAngle
                         selectedRightAngle: ScanController.selectedRightAngle

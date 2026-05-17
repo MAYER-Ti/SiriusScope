@@ -177,6 +177,17 @@ processing::BearingInputFrame makeBearingFrame(std::uint64_t sampleIndex)
     frame.bandIndex = 0;
     frame.sampleIndexStart = sampleIndex;
     frame.sampleIndexEnd = sampleIndex;
+
+    processing::BearingCandidate candidate;
+    candidate.bandIndex = 0;
+    candidate.sampleIndexStart = sampleIndex;
+    candidate.sampleIndexEnd = sampleIndex;
+    candidate.frequencyBin = 0;
+    candidate.frequencyRange = core::FrequencyRange{1'000'000'000LL, 1'001'000'000LL};
+    candidate.beamAmplitudes = {100, 80};
+    candidate.beamPresent = {true, true};
+    frame.candidates.push_back(std::move(candidate));
+
     return frame;
 }
 
@@ -185,8 +196,9 @@ struct ControllerFixture
     FakeAntennaControl control;
     FakeAzimuthSource azimuthSource;
     app::BearingFrameBus bus;
+    processing::BearingService bearingService;
     RecordingDiagnosticsSink diagnostics;
-    app::ScanController controller{&control, &azimuthSource, &bus, &diagnostics};
+    app::ScanController controller{&control, &azimuthSource, &bus, &bearingService, &diagnostics};
 };
 
 void testSelectAndClearSector(TestRunner& test)
@@ -271,14 +283,33 @@ void testCommonAntennaSpeedUsedBySelectedScan(TestRunner& test)
                  "startSelectedSectorScan uses configured antenna speed");
 }
 
+void testBearingFramesOutsideScanIgnored(TestRunner& test)
+{
+    ControllerFixture fixture;
+
+    fixture.bus.publish({makeBearingFrame(1)});
+    processEventsFor(40);
+
+    test.require(fixture.controller.targetAzimuthsDeg().empty(),
+                 "bearing frames outside scanning do not create target azimuths");
+    test.require(fixture.controller.targetBearings().empty(),
+                 "bearing frames outside scanning do not create target bearings");
+}
+
 void testAzimuthProgressCompletionAndFrames(TestRunner& test)
 {
     ControllerFixture fixture;
     int completedFrames = -1;
+    int bearingResultCount = -1;
     QObject::connect(&fixture.controller,
                      &app::ScanController::scanCompleted,
                      [&](qulonglong, int frameCount) {
                          completedFrames = frameCount;
+                     });
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::bearingResultsReady,
+                     [&](qulonglong, int resultCount) {
+                         bearingResultCount = resultCount;
                      });
 
     fixture.controller.startScan(10.0, 60.0, 10.0);
@@ -301,6 +332,11 @@ void testAzimuthProgressCompletionAndFrames(TestRunner& test)
     test.require(scanStarted, "azimuth at start launches sector scan command");
     test.require(progressUpdated, "scan progress grows during movement");
     test.require(completed, "scan completes when target is reached");
+    test.require(bearingResultCount == 1, "scan with bearing frame emits one result");
+    test.require(fixture.controller.targetAzimuthsDeg().size() == 1,
+                 "targetAzimuthsDeg exposes calculated bearing");
+    test.require(fixture.controller.targetBearings().size() == 1,
+                 "targetBearings exposes calculated bearing details");
     test.require(!fixture.controller.scanActive(), "completed scan is no longer active");
 }
 
@@ -308,10 +344,16 @@ void testReverseScanProgressAndCompletion(TestRunner& test)
 {
     ControllerFixture fixture;
     int completedFrames = -1;
+    int bearingResultCount = -1;
     QObject::connect(&fixture.controller,
                      &app::ScanController::scanCompleted,
                      [&](qulonglong, int frameCount) {
                          completedFrames = frameCount;
+                     });
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::bearingResultsReady,
+                     [&](qulonglong, int resultCount) {
+                         bearingResultCount = resultCount;
                      });
 
     fixture.azimuthSource.emitAzimuth(110.0);
@@ -344,6 +386,60 @@ void testReverseScanProgressAndCompletion(TestRunner& test)
 
     test.require(progressUpdated, "reverse scan progress grows during movement");
     test.require(completed, "reverse scan completes when left edge is reached");
+    test.require(bearingResultCount == 0, "empty scan emits zero bearing results");
+    test.require(fixture.controller.targetAzimuthsDeg().empty(),
+                 "empty scan has no target azimuths");
+    test.require(fixture.controller.targetBearings().empty(),
+                 "empty scan has no target bearing details");
+    test.require(fixture.diagnostics.contains("no bearing frames collected"),
+                 "empty scan is diagnosed");
+}
+
+void testRepeatScanClearsOldBearingResults(TestRunner& test)
+{
+    ControllerFixture fixture;
+    int completedCount = 0;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::scanCompleted,
+                     [&](qulonglong, int) {
+                         ++completedCount;
+                     });
+
+    fixture.controller.startScan(10.0, 60.0, 10.0);
+    fixture.azimuthSource.emitAzimuth(10.0);
+    const bool firstScanStarted = waitUntil([&fixture] {
+        return fixture.control.scanCalls == 1;
+    });
+    if (firstScanStarted) {
+        fixture.bus.publish({makeBearingFrame(1)});
+    }
+    fixture.azimuthSource.emitAzimuth(60.0);
+    const bool firstCompleted = waitUntil([&] {
+        return completedCount == 1;
+    });
+
+    test.require(firstCompleted && fixture.controller.targetBearings().size() == 1,
+                 "first scan produces a bearing result");
+
+    fixture.controller.startScan(70.0, 100.0, 10.0);
+    test.require(fixture.controller.targetBearings().empty(),
+                 "starting the next scan clears old bearing details");
+    test.require(fixture.controller.targetAzimuthsDeg().empty(),
+                 "starting the next scan clears old target azimuths");
+
+    fixture.azimuthSource.emitAzimuth(70.0);
+    const bool secondScanStarted = waitUntil([&fixture] {
+        return fixture.control.scanCalls == 2;
+    });
+    fixture.azimuthSource.emitAzimuth(100.0);
+    const bool secondCompleted = waitUntil([&] {
+        return completedCount == 2;
+    });
+
+    test.require(secondScanStarted, "second scan starts");
+    test.require(secondCompleted, "second scan completes");
+    test.require(fixture.controller.targetBearings().empty(),
+                 "empty second scan keeps bearing details empty");
 }
 
 void testSpeedChangeRejectedDuringScan(TestRunner& test)
@@ -399,8 +495,10 @@ int main(int argc, char *argv[])
     testStartRejectsInvalidAndAlreadyActive(test);
     testStartStopAndManualCommands(test);
     testCommonAntennaSpeedUsedBySelectedScan(test);
+    testBearingFramesOutsideScanIgnored(test);
     testAzimuthProgressCompletionAndFrames(test);
     testReverseScanProgressAndCompletion(test);
+    testRepeatScanClearsOldBearingResults(test);
     testSpeedChangeRejectedDuringScan(test);
     testDiagnosticsOnFailure(test);
     testAzimuthSampleUpdatesCurrentValue(test);

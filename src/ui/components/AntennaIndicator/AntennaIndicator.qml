@@ -9,6 +9,7 @@ Components.Panel {
 
     property real azimuthDeg: 0
     property var targetAzimuthsDeg: []
+    property var targetBearings: []
     property bool hasSelectedSector: false
     property real selectedLeftAngle: 0
     property real selectedRightAngle: 0
@@ -17,7 +18,9 @@ Components.Panel {
     property real scanProgress: 0
     property string scanStateText: ""
 
-    readonly property int targetCount: targetAzimuthsDeg ? targetAzimuthsDeg.length : 0
+    readonly property int targetCount: targetBearings && targetBearings.length > 0
+        ? targetBearings.length
+        : (targetAzimuthsDeg ? targetAzimuthsDeg.length : 0)
     readonly property string selectedSectorText: hasSelectedSector
         ? selectedLeftAngle.toFixed(0) + "°→" + selectedRightAngle.toFixed(0) + "°"
         : "—"
@@ -130,6 +133,7 @@ Components.Panel {
             id: indicator
             azimuthDeg: antennaIndicator.azimuthDeg
             targetAzimuthsDeg: antennaIndicator.targetAzimuthsDeg
+            targetBearings: antennaIndicator.targetBearings
             hasSelectedSector: antennaIndicator.hasSelectedSector
             selectedLeftAngle: antennaIndicator.selectedLeftAngle
             selectedRightAngle: antennaIndicator.selectedRightAngle

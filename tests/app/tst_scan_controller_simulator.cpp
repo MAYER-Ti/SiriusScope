@@ -14,6 +14,7 @@
 #include <functional>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -57,6 +58,17 @@ processing::BearingInputFrame makeBearingFrame()
     frame.bandIndex = 0;
     frame.sampleIndexStart = 1;
     frame.sampleIndexEnd = 1;
+
+    processing::BearingCandidate candidate;
+    candidate.bandIndex = 0;
+    candidate.sampleIndexStart = 1;
+    candidate.sampleIndexEnd = 1;
+    candidate.frequencyBin = 0;
+    candidate.frequencyRange = core::FrequencyRange{1'000'000'000LL, 1'001'000'000LL};
+    candidate.beamAmplitudes = {100, 80};
+    candidate.beamPresent = {true, true};
+    frame.candidates.push_back(std::move(candidate));
+
     return frame;
 }
 
@@ -74,7 +86,8 @@ void testSimulatorPathCompletesSectorScan(TestRunner& test)
         },
         &diagnostics);
     app::BearingFrameBus bus;
-    app::ScanController controller(&control, &source, &bus, &diagnostics);
+    processing::BearingService bearingService;
+    app::ScanController controller(&control, &source, &bus, &bearingService, &diagnostics);
 
     int completedFrames = -1;
     QObject::connect(&controller,
@@ -115,7 +128,8 @@ void testSimulatorPathCompletesReverseSectorScan(TestRunner& test)
         },
         &diagnostics);
     app::BearingFrameBus bus;
-    app::ScanController controller(&control, &source, &bus, &diagnostics);
+    processing::BearingService bearingService;
+    app::ScanController controller(&control, &source, &bus, &bearingService, &diagnostics);
 
     int completedFrames = -1;
     QObject::connect(&controller,

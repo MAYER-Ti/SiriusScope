@@ -30,6 +30,11 @@ enum class ProcessingErrorCode
     InsufficientBearingData, //!< Нет полного кандидата для пеленгации.
     EmptyBatch, //!< Обработчик получил пустой набор отсчетов.
     MissingWaterfallData, //!< В строке или ячейке Waterfall нет данных отсчетов.
+    BearingNoObservations,
+    BearingNoCandidates,
+    BearingResultRejected,
+    BearingQualityBelowThreshold,
+    BearingTimeConversionFailed,
 };
 
 /*!

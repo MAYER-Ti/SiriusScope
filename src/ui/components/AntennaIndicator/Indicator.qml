@@ -6,6 +6,7 @@ Item {
     id: indicator
 
     property var targetAzimuthsDeg: []
+    property var targetBearings: []
     property real azimuthDeg: 0
     property bool hasSelectedSector: false
     property real selectedLeftAngle: 0
@@ -143,7 +144,11 @@ Item {
             indicator._tickMs = Date.now()
             indicator._updateRenderAzimuth()
             targetTracker.nowMs = indicator._tickMs
-            targetTracker.ingest(indicator.targetAzimuthsDeg)
+            if (indicator.targetBearings && indicator.targetBearings.length > 0) {
+                targetTracker.clear()
+            } else {
+                targetTracker.ingest(indicator.targetAzimuthsDeg)
+            }
         }
     }
 
@@ -374,7 +379,36 @@ Item {
                     anchors.fill: parent
 
                     Repeater {
-                        model: targetTracker.tracks.length
+                        model: indicator.targetBearings && indicator.targetBearings.length > 0
+                            ? indicator.targetBearings
+                            : []
+
+                        Item {
+                            readonly property real az: modelData.azimuthDeg || 0
+                            readonly property int bandIndex: modelData.bandIndex || 0
+
+                            Rectangle {
+                                id: bearingMarker
+                                width: 7
+                                height: Math.max(24, dial.rOuter * 0.22)
+                                radius: width / 2
+                                x: (dial.width - width) / 2
+                                y: dial.rOuter * 0.05
+                                color: Theme.bandColor(bandIndex)
+                                opacity: 0.92
+                                transform: Rotation {
+                                    origin.x: bearingMarker.width / 2
+                                    origin.y: dial.rOuter - bearingMarker.y
+                                    angle: az
+                                }
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        model: indicator.targetBearings && indicator.targetBearings.length > 0
+                            ? 0
+                            : targetTracker.tracks.length
 
                         Item {
                             readonly property var tr: targetTracker.tracks[index]

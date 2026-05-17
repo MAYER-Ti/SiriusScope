@@ -232,6 +232,11 @@ Bearing results must be displayed separately per `BandItem`.
 
 Bearing result color must match the related `BandItem` color.
 
+Current implementation note: bearing calculation is performed by `BearingService`
+in the Processing Layer. It uses an MVP two-beam estimate for `beamIndex = 0`
+and `beamIndex = 1`; the formula is not final and must remain replaceable
+without changing QML, scan orchestration, simulator paths, or future storage.
+
 ### 3.12 ResultTable
 
 The current iteration uses a final scan result table, not a detailed pulse table.

@@ -4,10 +4,12 @@
 #include "hardware/interfaces/antenna_azimuth_source.h"
 #include "hardware/interfaces/antenna_control.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
+#include "processing/bearing_service.h"
 #include "processing/sample_processor.h"
 
 #include <QObject>
 #include <QString>
+#include <QVariantList>
 
 #include <chrono>
 #include <cstdint>
@@ -37,6 +39,8 @@ class ScanController final : public QObject
                    NOTIFY antennaSpeedChanged)
     Q_PROPERTY(double scanSpeedDegPerSec READ scanSpeedDegPerSec WRITE setScanSpeedDegPerSec
                    NOTIFY scanSpeedChanged)
+    Q_PROPERTY(QVariantList targetBearings READ targetBearings NOTIFY bearingResultsChanged)
+    Q_PROPERTY(QVariantList targetAzimuthsDeg READ targetAzimuthsDeg NOTIFY bearingResultsChanged)
 
 public:
     enum class ScanState {
@@ -54,6 +58,7 @@ public:
     explicit ScanController(hardware::IAntennaControl* antennaControl,
                             hardware::IAntennaAzimuthSource* azimuthSource,
                             BearingFrameBus* bearingFrameBus,
+                            processing::BearingService* bearingService,
                             infrastructure::IDiagnosticsSink* diagnosticsSink,
                             QObject* parent = nullptr);
     ~ScanController() override;
@@ -68,6 +73,8 @@ public:
     QString lastError() const { return m_lastError; }
     double antennaSpeedDegPerSec() const noexcept { return m_antennaSpeedDegPerSec; }
     double scanSpeedDegPerSec() const noexcept { return m_antennaSpeedDegPerSec; }
+    QVariantList targetBearings() const { return m_targetBearings; }
+    QVariantList targetAzimuthsDeg() const { return m_targetAzimuthsDeg; }
 
     Q_INVOKABLE void selectSector(double leftAngleDeg, double rightAngleDeg);
     Q_INVOKABLE void clearSector();
@@ -93,6 +100,9 @@ signals:
     void scanCompleted(qulonglong sessionId, int frameCount);
     void scanCancelled(qulonglong sessionId);
     void scanFailed(qulonglong sessionId, QString reason);
+    void bearingResultsChanged();
+    void bearingResultsReady(qulonglong sessionId, int resultCount);
+    void bearingResultsCalculated(qulonglong sessionId, QVariantList results);
 
 private:
     struct ScanSession
@@ -106,7 +116,8 @@ private:
         double lastAzimuthDeg = 0.0;
         double progress = 0.0;
         double speedDegPerSec = 10.0;
-        std::vector<processing::BearingInputFrame> collectedBearingFrames;
+        std::optional<core::TimeBase> timeBase;
+        std::vector<processing::BearingFrameObservation> bearingObservations;
     };
 
     void startAzimuthSource();
@@ -116,6 +127,10 @@ private:
     void completeScan();
     void failScan(const QString& reason);
     void onBearingFrames(std::vector<processing::BearingInputFrame> frames);
+    void clearBearingResults();
+    void rebuildBearingPresentation();
+    void publishProcessingDiagnostics(
+        const std::vector<processing::ProcessingDiagnostic>& diagnostics) const;
     void startManualMove(hardware::AntennaManualMoveCommand::Direction direction,
                          double speedDegPerSec);
     void setState(ScanState state);
@@ -131,6 +146,7 @@ private:
     hardware::IAntennaControl* m_antennaControl = nullptr;
     hardware::IAntennaAzimuthSource* m_azimuthSource = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
+    processing::BearingService* m_bearingService = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     int m_bearingFrameSubscriptionId = 0;
 
@@ -143,6 +159,9 @@ private:
     QString m_lastError;
     double m_antennaSpeedDegPerSec = 10.0;
     std::uint64_t m_nextSessionId = 1;
+    std::vector<core::BearingResult> m_lastBearingResults;
+    QVariantList m_targetBearings;
+    QVariantList m_targetAzimuthsDeg;
 };
 
 } // namespace siriusscope::app

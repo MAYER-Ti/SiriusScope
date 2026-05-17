@@ -31,6 +31,17 @@ target_link_libraries(tst_processing
 
 add_test(NAME tst_processing COMMAND tst_processing)
 
+add_executable(tst_bearing_service
+    processing/tst_bearing_service.cpp
+)
+
+target_link_libraries(tst_bearing_service
+    PRIVATE
+        siriusscope_processing
+)
+
+add_test(NAME tst_bearing_service COMMAND tst_bearing_service)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )
