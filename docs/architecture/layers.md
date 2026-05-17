@@ -153,7 +153,9 @@ When the user starts sector scanning:
 ```text
 AntennaIndicator
     -> ScanController
+    -> AntennaMotionPlanner
     -> antenna control interface
+    -> BearingFrameBus / BearingInputFrame collection
     -> processing / bearing service
     -> ResultTable model
     -> storage writer

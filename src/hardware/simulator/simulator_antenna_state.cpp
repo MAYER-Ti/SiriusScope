@@ -52,6 +52,18 @@ void SimulatorAntennaState::setTargetAzimuthDeg(double value)
     m_targetAzimuthDeg = normalizeAzimuth(value);
 }
 
+double SimulatorAntennaState::movementSpeedDegPerSecond() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_movementSpeedDegPerSecond;
+}
+
+void SimulatorAntennaState::setMovementSpeedDegPerSecond(double value)
+{
+    std::lock_guard lock(m_mutex);
+    m_movementSpeedDegPerSecond = value;
+}
+
 bool SimulatorAntennaState::isMoving() const
 {
     std::lock_guard lock(m_mutex);
@@ -67,13 +79,39 @@ void SimulatorAntennaState::setMoving(bool moving)
 std::optional<core::ScanSector> SimulatorAntennaState::activeScanSector() const
 {
     std::lock_guard lock(m_mutex);
-    return m_activeScanSector;
+    return m_activeScanCommand ? std::optional<core::ScanSector>(m_activeScanCommand->requestedSector)
+                               : std::nullopt;
 }
 
-void SimulatorAntennaState::setActiveScanSector(std::optional<core::ScanSector> sector)
+std::optional<AntennaSectorScanCommand> SimulatorAntennaState::activeScanCommand() const
 {
     std::lock_guard lock(m_mutex);
-    m_activeScanSector = sector;
+    return m_activeScanCommand;
+}
+
+void SimulatorAntennaState::setActiveScanCommand(std::optional<AntennaSectorScanCommand> command)
+{
+    std::lock_guard lock(m_mutex);
+    m_activeScanCommand = command;
+    if (m_activeScanCommand) {
+        m_manualMoveDirection.reset();
+    }
+}
+
+std::optional<AntennaManualMoveCommand::Direction> SimulatorAntennaState::manualMoveDirection() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_manualMoveDirection;
+}
+
+void SimulatorAntennaState::setManualMoveDirection(
+    std::optional<AntennaManualMoveCommand::Direction> direction)
+{
+    std::lock_guard lock(m_mutex);
+    m_manualMoveDirection = direction;
+    if (m_manualMoveDirection) {
+        m_activeScanCommand.reset();
+    }
 }
 
 void SimulatorAntennaState::stop()
@@ -81,7 +119,8 @@ void SimulatorAntennaState::stop()
     std::lock_guard lock(m_mutex);
     m_moving = false;
     m_targetAzimuthDeg = m_currentAzimuthDeg;
-    m_activeScanSector.reset();
+    m_activeScanCommand.reset();
+    m_manualMoveDirection.reset();
 }
 
 } // namespace siriusscope::hardware

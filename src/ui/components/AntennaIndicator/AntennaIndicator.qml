@@ -12,7 +12,10 @@ Components.Panel {
     property bool hasSelectedSector: false
     property real selectedLeftAngle: 0
     property real selectedRightAngle: 0
-    property int scanSpeed: 10
+    property real scanSpeed: 10
+    property bool scanActive: false
+    property real scanProgress: 0
+    property string scanStateText: ""
 
     readonly property int targetCount: targetAzimuthsDeg ? targetAzimuthsDeg.length : 0
     readonly property string selectedSectorText: hasSelectedSector
@@ -22,7 +25,10 @@ Components.Panel {
     signal stopRequested()
     signal driveLeftRequested(int speed)
     signal driveRightRequested(int speed)
-    signal scanRequested(real leftAngle, real rightAngle, int speed)
+    signal scanRequested(real leftAngle, real rightAngle, real speed)
+    signal sectorSelected(real leftAngle, real rightAngle)
+    signal sectorCleared()
+    signal scanSpeedChangeRequested(real speed)
 
     contentMargins: 18
 
@@ -127,26 +133,25 @@ Components.Panel {
             hasSelectedSector: antennaIndicator.hasSelectedSector
             selectedLeftAngle: antennaIndicator.selectedLeftAngle
             selectedRightAngle: antennaIndicator.selectedRightAngle
+            sectorEditingEnabled: !antennaIndicator.scanActive
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 200
             beamWidthDeg: 60
 
             onSectorSelected: function(leftAngle, rightAngle) {
-                antennaIndicator.selectedLeftAngle = leftAngle
-                antennaIndicator.selectedRightAngle = rightAngle
-                antennaIndicator.hasSelectedSector = true
+                antennaIndicator.sectorSelected(leftAngle, rightAngle)
             }
 
             onSectorCleared: {
-                antennaIndicator.hasSelectedSector = false
+                antennaIndicator.sectorCleared()
             }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 124
-            Layout.minimumHeight: 116
+            Layout.preferredHeight: 164
+            Layout.minimumHeight: 154
             radius: Theme.radiusPanel
             color: Theme.insetBackground
             border.color: Theme.panelBorder
@@ -184,6 +189,7 @@ Components.Panel {
                         ControlButton {
                             Layout.fillWidth: true
                             Layout.preferredHeight: modelData.stop ? 38 : 36
+                            enabled: modelData.stop || !antennaIndicator.scanActive
                             text: modelData.label
                             font.family: Theme.monoFontFamily
                             font.pixelSize: modelData.stop ? Theme.fontMedium : Theme.fontNormal
@@ -208,10 +214,60 @@ Components.Panel {
                     }
                 }
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 30
+                    spacing: 8
+
+                    Label {
+                        Layout.preferredWidth: 92
+                        Layout.fillHeight: true
+                        text: qsTr("Speed")
+                        color: Theme.textVeryMuted
+                        font.pixelSize: Theme.fontSmall
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+
+                    SpinBox {
+                        id: scanSpeedSpinBox
+                        Layout.preferredWidth: 96
+                        Layout.fillHeight: true
+                        from: 1
+                        to: 60
+                        value: Math.round(antennaIndicator.scanSpeed)
+                        enabled: !antennaIndicator.scanActive
+                        editable: true
+                        onValueModified: antennaIndicator.scanSpeedChangeRequested(value)
+                    }
+
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        from: 0
+                        to: 1
+                        value: antennaIndicator.scanProgress
+                        visible: antennaIndicator.scanActive
+                    }
+
+                    Label {
+                        Layout.preferredWidth: 92
+                        Layout.fillHeight: true
+                        text: antennaIndicator.scanActive
+                              ? Math.round(antennaIndicator.scanProgress * 100).toString() + "%"
+                              : antennaIndicator.scanStateText
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSmall
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignRight
+                        elide: Text.ElideRight
+                    }
+                }
+
                 ControlButton {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 38
-                    enabled: antennaIndicator.hasSelectedSector
+                    enabled: antennaIndicator.hasSelectedSector && !antennaIndicator.scanActive
                     text: qsTr("Сканировать сектор")
                     font.pixelSize: Theme.fontNormal
                     normalColor: "#123044"

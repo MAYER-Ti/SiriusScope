@@ -1,3 +1,4 @@
+#include "core/antenna_motion_planner.h"
 #include "hardware/simulator/simulator_antenna_azimuth_source.h"
 #include "hardware/simulator/simulator_antenna_control.h"
 
@@ -36,6 +37,25 @@ private:
 bool isInBlindZone(double azimuthDeg)
 {
     return azimuthDeg > 170.0 && azimuthDeg < 190.0;
+}
+
+hardware::AntennaSectorScanCommand makeScanCommand(double leftAngleDeg,
+                                                   double rightAngleDeg,
+                                                   double speedDegPerSec = 30.0)
+{
+    const auto planned = core::AntennaMotionPlanner::planSectorScan(
+        leftAngleDeg,
+        rightAngleDeg,
+        core::ScanMotionOptions{speedDegPerSec, 5.0, 0.2});
+
+    hardware::AntennaSectorScanCommand command;
+    command.requestedSector = planned.value()->requestedSector;
+    command.startAzimuthDeg = planned.value()->startAzimuthDeg;
+    command.endAzimuthDeg = planned.value()->endAzimuthDeg;
+    command.safeStartCoordDeg = planned.value()->safeStartCoordDeg;
+    command.safeEndCoordDeg = planned.value()->safeEndCoordDeg;
+    command.speedDegPerSec = speedDegPerSec;
+    return command;
 }
 
 void testAzimuthSourceStartStop(TestRunner& test)
@@ -102,18 +122,21 @@ void testAntennaControlCommands(TestRunner& test)
     const auto blindMoveResult = control.moveToAzimuth(180.0);
     test.require(!blindMoveResult, "moveToAzimuth rejects blind zone target");
 
-    const auto validSector = core::ScanSector::create(20.0, 100.0);
-    test.require(validSector.hasValue(), "test creates valid scan sector");
-    const auto sectorResult = control.startSectorScan(*validSector.value());
+    const auto sectorCommand = makeScanCommand(20.0, 100.0);
+    const auto sectorResult = control.startSectorScan(sectorCommand);
     test.require(sectorResult.success, "startSectorScan accepts valid sector");
     test.require(state.activeScanSector().has_value(), "startSectorScan stores active sector");
-    test.require(state.currentAzimuthDeg() == 20.0, "startSectorScan sets current to sector start");
+    test.require(state.currentAzimuthDeg() == 0.0, "startSectorScan does not teleport current azimuth");
     test.require(state.targetAzimuthDeg() == 100.0, "startSectorScan sets target to sector end");
 
-    const auto crossingSector = core::ScanSector::create(150.0, 200.0);
-    test.require(crossingSector.hasValue(), "test creates blind-zone crossing sector");
-    const auto crossingResult = control.startSectorScan(*crossingSector.value());
-    test.require(!crossingResult, "startSectorScan rejects sector crossing blind zone");
+    const auto crossingCommand = makeScanCommand(150.0, 200.0);
+    const auto crossingResult = control.startSectorScan(crossingCommand);
+    test.require(crossingResult.success, "startSectorScan accepts planned sector around blind zone");
+
+    auto invalidCommand = sectorCommand;
+    invalidCommand.startAzimuthDeg = 180.0;
+    const auto invalidResult = control.startSectorScan(invalidCommand);
+    test.require(!invalidResult, "startSectorScan rejects endpoint inside blind zone");
 
     const auto stopResult = control.stop();
     const auto repeatedStopResult = control.stop();

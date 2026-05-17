@@ -9,6 +9,17 @@ target_link_libraries(tst_core_domain
 
 add_test(NAME tst_core_domain COMMAND tst_core_domain)
 
+add_executable(tst_antenna_motion_planner
+    core/tst_antenna_motion_planner.cpp
+)
+
+target_link_libraries(tst_antenna_motion_planner
+    PRIVATE
+        siriusscope_core
+)
+
+add_test(NAME tst_antenna_motion_planner COMMAND tst_antenna_motion_planner)
+
 add_executable(tst_processing
     processing/tst_processing.cpp
 )
@@ -314,6 +325,40 @@ target_include_directories(tst_diagnostics_service
 
 add_test(NAME tst_diagnostics_service COMMAND tst_diagnostics_service)
 
+add_executable(tst_scan_controller
+    app/tst_scan_controller.cpp
+)
+
+target_link_libraries(tst_scan_controller
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_scan_controller
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_scan_controller COMMAND tst_scan_controller)
+
+add_executable(tst_scan_controller_simulator
+    app/tst_scan_controller_simulator.cpp
+)
+
+target_link_libraries(tst_scan_controller_simulator
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_scan_controller_simulator
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_scan_controller_simulator COMMAND tst_scan_controller_simulator)
+
 add_executable(tst_status_model
     app/tst_status_model.cpp
 )
@@ -395,6 +440,12 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_diagnostics_service PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_scan_controller PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_scan_controller_simulator PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_status_model PROPERTIES

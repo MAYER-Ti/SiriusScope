@@ -56,6 +56,10 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides diagnostics service");
     test.require(bootstrap.statusModel() != nullptr,
                  "bootstrap provides status model");
+    test.require(bootstrap.scanController() != nullptr,
+                 "bootstrap provides scan controller");
+    test.require(bootstrap.bearingFrameBus() != nullptr,
+                 "bootstrap provides bearing frame bus");
     test.require(bootstrap.waterfallStorage() != nullptr,
                  "bootstrap provides waterfall storage placeholder");
     test.require(bootstrap.bcoControl() != nullptr,
@@ -78,6 +82,9 @@ void testBootstrapProvidesObjects(TestRunner& test)
     test.require(siriusscope::app::AntennaControllerQmlSingleton::instance
                      == bootstrap.antennaController(),
                  "bootstrap registers antenna controller singleton");
+    test.require(siriusscope::app::ScanControllerQmlSingleton::instance
+                     == bootstrap.scanController(),
+                 "bootstrap registers scan controller singleton");
     test.require(siriusscope::app::BandListModelQmlSingleton::instance
                      == bootstrap.bandListModel(),
                  "bootstrap registers band list model singleton");

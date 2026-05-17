@@ -16,7 +16,8 @@ public:
         infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr);
 
     core::OperationResult moveToAzimuth(double azimuthDeg) override;
-    core::OperationResult startSectorScan(const core::ScanSector& sector) override;
+    core::OperationResult startSectorScan(const AntennaSectorScanCommand& command) override;
+    core::OperationResult startManualMove(const AntennaManualMoveCommand& command) override;
     core::OperationResult stop() override;
 
 private:

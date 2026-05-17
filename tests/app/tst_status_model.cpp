@@ -1,7 +1,7 @@
-#include "app/antennacontrollerstub.h"
 #include "app/appstate.h"
 #include "app/diagnosticsservice.h"
 #include "app/frequencyviewportmodel.h"
+#include "app/scancontroller.h"
 #include "app/statusmodel.h"
 #include "app/waterfallcontroller.h"
 #include "app/waterfallstorage.h"
@@ -62,6 +62,35 @@ private:
     bool m_running = false;
 };
 
+class FakeAzimuthSource final : public hardware::IAntennaAzimuthSource
+{
+public:
+    core::OperationResult start(AzimuthCallback callback) override
+    {
+        m_callback = std::move(callback);
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult stop() override
+    {
+        m_callback = {};
+        return core::OperationResult::ok();
+    }
+
+    void emitAzimuth(double azimuthDeg)
+    {
+        if (m_callback) {
+            m_callback(hardware::AntennaAzimuthSample{
+                azimuthDeg,
+                std::chrono::system_clock::now(),
+            });
+        }
+    }
+
+private:
+    AzimuthCallback m_callback;
+};
+
 std::vector<core::BandConfig> makeBandConfigs()
 {
     std::vector<core::BandConfig> bands;
@@ -113,7 +142,8 @@ void testInitialStatuses(TestRunner& test)
     FakeSampleSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
-    AntennaControllerStub antenna;
+    FakeAzimuthSource azimuthSource;
+    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,
@@ -122,7 +152,7 @@ void testInitialStatuses(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &antenna);
+    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
 
     test.require(model.programValue() == QStringLiteral("работает"),
                  "initial program status is running");
@@ -136,7 +166,7 @@ void testInitialStatuses(TestRunner& test)
                  "initial recording status is disabled");
     test.require(model.diagnosticsValue() == QStringLiteral("ошибок нет"),
                  "initial diagnostics status reports no errors");
-    test.require(model.azimuthValue() == QStringLiteral("034,7°"),
+    test.require(model.azimuthValue() == QStringLiteral("000,0°"),
                  "initial azimuth is formatted with leading zeroes");
 }
 
@@ -149,7 +179,8 @@ void testModeAndSourceStatuses(TestRunner& test)
     FakeSampleSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
-    AntennaControllerStub antenna;
+    FakeAzimuthSource azimuthSource;
+    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,
@@ -158,7 +189,7 @@ void testModeAndSourceStatuses(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &antenna);
+    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
 
     AppState::instance().setMode(AppState::Mode::Combat);
     controller.start();
@@ -180,7 +211,8 @@ void testDiagnosticRules(TestRunner& test)
     FakeSampleSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
-    AntennaControllerStub antenna;
+    FakeAzimuthSource azimuthSource;
+    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,
@@ -189,7 +221,7 @@ void testDiagnosticRules(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &antenna);
+    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
 
     publish(diagnostics,
             infrastructure::DiagnosticSeverity::Info,
@@ -245,7 +277,8 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
     FakeSampleSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
-    AntennaControllerStub antenna;
+    FakeAzimuthSource azimuthSource;
+    app::ScanController scanController(nullptr, &azimuthSource, nullptr, &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
     app::WaterfallController controller(&viewport,
@@ -254,7 +287,7 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &antenna);
+    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
 
     controller.startRecording();
     test.require(model.recordingValue() == QStringLiteral("включена"),
@@ -262,7 +295,8 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
     test.require(model.recordingLevel() == app::StatusModel::StatusLevel::Good,
                  "active recording is good");
 
-    antenna.setAzimuthDeg(5.2);
+    azimuthSource.emitAzimuth(5.2);
+    waitUntil([&model] { return model.azimuthValue() == QStringLiteral("005,2°"); });
     test.require(model.azimuthValue() == QStringLiteral("005,2°"),
                  "azimuth changes are formatted by StatusModel");
 }

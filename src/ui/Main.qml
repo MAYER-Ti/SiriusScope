@@ -40,15 +40,13 @@ ApplicationWindow {
                 Layout.preferredHeight: 52
                 Layout.minimumHeight: 52
                 Layout.maximumHeight: 58
-                canScanSector: antennaIndicator.hasSelectedSector
+                canScanSector: ScanController.hasSelectedSector && !ScanController.scanActive
 
                 onLiveRequested: WaterfallController.jumpToLive()
                 onRecordingStartRequested: WaterfallController.startRecording()
                 onRecordingStopRequested: WaterfallController.stopRecording()
-                onScanSectorRequested: AntennaController.scan(
-                    antennaIndicator.selectedLeftAngle,
-                    antennaIndicator.selectedRightAngle,
-                    antennaIndicator.scanSpeed)
+                onScanSectorRequested: ScanController.startSelectedSectorScan(
+                    ScanController.scanSpeedDegPerSec)
             }
 
             RowLayout {
@@ -97,18 +95,34 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         Layout.verticalStretchFactor: 72
                         Layout.minimumHeight: 330
-                        azimuthDeg: AntennaController.azimuthDeg
+                        azimuthDeg: ScanController.currentAzimuthDeg
                         targetAzimuthsDeg: []
+                        hasSelectedSector: ScanController.hasSelectedSector
+                        selectedLeftAngle: ScanController.selectedLeftAngle
+                        selectedRightAngle: ScanController.selectedRightAngle
+                        scanSpeed: ScanController.scanSpeedDegPerSec
+                        scanActive: ScanController.scanActive
+                        scanProgress: ScanController.scanProgress
+                        scanStateText: ScanController.scanStateText
 
-                        onStopRequested: AntennaController.stop()
+                        onStopRequested: ScanController.stopScan()
                         onDriveLeftRequested: function(speed) {
-                            AntennaController.driveLeft(speed)
+                            ScanController.driveLeft(speed)
                         }
                         onDriveRightRequested: function(speed) {
-                            AntennaController.driveRight(speed)
+                            ScanController.driveRight(speed)
                         }
                         onScanRequested: function(leftAngle, rightAngle, speed) {
-                            AntennaController.scan(leftAngle, rightAngle, speed)
+                            ScanController.startScan(leftAngle, rightAngle, speed)
+                        }
+                        onSectorSelected: function(leftAngle, rightAngle) {
+                            ScanController.selectSector(leftAngle, rightAngle)
+                        }
+                        onSectorCleared: {
+                            ScanController.clearSector()
+                        }
+                        onScanSpeedChangeRequested: function(speed) {
+                            ScanController.setScanSpeedDegPerSec(speed)
                         }
                     }
 

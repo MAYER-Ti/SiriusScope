@@ -24,6 +24,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/antennacontrollerstub.cpp
     src/app/appstate.h
     src/app/appstate.cpp
+    src/app/bearingframebus.h
+    src/app/bearingframebus.cpp
     src/app/bandconfigcontroller.h
     src/app/bandconfigcontroller.cpp
     src/app/bandlistmodel.h
@@ -34,6 +36,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/frequencygridmodel.cpp
     src/app/frequencyviewportmodel.h
     src/app/frequencyviewportmodel.cpp
+    src/app/scancontroller.h
+    src/app/scancontroller.cpp
     src/app/spectrumcontrollerstub.h
     src/app/spectrumcontrollerstub.cpp
     src/app/spectrumdecimator.h
@@ -63,6 +67,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
 )
 
 set(SIRIUSSCOPE_CORE_SOURCES
+    src/core/antenna_motion_planner.h
+    src/core/antenna_motion_planner.cpp
     src/core/domain_constraints.h
     src/core/domain_constraints.cpp
     src/core/domain_models.h

@@ -4,11 +4,11 @@
 #include <QString>
 
 class AppState;
-class AntennaControllerStub;
 
 namespace siriusscope::app {
 
 class DiagnosticsService;
+class ScanController;
 class WaterfallController;
 
 class StatusModel final : public QObject
@@ -43,7 +43,7 @@ public:
     explicit StatusModel(DiagnosticsService* diagnosticsService,
                          AppState* appState,
                          WaterfallController* waterfallController,
-                         AntennaControllerStub* antennaController,
+                         ScanController* scanController,
                          QObject* parent = nullptr);
 
     QString programValue() const { return m_programValue; }
@@ -103,7 +103,7 @@ private:
     DiagnosticsService* m_diagnosticsService = nullptr;
     AppState* m_appState = nullptr;
     WaterfallController* m_waterfallController = nullptr;
-    AntennaControllerStub* m_antennaController = nullptr;
+    ScanController* m_scanController = nullptr;
 
     QString m_programValue = QStringLiteral("работает");
     StatusLevel m_programLevel = StatusLevel::Good;

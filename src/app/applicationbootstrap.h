@@ -3,9 +3,11 @@
 #include "antennacontrollerstub.h"
 #include "bandconfigcontroller.h"
 #include "bandlistmodel.h"
+#include "bearingframebus.h"
 #include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
+#include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "statusmodel.h"
@@ -46,6 +48,8 @@ public:
     BandConfigController* bandConfigController() noexcept { return &m_bandConfigController; }
     DiagnosticsService* diagnosticsService() noexcept { return m_diagnosticsService.get(); }
     StatusModel* statusModel() noexcept { return m_statusModel.get(); }
+    ScanController* scanController() noexcept { return m_scanController.get(); }
+    BearingFrameBus* bearingFrameBus() noexcept { return m_bearingFrameBus.get(); }
 
     infrastructure::IDiagnosticsSink* diagnosticsSink() noexcept
     {
@@ -92,9 +96,11 @@ private:
     std::unique_ptr<hardware::SimulatorAntennaAzimuthSource> m_antennaAzimuthSource;
     std::unique_ptr<hardware::IBcoControl> m_bcoControl;
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
+    std::unique_ptr<BearingFrameBus> m_bearingFrameBus;
     BandListModel m_bandListModel;
     BandConfigController m_bandConfigController;
     std::unique_ptr<WaterfallController> m_waterfallController;
+    std::unique_ptr<ScanController> m_scanController;
     std::unique_ptr<StatusModel> m_statusModel;
 };
 

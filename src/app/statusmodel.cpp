@@ -1,8 +1,8 @@
 #include "statusmodel.h"
 
-#include "antennacontrollerstub.h"
 #include "appstate.h"
 #include "diagnosticsservice.h"
+#include "scancontroller.h"
 #include "waterfallcontroller.h"
 
 #include <QChar>
@@ -38,7 +38,8 @@ bool isAntennaSubsystem(const QString& subsystem)
 {
     return subsystem == QStringLiteral("SimulatorAntennaControl")
         || subsystem == QStringLiteral("SimulatorAntennaAzimuthSource")
-        || subsystem == QStringLiteral("AntennaController");
+        || subsystem == QStringLiteral("AntennaController")
+        || subsystem == QStringLiteral("ScanController");
 }
 
 bool isStorageSubsystem(const QString& subsystem)
@@ -51,13 +52,13 @@ bool isStorageSubsystem(const QString& subsystem)
 StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
                          AppState* appState,
                          WaterfallController* waterfallController,
-                         AntennaControllerStub* antennaController,
+                         ScanController* scanController,
                          QObject* parent)
     : QObject(parent)
     , m_diagnosticsService(diagnosticsService)
     , m_appState(appState)
     , m_waterfallController(waterfallController)
-    , m_antennaController(antennaController)
+    , m_scanController(scanController)
 {
     updateModeStatus();
     if (!m_waterfallController) {
@@ -95,12 +96,20 @@ StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
                 &StatusModel::updateRecordingStatus);
     }
 
-    if (m_antennaController) {
-        connect(m_antennaController,
-                &AntennaControllerStub::azimuthDegChanged,
+    if (m_scanController) {
+        connect(m_scanController,
+                &ScanController::currentAzimuthChanged,
                 this,
-                [this](double) {
+                [this]() {
                     updateAzimuthStatus();
+                });
+        connect(m_scanController,
+                &ScanController::scanStateChanged,
+                this,
+                [this]() {
+                    if (m_scanController && m_scanController->scanActive()) {
+                        setAntennaStatus(QStringLiteral("scan active"), StatusLevel::Good);
+                    }
                 });
     }
 }
@@ -155,12 +164,12 @@ void StatusModel::updateRecordingStatus()
 
 void StatusModel::updateAzimuthStatus()
 {
-    if (!m_antennaController) {
+    if (!m_scanController) {
         setAzimuthStatus(QStringLiteral("—"), StatusLevel::Warning);
         return;
     }
 
-    setAzimuthStatus(formattedAzimuth(m_antennaController->azimuthDeg()), StatusLevel::Good);
+    setAzimuthStatus(formattedAzimuth(m_scanController->currentAzimuthDeg()), StatusLevel::Good);
 }
 
 void StatusModel::onDiagnosticEvent(const QString& subsystem,
@@ -250,6 +259,13 @@ void StatusModel::updateAntennaFromDiagnostic(int severity, const QString& messa
                          StatusLevel::Warning);
     } else if (lower.contains(QStringLiteral("accepted"))) {
         setAntennaStatus(QStringLiteral("команда принята"), StatusLevel::Good);
+    } else if (lower.contains(QStringLiteral("scan started"))
+               || lower.contains(QStringLiteral("scan active"))) {
+        setAntennaStatus(QStringLiteral("scan active"), StatusLevel::Good);
+    } else if (lower.contains(QStringLiteral("scan completed"))) {
+        setAntennaStatus(QStringLiteral("scan completed"), StatusLevel::Good);
+    } else if (lower.contains(QStringLiteral("scan cancelled"))) {
+        setAntennaStatus(QStringLiteral("scan cancelled"), StatusLevel::Warning);
     } else if (lower.contains(QStringLiteral("stopped"))) {
         setAntennaStatus(QStringLiteral("остановлен"), StatusLevel::Good);
     }

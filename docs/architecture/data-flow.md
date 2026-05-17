@@ -146,12 +146,15 @@ The sector scanning flow coordinates operator sector selection, antenna movement
 ```text
 Operator selects sector in AntennaIndicator
     -> ScanController
-    -> AntennaControl interface
+    -> AntennaMotionPlanner
+    -> IAntennaControl
     -> AntennaCommandAdapter or SimulatorAntennaAdapter
     -> antenna moves through selected sector
-    -> AzimuthProvider updates current angle
+    -> IAntennaAzimuthSource updates current angle
     -> BCO samples are collected during scan
-    -> ScanProcessingService
+    -> SampleProcessor prepares BearingInputFrame
+    -> BearingFrameBus
+    -> ScanController stores frames for the active scan session
     -> BearingService
     -> BearingResult per BandItem
     -> AntennaIndicator model
@@ -165,6 +168,7 @@ Operator selects sector in AntennaIndicator
 * QML must not directly command the antenna hardware.
 * QML must call an application-level scan command.
 * Antenna blind zone handling belongs to antenna-control/application logic, not QML visuals.
+* The current ScanController stage stops at collecting `BearingInputFrame`; final bearing calculation, result-table rows, and result storage are downstream `BearingService` work.
 * Bearing calculation must be performed outside QML.
 * Bearing results must be computed per `BandItem`.
 * Bearing result color must match the related `BandItem` color.

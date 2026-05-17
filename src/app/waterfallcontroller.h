@@ -29,6 +29,8 @@ class WaterfallRingBuffer;
 
 namespace siriusscope::app {
 
+class BearingFrameBus;
+
 struct WaterfallControllerConfig
 {
     int renderBinCount = 1024;
@@ -65,6 +67,7 @@ public:
                                  IWaterfallSessionStorage* sessionStorage,
                                  infrastructure::IDiagnosticsSink* diagnosticsSink,
                                  WaterfallControllerConfig config = {},
+                                 BearingFrameBus* bearingFrameBus = nullptr,
                                  QObject* parent = nullptr);
     ~WaterfallController() override;
 
@@ -165,6 +168,7 @@ private:
     FrequencyViewportModel* m_viewportModel = nullptr;
     hardware::IBcoSampleSource* m_sampleSource = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
+    BearingFrameBus* m_bearingFrameBus = nullptr;
     WaterfallRingBuffer* m_ringBuffer = nullptr;
     IWaterfallSessionStorage* m_sessionStorage = nullptr;
     std::unique_ptr<InMemoryWaterfallSessionStorage> m_ownedSessionStorage;

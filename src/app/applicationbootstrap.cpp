@@ -54,6 +54,7 @@ ApplicationBootstrap::ApplicationBootstrap()
     , m_antennaControl(std::make_unique<hardware::SimulatorAntennaControl>(
           m_antennaState.get(),
           m_diagnosticsService.get()))
+    , m_bearingFrameBus(std::make_unique<BearingFrameBus>())
     , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsService.get())
 {
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
@@ -61,12 +62,19 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                                   m_bcoSampleSource.get(),
                                                                   m_bandListModel.bandConfigs(),
                                                                   m_waterfallSessionStorage.get(),
-                                                                  m_diagnosticsService.get());
+                                                                  m_diagnosticsService.get(),
+                                                                  WaterfallControllerConfig{},
+                                                                  m_bearingFrameBus.get());
+
+    m_scanController = std::make_unique<ScanController>(m_antennaControl.get(),
+                                                        m_antennaAzimuthSource.get(),
+                                                        m_bearingFrameBus.get(),
+                                                        m_diagnosticsService.get());
 
     m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),
                                                   &AppState::instance(),
                                                   m_waterfallController.get(),
-                                                  &m_antennaController);
+                                                  m_scanController.get());
 
     QObject::connect(&m_antennaController,
                      &AntennaControllerStub::commandRejected,
@@ -127,6 +135,7 @@ void ApplicationBootstrap::registerQmlSingletons()
     SpectrumDecimatorQmlSingleton::instance = &m_spectrumDecimator;
     WaterfallControllerQmlSingleton::instance = m_waterfallController.get();
     AntennaControllerQmlSingleton::instance = &m_antennaController;
+    ScanControllerQmlSingleton::instance = m_scanController.get();
     BandListModelQmlSingleton::instance = &m_bandListModel;
     BandConfigControllerQmlSingleton::instance = &m_bandConfigController;
     DiagnosticsServiceQmlSingleton::instance = m_diagnosticsService.get();

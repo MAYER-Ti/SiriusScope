@@ -17,6 +17,7 @@ Item {
     property real smoothing: 0.1
     property int renderFps: 60
     property real minimumSectorDeg: 5
+    property bool sectorEditingEnabled: true
 
     signal sectorSelected(real leftAngle, real rightAngle)
     signal sectorCleared()
@@ -421,6 +422,7 @@ Item {
 
                 MouseArea {
                     anchors.fill: parent
+                    enabled: indicator.sectorEditingEnabled
                     acceptedButtons: Qt.LeftButton
 
                     onPressed: function(mouse) {

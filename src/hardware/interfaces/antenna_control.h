@@ -5,13 +5,35 @@
 
 namespace siriusscope::hardware {
 
+struct AntennaSectorScanCommand
+{
+    core::ScanSector requestedSector;
+    double startAzimuthDeg = 0.0;
+    double endAzimuthDeg = 0.0;
+    double safeStartCoordDeg = 0.0;
+    double safeEndCoordDeg = 0.0;
+    double speedDegPerSec = 10.0;
+};
+
+struct AntennaManualMoveCommand
+{
+    enum class Direction {
+        Left,
+        Right,
+    };
+
+    Direction direction = Direction::Right;
+    double speedDegPerSec = 10.0;
+};
+
 class IAntennaControl
 {
 public:
     virtual ~IAntennaControl() = default;
 
     virtual core::OperationResult moveToAzimuth(double azimuthDeg) = 0;
-    virtual core::OperationResult startSectorScan(const core::ScanSector& sector) = 0;
+    virtual core::OperationResult startSectorScan(const AntennaSectorScanCommand& command) = 0;
+    virtual core::OperationResult startManualMove(const AntennaManualMoveCommand& command) = 0;
     virtual core::OperationResult stop() = 0;
 };
 
@@ -23,7 +45,12 @@ public:
         return core::OperationResult::ok();
     }
 
-    core::OperationResult startSectorScan(const core::ScanSector&) override
+    core::OperationResult startSectorScan(const AntennaSectorScanCommand&) override
+    {
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult startManualMove(const AntennaManualMoveCommand&) override
     {
         return core::OperationResult::ok();
     }

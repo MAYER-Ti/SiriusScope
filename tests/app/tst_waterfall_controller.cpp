@@ -1,3 +1,4 @@
+#include "app/bearingframebus.h"
 #include "app/frequencyviewportmodel.h"
 #include "app/waterfallcontroller.h"
 #include "app/waterfallringbuffer.h"
@@ -257,6 +258,46 @@ void testInputBatchUpdatesModel(TestRunner& test)
     test.require(!storage.listSessions().isEmpty(), "startRecording creates an in-memory session");
 }
 
+void testProcessingPublishesBearingFrames(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    app::BearingFrameBus bearingFrameBus;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 128;
+    config.visibleRowCount = 16;
+    config.sourceFlushIntervalMs = 20;
+
+    std::mutex mutex;
+    int receivedFrameCount = 0;
+    bearingFrameBus.subscribe([&](std::vector<processing::BearingInputFrame> frames) {
+        std::lock_guard lock(mutex);
+        receivedFrameCount += static_cast<int>(frames.size());
+    });
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config,
+                                                     &bearingFrameBus);
+    controller.start();
+
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
+                                               makeSample(bands, 1, 0, 1, 40)}});
+
+    const bool published = waitUntil([&] {
+        std::lock_guard lock(mutex);
+        return receivedFrameCount > 0;
+    });
+
+    test.require(published, "WaterfallController publishes bearing frames to bus");
+}
+
 void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
 {
     FrequencyViewportModel viewport;
@@ -424,6 +465,7 @@ int main(int argc, char *argv[])
     testControllerStartsWithRecordingDisabled(test);
     testInactiveSessionIgnoresRenderableRows(test);
     testInputBatchUpdatesModel(test);
+    testProcessingPublishesBearingFrames(test);
     testScrollHistoryNoopDoesNotRebuildEmptyHistory(test);
     testScrollHistoryRebuildsOnlyWhenWindowChanges(test);
     testEmptyBatchDoesNotCrashAndReportsDiagnostic(test);

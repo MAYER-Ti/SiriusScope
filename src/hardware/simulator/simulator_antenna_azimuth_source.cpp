@@ -1,5 +1,7 @@
 #include "hardware/simulator/simulator_antenna_azimuth_source.h"
 
+#include "core/antenna_motion_planner.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,16 +13,12 @@ namespace siriusscope::hardware {
 namespace {
 
 constexpr double kFullCircleDeg = core::DomainConstraints::maxAzimuthDeg;
-constexpr double kBlindStartDeg = 170.0;
-constexpr double kBlindEndDeg = 190.0;
+constexpr double kBlindStartDeg = core::AntennaMotionPlanner::blindZoneStartDeg;
+constexpr double kBlindEndDeg = core::AntennaMotionPlanner::blindZoneEndDeg;
 
 double normalizeAzimuth(double value)
 {
-    auto normalized = std::fmod(value, kFullCircleDeg);
-    if (normalized < 0.0) {
-        normalized += kFullCircleDeg;
-    }
-    return normalized;
+    return core::AntennaMotionPlanner::normalizeAzimuth(value);
 }
 
 double clockwiseDistance(double fromDeg, double toDeg)
@@ -44,6 +42,12 @@ bool pathCrossesBlindZone(double fromDeg, double toDeg, bool clockwise)
     return clockwiseArcContains(toDeg, fromDeg, (kBlindStartDeg + kBlindEndDeg) / 2.0);
 }
 
+double movementStep(double speedDegPerSecond, std::chrono::milliseconds period)
+{
+    const auto periodSeconds = std::chrono::duration<double>(period).count();
+    return std::max(0.0, speedDegPerSecond) * periodSeconds;
+}
+
 } // namespace
 
 SimulatorAntennaAzimuthSource::SimulatorAntennaAzimuthSource(
@@ -57,6 +61,7 @@ SimulatorAntennaAzimuthSource::SimulatorAntennaAzimuthSource(
     if (m_state) {
         m_state->setCurrentAzimuthDeg(m_config.initialAzimuthDeg);
         m_state->setTargetAzimuthDeg(m_config.initialAzimuthDeg);
+        m_state->setMovementSpeedDegPerSecond(m_config.movementSpeedDegPerSecond);
         m_state->setMoving(false);
     }
 }
@@ -133,6 +138,41 @@ void SimulatorAntennaAzimuthSource::updateAzimuth()
         return;
     }
 
+    if (const auto direction = m_state->manualMoveDirection()) {
+        const auto current = m_state->currentAzimuthDeg();
+        const auto currentCoord = core::AntennaMotionPlanner::toSafeCoord(current);
+        const auto step = movementStep(m_state->movementSpeedDegPerSecond(),
+                                       m_config.updatePeriod);
+        const auto nextCoord =
+            *direction == AntennaManualMoveCommand::Direction::Left
+            ? std::max(0.0, currentCoord - step)
+            : std::min(core::AntennaMotionPlanner::maxSafeCoordDeg, currentCoord + step);
+
+        m_state->setCurrentAzimuthDeg(core::AntennaMotionPlanner::fromSafeCoord(nextCoord));
+        if (nextCoord <= 0.0 || nextCoord >= core::AntennaMotionPlanner::maxSafeCoordDeg) {
+            m_state->stop();
+        }
+        return;
+    }
+
+    if (const auto command = m_state->activeScanCommand()) {
+        const auto currentCoord =
+            core::AntennaMotionPlanner::toSafeCoord(m_state->currentAzimuthDeg());
+        const auto targetCoord = command->safeEndCoordDeg;
+        const auto distance = targetCoord - currentCoord;
+        const auto step = movementStep(command->speedDegPerSec, m_config.updatePeriod);
+
+        if (step <= 0.0 || std::abs(distance) <= step) {
+            m_state->setCurrentAzimuthDeg(command->endAzimuthDeg);
+            m_state->setMoving(false);
+            return;
+        }
+
+        m_state->setCurrentAzimuthDeg(
+            core::AntennaMotionPlanner::fromSafeCoord(currentCoord + step));
+        return;
+    }
+
     const auto current = m_state->currentAzimuthDeg();
     const auto target = m_state->targetAzimuthDeg();
     const auto clockwise = clockwiseDistance(current, target);
@@ -149,8 +189,7 @@ void SimulatorAntennaAzimuthSource::updateAzimuth()
     }
 
     const auto distance = moveClockwise ? clockwise : counterClockwise;
-    const auto periodSeconds = std::chrono::duration<double>(m_config.updatePeriod).count();
-    const auto step = std::max(0.0, m_config.movementSpeedDegPerSecond) * periodSeconds;
+    const auto step = movementStep(m_state->movementSpeedDegPerSecond(), m_config.updatePeriod);
 
     if (step <= 0.0 || step >= distance) {
         m_state->setCurrentAzimuthDeg(target);

@@ -8,6 +8,7 @@
 #include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
+#include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "statusmodel.h"
@@ -138,6 +139,24 @@ public:
     inline static AntennaControllerStub *instance = nullptr;
 
     static AntennaControllerStub *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct ScanControllerQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(ScanController)
+    QML_NAMED_ELEMENT(ScanController)
+    QML_SINGLETON
+
+public:
+    inline static ScanController *instance = nullptr;
+
+    static ScanController *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);

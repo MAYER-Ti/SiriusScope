@@ -1,26 +1,15 @@
 #include "hardware/simulator/simulator_antenna_control.h"
 
+#include "core/antenna_motion_planner.h"
+
 #include <chrono>
 #include <cmath>
+#include <optional>
 #include <string>
 
 namespace siriusscope::hardware {
 
 namespace {
-
-constexpr double kBlindStartDeg = 170.0;
-constexpr double kBlindEndDeg = 190.0;
-constexpr double kBlindMiddleDeg = 180.0;
-
-bool isInBlindZone(double azimuthDeg)
-{
-    return azimuthDeg > kBlindStartDeg && azimuthDeg < kBlindEndDeg;
-}
-
-bool sectorCrossesBlindZone(const core::ScanSector& sector)
-{
-    return sector.contains(kBlindMiddleDeg);
-}
 
 std::string validationMessage(const core::ValidationResult& validation)
 {
@@ -33,6 +22,11 @@ std::string validationMessage(const core::ValidationResult& validation)
     }
 
     return message.empty() ? "invalid antenna command" : message;
+}
+
+bool isValidSpeed(double speedDegPerSec)
+{
+    return std::isfinite(speedDegPerSec) && speedDegPerSec > 0.0;
 }
 
 } // namespace
@@ -60,12 +54,14 @@ core::OperationResult SimulatorAntennaControl::moveToAzimuth(double azimuthDeg)
         return core::OperationResult::failure(message);
     }
 
-    if (isInBlindZone(azimuthDeg)) {
+    if (core::AntennaMotionPlanner::isInBlindZone(azimuthDeg)) {
         const auto message = "azimuth is inside antenna blind zone 170..190 degrees";
         publish(infrastructure::DiagnosticSeverity::Warning, message);
         return core::OperationResult::failure(message);
     }
 
+    m_state->setActiveScanCommand(std::nullopt);
+    m_state->setManualMoveDirection(std::nullopt);
     m_state->setTargetAzimuthDeg(azimuthDeg);
     m_state->setMoving(true);
 
@@ -74,7 +70,8 @@ core::OperationResult SimulatorAntennaControl::moveToAzimuth(double azimuthDeg)
     return core::OperationResult::ok();
 }
 
-core::OperationResult SimulatorAntennaControl::startSectorScan(const core::ScanSector& sector)
+core::OperationResult SimulatorAntennaControl::startSectorScan(
+    const AntennaSectorScanCommand& command)
 {
     if (!m_state) {
         publish(infrastructure::DiagnosticSeverity::Error,
@@ -82,32 +79,78 @@ core::OperationResult SimulatorAntennaControl::startSectorScan(const core::ScanS
         return core::OperationResult::failure("antenna simulator state is not available");
     }
 
-    const auto validation = sector.validate();
+    auto validation = command.requestedSector.validate();
+    validation.merge(core::validateAzimuth(command.startAzimuthDeg));
+    validation.merge(core::validateAzimuth(command.endAzimuthDeg));
     if (!validation) {
         const auto message = "invalid scan sector: " + validationMessage(validation);
         publish(infrastructure::DiagnosticSeverity::Error, message);
         return core::OperationResult::failure(message);
     }
 
-    if (isInBlindZone(sector.startAzimuthDeg) || isInBlindZone(sector.endAzimuthDeg)) {
+    if (!isValidSpeed(command.speedDegPerSec)) {
+        const auto message = "scan speed must be positive";
+        publish(infrastructure::DiagnosticSeverity::Warning, message);
+        return core::OperationResult::failure(message);
+    }
+
+    if (core::AntennaMotionPlanner::isInBlindZone(command.startAzimuthDeg)
+        || core::AntennaMotionPlanner::isInBlindZone(command.endAzimuthDeg)) {
         const auto message = "scan sector endpoint is inside antenna blind zone 170..190 degrees";
         publish(infrastructure::DiagnosticSeverity::Warning, message);
         return core::OperationResult::failure(message);
     }
 
-    if (sectorCrossesBlindZone(sector)) {
-        const auto message = "scan sector crosses antenna blind zone 170..190 degrees";
+    if (command.safeStartCoordDeg < 0.0
+        || command.safeEndCoordDeg > core::AntennaMotionPlanner::maxSafeCoordDeg
+        || command.safeStartCoordDeg >= command.safeEndCoordDeg) {
+        const auto message = "scan sector safe path is invalid";
         publish(infrastructure::DiagnosticSeverity::Warning, message);
         return core::OperationResult::failure(message);
     }
 
-    m_state->setActiveScanSector(sector);
-    m_state->setCurrentAzimuthDeg(sector.startAzimuthDeg);
-    m_state->setTargetAzimuthDeg(sector.endAzimuthDeg);
+    m_state->setMovementSpeedDegPerSecond(command.speedDegPerSec);
+    m_state->setActiveScanCommand(command);
+    m_state->setTargetAzimuthDeg(command.endAzimuthDeg);
     m_state->setMoving(true);
 
     publish(infrastructure::DiagnosticSeverity::Info,
             "antenna simulator accepted sector scan command");
+    return core::OperationResult::ok();
+}
+
+core::OperationResult SimulatorAntennaControl::startManualMove(
+    const AntennaManualMoveCommand& command)
+{
+    if (!m_state) {
+        publish(infrastructure::DiagnosticSeverity::Error,
+                "antenna simulator rejected manual move: state is not available");
+        return core::OperationResult::failure("antenna simulator state is not available");
+    }
+
+    if (!isValidSpeed(command.speedDegPerSec)) {
+        const auto message = "manual move speed must be positive";
+        publish(infrastructure::DiagnosticSeverity::Warning, message);
+        return core::OperationResult::failure(message);
+    }
+
+    const auto current = m_state->currentAzimuthDeg();
+    if (core::AntennaMotionPlanner::isInBlindZone(current)) {
+        const auto message = "current azimuth is inside antenna blind zone 170..190 degrees";
+        publish(infrastructure::DiagnosticSeverity::Warning, message);
+        return core::OperationResult::failure(message);
+    }
+
+    m_state->setMovementSpeedDegPerSecond(command.speedDegPerSec);
+    m_state->setManualMoveDirection(command.direction);
+    m_state->setTargetAzimuthDeg(
+        command.direction == AntennaManualMoveCommand::Direction::Left
+            ? core::AntennaMotionPlanner::blindZoneEndDeg
+            : core::AntennaMotionPlanner::blindZoneStartDeg);
+    m_state->setMoving(true);
+
+    publish(infrastructure::DiagnosticSeverity::Info,
+            "antenna simulator accepted manual move command");
     return core::OperationResult::ok();
 }
 
