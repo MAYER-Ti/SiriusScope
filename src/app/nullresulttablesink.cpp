@@ -3,7 +3,7 @@
 namespace siriusscope::app {
 
 core::OperationResult NullResultTableSink::appendBearingResults(
-    std::uint64_t,
+    const ResultTableAppendContext&,
     const std::vector<core::BearingResult>&)
 {
     return core::OperationResult::ok();

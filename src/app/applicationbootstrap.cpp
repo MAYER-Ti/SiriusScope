@@ -1,6 +1,7 @@
 #include "applicationbootstrap.h"
 
 #include "appstate.h"
+#include "infrastructure/storage/binary_result_table_storage.h"
 #include "infrastructure/storage/binary_waterfall_session_storage.h"
 #include "qmlsingletons.h"
 
@@ -58,7 +59,17 @@ ApplicationBootstrap::ApplicationBootstrap()
     , m_bearingFrameBus(std::make_unique<BearingFrameBus>())
     , m_bearingService(std::make_unique<processing::BearingService>())
     , m_scanAcquisitionRecorder(std::make_unique<InMemoryScanAcquisitionRecorder>())
-    , m_resultTableSink(std::make_unique<NullResultTableSink>())
+    , m_resultTableStorage(std::make_unique<infrastructure::BinaryResultTableStorage>(
+          infrastructure::BinaryResultTableStorage::Config{
+              defaultWaterfallDataRootPath(),
+              false,
+          },
+          m_diagnosticsService.get()))
+    , m_resultTableModel(std::make_unique<ResultTableModel>())
+    , m_resultTableController(std::make_unique<ResultTableController>(
+          m_resultTableModel.get(),
+          m_resultTableStorage.get(),
+          m_diagnosticsService.get()))
     , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsService.get())
 {
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
@@ -79,7 +90,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                         m_scanAcquisitionRecorder.get(),
                                                         m_waterfallController.get(),
                                                         m_scanRecordingControl.get(),
-                                                        m_resultTableSink.get(),
+                                                        m_resultTableController.get(),
                                                         m_diagnosticsService.get());
 
     m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),
@@ -128,6 +139,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                      });
 
     m_waterfallController->start();
+    m_resultTableController->reload();
 
     m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
         infrastructure::DiagnosticSeverity::Info,
@@ -151,6 +163,7 @@ void ApplicationBootstrap::registerQmlSingletons()
     BandConfigControllerQmlSingleton::instance = &m_bandConfigController;
     DiagnosticsServiceQmlSingleton::instance = m_diagnosticsService.get();
     StatusModelQmlSingleton::instance = m_statusModel.get();
+    ResultTableModelQmlSingleton::instance = m_resultTableModel.get();
 }
 
 } // namespace siriusscope::app

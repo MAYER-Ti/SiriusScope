@@ -120,6 +120,23 @@ target_include_directories(tst_diagnostic_log_writer
 
 add_test(NAME tst_diagnostic_log_writer COMMAND tst_diagnostic_log_writer)
 
+add_executable(tst_binary_result_table_storage
+    infrastructure/tst_binary_result_table_storage.cpp
+)
+
+target_link_libraries(tst_binary_result_table_storage
+    PRIVATE
+        Qt6::Core
+        siriusscope_infrastructure
+)
+
+target_include_directories(tst_binary_result_table_storage
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_binary_result_table_storage COMMAND tst_binary_result_table_storage)
+
 add_executable(tst_waterfall_history
     app/tst_waterfall_history.cpp
     ../src/app/waterfallhistorymodel.cpp
@@ -336,6 +353,40 @@ target_include_directories(tst_diagnostics_service
 
 add_test(NAME tst_diagnostics_service COMMAND tst_diagnostics_service)
 
+add_executable(tst_result_table_model
+    app/tst_result_table_model.cpp
+)
+
+target_link_libraries(tst_result_table_model
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_result_table_model
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_result_table_model COMMAND tst_result_table_model)
+
+add_executable(tst_result_table_controller
+    app/tst_result_table_controller.cpp
+)
+
+target_link_libraries(tst_result_table_controller
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_result_table_controller
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_result_table_controller COMMAND tst_result_table_controller)
+
 add_executable(tst_scan_acquisition_recorder
     app/tst_scan_acquisition_recorder.cpp
 )
@@ -456,6 +507,9 @@ if(WIN32)
         set_tests_properties(tst_diagnostic_log_writer PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
+        set_tests_properties(tst_binary_result_table_storage PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
         set_tests_properties(tst_waterfall_row_resampler PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
@@ -484,6 +538,12 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_diagnostics_service PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_result_table_model PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_result_table_controller PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_scan_acquisition_recorder PROPERTIES

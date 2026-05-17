@@ -8,7 +8,7 @@ class NullResultTableSink final : public IResultTableSink
 {
 public:
     core::OperationResult appendBearingResults(
-        std::uint64_t scanSessionId,
+        const ResultTableAppendContext& context,
         const std::vector<core::BearingResult>& results) override;
 };
 

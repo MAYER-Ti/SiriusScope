@@ -352,11 +352,12 @@ public:
     }
 
     core::OperationResult appendBearingResults(
-        std::uint64_t scanSessionId,
+        const app::ResultTableAppendContext& context,
         const std::vector<core::BearingResult>& results) override
     {
         ++appendCalls;
-        lastSessionId = scanSessionId;
+        lastSessionId = context.scanSessionId;
+        lastAntennaAzimuthDeg = context.antennaAzimuthDeg;
         lastResultCount = static_cast<int>(results.size());
         if (events) {
             events->push_back("result.append");
@@ -367,6 +368,7 @@ public:
     int appendCalls = 0;
     int lastResultCount = 0;
     std::uint64_t lastSessionId = 0;
+    double lastAntennaAzimuthDeg = 0.0;
     std::vector<std::string>* events = nullptr;
 };
 
@@ -591,6 +593,8 @@ void testFlushDrainFramesBeforeClose(TestRunner& test)
                  "completeScan closes acquisition");
     test.require(fixture.resultTableSink.appendCalls == 1,
                  "calculated results are forwarded to result table sink");
+    test.require(std::abs(fixture.resultTableSink.lastAntennaAzimuthDeg - 60.0) < 0.001,
+                 "result table context receives final antenna azimuth");
 }
 
 void testStopScanClosesAcquisitionAndRecording(TestRunner& test)

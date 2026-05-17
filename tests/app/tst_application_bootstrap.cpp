@@ -58,6 +58,10 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides status model");
     test.require(bootstrap.scanController() != nullptr,
                  "bootstrap provides scan controller");
+    test.require(bootstrap.resultTableModel() != nullptr,
+                 "bootstrap provides result table model");
+    test.require(bootstrap.resultTableController() != nullptr,
+                 "bootstrap provides result table controller");
     test.require(bootstrap.bearingFrameBus() != nullptr,
                  "bootstrap provides bearing frame bus");
     test.require(bootstrap.scanAcquisitionRecorder() != nullptr,
@@ -68,6 +72,8 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides scan recording control");
     test.require(bootstrap.resultTableSink() != nullptr,
                  "bootstrap provides result table sink");
+    test.require(bootstrap.resultTableSink() == bootstrap.resultTableController(),
+                 "bootstrap uses result table controller as production sink");
     test.require(bootstrap.waterfallStorage() != nullptr,
                  "bootstrap provides waterfall storage placeholder");
     test.require(bootstrap.bcoControl() != nullptr,
@@ -105,6 +111,9 @@ void testBootstrapProvidesObjects(TestRunner& test)
     test.require(siriusscope::app::StatusModelQmlSingleton::instance
                      == bootstrap.statusModel(),
                  "bootstrap registers status model singleton");
+    test.require(siriusscope::app::ResultTableModelQmlSingleton::instance
+                     == bootstrap.resultTableModel(),
+                 "bootstrap registers result table model singleton");
 }
 
 } // namespace

@@ -8,6 +8,7 @@
 #include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
+#include "resulttablemodel.h"
 #include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
@@ -229,6 +230,24 @@ public:
     inline static StatusModel *instance = nullptr;
 
     static StatusModel *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct ResultTableModelQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(ResultTableModel)
+    QML_NAMED_ELEMENT(ResultTableModel)
+    QML_SINGLETON
+
+public:
+    inline static ResultTableModel *instance = nullptr;
+
+    static ResultTableModel *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);

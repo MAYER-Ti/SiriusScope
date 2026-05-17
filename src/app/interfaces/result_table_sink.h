@@ -8,13 +8,19 @@
 
 namespace siriusscope::app {
 
+struct ResultTableAppendContext
+{
+    std::uint64_t scanSessionId = 0;
+    double antennaAzimuthDeg = 0.0;
+};
+
 class IResultTableSink
 {
 public:
     virtual ~IResultTableSink() = default;
 
     virtual core::OperationResult appendBearingResults(
-        std::uint64_t scanSessionId,
+        const ResultTableAppendContext& context,
         const std::vector<core::BearingResult>& results) = 0;
 };
 

@@ -642,7 +642,10 @@ void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
     emit bearingResultsCalculated(static_cast<qulonglong>(sessionId), m_targetBearings);
 
     if (m_resultTableSink) {
-        const auto result = m_resultTableSink->appendBearingResults(sessionId,
+        ResultTableAppendContext context;
+        context.scanSessionId = sessionId;
+        context.antennaAzimuthDeg = m_activeSession->lastAzimuthDeg;
+        const auto result = m_resultTableSink->appendBearingResults(context,
                                                                     m_lastBearingResults);
         if (!result) {
             publish(infrastructure::DiagnosticSeverity::Warning,

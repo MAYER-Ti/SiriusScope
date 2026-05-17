@@ -12,8 +12,9 @@
 #include "interfaces/result_table_sink.h"
 #include "interfaces/scan_acquisition_recorder.h"
 #include "interfaces/scan_recording_control.h"
-#include "nullresulttablesink.h"
 #include "processing/bearing_service.h"
+#include "resulttablecontroller.h"
+#include "resulttablemodel.h"
 #include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
@@ -32,6 +33,7 @@
 #include "hardware/simulator/simulator_bco_control.h"
 #include "hardware/simulator/simulator_bco_sample_source.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
+#include "infrastructure/interfaces/result_table_storage.h"
 #include "infrastructure/interfaces/waterfall_storage.h"
 #include "infrastructure/logging/diagnostic_log_writer.h"
 
@@ -57,6 +59,11 @@ public:
     DiagnosticsService* diagnosticsService() noexcept { return m_diagnosticsService.get(); }
     StatusModel* statusModel() noexcept { return m_statusModel.get(); }
     ScanController* scanController() noexcept { return m_scanController.get(); }
+    ResultTableModel* resultTableModel() noexcept { return m_resultTableModel.get(); }
+    ResultTableController* resultTableController() noexcept
+    {
+        return m_resultTableController.get();
+    }
     BearingFrameBus* bearingFrameBus() noexcept { return m_bearingFrameBus.get(); }
     IScanAcquisitionRecorder* scanAcquisitionRecorder() noexcept
     {
@@ -72,7 +79,7 @@ public:
     }
     IResultTableSink* resultTableSink() noexcept
     {
-        return m_resultTableSink.get();
+        return m_resultTableController.get();
     }
 
     infrastructure::IDiagnosticsSink* diagnosticsSink() noexcept
@@ -124,7 +131,9 @@ private:
     std::unique_ptr<processing::BearingService> m_bearingService;
     std::unique_ptr<IScanAcquisitionRecorder> m_scanAcquisitionRecorder;
     std::unique_ptr<IScanRecordingControl> m_scanRecordingControl;
-    std::unique_ptr<IResultTableSink> m_resultTableSink;
+    std::unique_ptr<infrastructure::IResultTableStorage> m_resultTableStorage;
+    std::unique_ptr<ResultTableModel> m_resultTableModel;
+    std::unique_ptr<ResultTableController> m_resultTableController;
     BandListModel m_bandListModel;
     BandConfigController m_bandConfigController;
     std::unique_ptr<WaterfallController> m_waterfallController;

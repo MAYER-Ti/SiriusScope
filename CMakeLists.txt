@@ -44,6 +44,10 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/interfaces/scan_recording_control.h
     src/app/nullresulttablesink.h
     src/app/nullresulttablesink.cpp
+    src/app/resulttablecontroller.h
+    src/app/resulttablecontroller.cpp
+    src/app/resulttablemodel.h
+    src/app/resulttablemodel.cpp
     src/app/scanacquisitionsession.h
     src/app/scanacquisitionsession.cpp
     src/app/scancontroller.h
@@ -129,6 +133,9 @@ set(SIRIUSSCOPE_INFRASTRUCTURE_INTERFACE_SOURCES
 set(SIRIUSSCOPE_INFRASTRUCTURE_SOURCES
     src/infrastructure/logging/diagnostic_log_writer.h
     src/infrastructure/logging/diagnostic_log_writer.cpp
+    src/infrastructure/storage/binary_result_table_storage.h
+    src/infrastructure/storage/binary_result_table_storage.cpp
+    src/infrastructure/storage/result_table_storage_format.h
     src/infrastructure/storage/binary_waterfall_session_storage.h
     src/infrastructure/storage/binary_waterfall_session_storage.cpp
     src/infrastructure/storage/waterfall_storage_format.h
