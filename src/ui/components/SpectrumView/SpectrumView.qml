@@ -29,11 +29,15 @@ Item {
     property real pendingBandPreviewWidthHz: 0
 
     function decimateAndRepaint() {
-        if (plot.width <= 0 || rawSamples.length === 0) {
+        if (signalCanvas.width <= 0) {
             return
         }
-        decimatedMinMax = SpectrumDecimator.decimateMinMax(rawSamples, Math.floor(plot.width))
-        plot.requestPaint()
+        if (rawSamples.length === 0) {
+            decimatedMinMax = []
+        } else {
+            decimatedMinMax = SpectrumDecimator.decimateMinMax(rawSamples, Math.floor(signalCanvas.width))
+        }
+        signalCanvas.requestPaint()
     }
 
     function xForHz(hz, pixelWidth) {
@@ -42,17 +46,6 @@ Item {
 
     function clampAmplitude(value) {
         return Math.max(amplitudeMin, Math.min(amplitudeMax, value))
-    }
-
-    function thresholdForHz(hz) {
-        var threshold = -1e9
-        for (var i = 0; i < BandListModel.count(); i++) {
-            var band = BandListModel.get(i)
-            if (hz >= band.minHz && hz <= band.maxHz) {
-                threshold = Math.max(threshold, band.thresholdAmplitude)
-            }
-        }
-        return threshold
     }
 
     function bandIndexForId(bandId) {
@@ -267,10 +260,16 @@ Item {
     }
 
     onViewMinHzChanged: {
+        rawSamples = []
+        decimatedMinMax = []
         plot.requestPaint()
+        signalCanvas.requestPaint()
     }
     onViewMaxHzChanged: {
+        rawSamples = []
+        decimatedMinMax = []
         plot.requestPaint()
+        signalCanvas.requestPaint()
     }
 
     Component.onCompleted: {
@@ -414,43 +413,6 @@ Item {
                         }
                         ctx.restore()
 
-                        if (decimatedMinMax.length < 2) {
-                            return
-                        }
-
-                        ctx.strokeStyle = String(Theme.signalCyan)
-                        ctx.lineWidth = 1.6
-
-                        for (var px = 0; px < width; px++) {
-                            var idx = px * 2
-                            if (idx + 1 >= decimatedMinMax.length) {
-                                break
-                            }
-                            var minVal = decimatedMinMax[idx]
-                            var maxVal = decimatedMinMax[idx + 1]
-                            var freqHz = viewMinHz + (px / width) * spanHz
-                            var bandThreshold = thresholdForHz(freqHz)
-
-                            if (bandThreshold > -1e8) {
-                                if (maxVal < bandThreshold) {
-                                    continue
-                                }
-                                if (minVal < bandThreshold) {
-                                    minVal = bandThreshold
-                                }
-                            }
-
-                            minVal = clampAmplitude(minVal)
-                            maxVal = clampAmplitude(maxVal)
-
-                            var yMin = height - (minVal - amplitudeMin) / amplitudeSpan * height
-                            var yMax = height - (maxVal - amplitudeMin) / amplitudeSpan * height
-
-                            ctx.beginPath()
-                            ctx.moveTo(px + 0.5, yMin)
-                            ctx.lineTo(px + 0.5, yMax)
-                            ctx.stroke()
-                        }
                     }
                 }
 
@@ -561,6 +523,79 @@ Item {
                         }
                     }
                 }
+
+                Canvas {
+                    id: signalCanvas
+                    anchors.fill: parent
+                    enabled: false
+                    z: 3
+
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+
+                        if (decimatedMinMax.length < 2) {
+                            return
+                        }
+
+                        var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
+                        var hasSignal = false
+
+                        for (var probePx = 0; probePx < width; probePx++) {
+                            var probeIdx = probePx * 2
+                            if (probeIdx + 1 >= decimatedMinMax.length) {
+                                break
+                            }
+                            if (clampAmplitude(decimatedMinMax[probeIdx + 1]) > amplitudeMin) {
+                                hasSignal = true
+                                break
+                            }
+                        }
+
+                        if (!hasSignal) {
+                            return
+                        }
+
+                        function traceEnvelopePath() {
+                            ctx.beginPath()
+
+                            var started = false
+                            for (var px = 0; px < width; px++) {
+                                var idx = px * 2
+                                if (idx + 1 >= decimatedMinMax.length) {
+                                    break
+                                }
+
+                                var maxVal = clampAmplitude(decimatedMinMax[idx + 1])
+                                var y = height - (maxVal - amplitudeMin) / amplitudeSpan * height
+
+                                if (!started) {
+                                    ctx.moveTo(px + 0.5, y)
+                                    started = true
+                                } else {
+                                    ctx.lineTo(px + 0.5, y)
+                                }
+                            }
+                        }
+
+                        ctx.save()
+                        ctx.globalAlpha = 0.25
+                        ctx.strokeStyle = String(Theme.textPrimary)
+                        ctx.lineWidth = 5.0
+                        ctx.lineJoin = "round"
+                        ctx.lineCap = "round"
+                        traceEnvelopePath()
+                        ctx.stroke()
+                        ctx.restore()
+
+                        ctx.strokeStyle = String(Theme.textPrimary)
+                        ctx.lineWidth = 2.0
+                        ctx.lineJoin = "round"
+                        ctx.lineCap = "round"
+                        traceEnvelopePath()
+                        ctx.stroke()
+                    }
+                }
             }
         }
     }
@@ -571,12 +606,14 @@ Item {
     }
 
     Connections {
-        target: plot
+        target: plotArea
         function onWidthChanged() {
+            plot.requestPaint()
             decimateAndRepaint()
         }
         function onHeightChanged() {
             plot.requestPaint()
+            signalCanvas.requestPaint()
             amplitudeAxis.requestPaint()
         }
     }

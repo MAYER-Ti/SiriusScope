@@ -51,7 +51,9 @@ private:
     SpectrumEnvelopeControllerConfig m_config;
     QTimer m_decayTimer;
     QElapsedTimer m_decayClock;
+    QElapsedTimer m_monotonicClock;
     std::vector<double> m_envelope;
+    std::vector<qint64> m_lastRefreshMs;
     double m_viewMinHz = 0.0;
     double m_viewMaxHz = 0.0;
 };

@@ -17,6 +17,9 @@
 
 namespace {
 
+constexpr int kExpectedSpreadRadius = 24;
+constexpr double kExpectedPi = 3.14159265358979323846;
+
 using namespace siriusscope;
 
 class TestRunner
@@ -60,6 +63,25 @@ std::size_t expectedBin(double minHz, double maxHz, std::int64_t frequencyHz, in
     return std::min<std::size_t>(bin, static_cast<std::size_t>(binCount - 1));
 }
 
+std::int64_t frequencyForBinCenter(double minHz, double maxHz, std::size_t bin, int binCount = 1024)
+{
+    const double binWidthHz = (maxHz - minHz) / static_cast<double>(binCount);
+    return static_cast<std::int64_t>(std::llround(minHz + (static_cast<double>(bin) + 0.5) * binWidthHz));
+}
+
+bool nearlyEqual(double left, double right, double epsilon = 1.0e-6)
+{
+    return std::abs(left - right) <= epsilon;
+}
+
+double expectedSpreadAmplitude(double amplitude, int offset)
+{
+    const double distance = static_cast<double>(std::abs(offset));
+    return amplitude
+        * 0.5
+        * (1.0 + std::cos(kExpectedPi * distance / static_cast<double>(kExpectedSpreadRadius + 1)));
+}
+
 double sampleAt(const app::SpectrumEnvelopeController& controller, std::size_t index)
 {
     const QVariantList samples = controller.envelopeSamples();
@@ -94,6 +116,17 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1000)
     return predicate();
 }
 
+void processEventsFor(int durationMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < durationMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(5);
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+}
+
 app::SpectrumEnvelopeControllerConfig staticConfig()
 {
     app::SpectrumEnvelopeControllerConfig config;
@@ -110,20 +143,54 @@ void testSampleMapsToFrequencyBin(TestRunner& test)
 
     const auto bin = expectedBin(2'750'000'000.0, 3'250'000'000.0, 3'000'000'000LL);
     test.require(controller.envelopeSamples().size() == 1024, "envelope has 1024 bins");
-    test.require(sampleAt(controller, bin) == 100.0, "sample amplitude maps to expected bin");
+    test.require(nearlyEqual(sampleAt(controller, bin), 100.0),
+                 "sample amplitude maps to expected bin");
+}
+
+void testSampleSpreadsToNeighborBins(TestRunner& test)
+{
+    app::SpectrumEnvelopeController controller(staticConfig());
+    controller.setViewport(2'750'000'000.0, 3'250'000'000.0);
+
+    controller.ingestBatch(hardware::BcoSampleBatch{{makeSample(0, 100)}});
+
+    const auto bin = expectedBin(2'750'000'000.0, 3'250'000'000.0, 3'000'000'000LL);
+    test.require(nearlyEqual(sampleAt(controller, bin - 24), expectedSpreadAmplitude(100.0, -24)),
+                 "spread radius -24 uses raised-cosine weight");
+    test.require(nearlyEqual(sampleAt(controller, bin - 12), expectedSpreadAmplitude(100.0, -12)),
+                 "spread radius -12 uses raised-cosine weight");
+    test.require(nearlyEqual(sampleAt(controller, bin - 1), expectedSpreadAmplitude(100.0, -1)),
+                 "spread radius -1 uses raised-cosine weight");
+    test.require(nearlyEqual(sampleAt(controller, bin + 1), expectedSpreadAmplitude(100.0, 1)),
+                 "spread radius +1 uses raised-cosine weight");
+    test.require(nearlyEqual(sampleAt(controller, bin + 12), expectedSpreadAmplitude(100.0, 12)),
+                 "spread radius +12 uses raised-cosine weight");
+    test.require(nearlyEqual(sampleAt(controller, bin + 24), expectedSpreadAmplitude(100.0, 24)),
+                 "spread radius +24 uses raised-cosine weight");
+    test.require(nearlyEqual(sampleAt(controller, bin + kExpectedSpreadRadius + 1), 0.0),
+                 "spread does not reach outside radius 24");
 }
 
 void testMaxAmplitudeAcrossBeams(TestRunner& test)
 {
     app::SpectrumEnvelopeController controller(staticConfig());
-    controller.setViewport(2'750'000'000.0, 3'250'000'000.0);
+    const double minHz = 2'750'000'000.0;
+    const double maxHz = 3'250'000'000.0;
+    controller.setViewport(minHz, maxHz);
+
+    const auto bin = expectedBin(minHz, maxHz, 3'000'000'000LL);
+    const auto adjacentFrequency = frequencyForBinCenter(minHz, maxHz, bin + 1);
 
     controller.ingestBatch(hardware::BcoSampleBatch{{makeSample(0, 40, 0),
-                                                     makeSample(0, 100, 1)}});
+                                                     makeSample(0, 100, 1),
+                                                     makeSample(adjacentFrequency - 3'000'000'000LL,
+                                                                100,
+                                                                0)}});
 
-    const auto bin = expectedBin(2'750'000'000.0, 3'250'000'000.0, 3'000'000'000LL);
-    test.require(sampleAt(controller, bin) == 100.0,
+    test.require(nearlyEqual(sampleAt(controller, bin), 100.0),
                  "bin stores maximum amplitude across beams");
+    test.require(nearlyEqual(sampleAt(controller, bin + 1), 100.0),
+                 "neighbor bin keeps maximum of direct sample and spread");
 }
 
 void testOutOfViewportSamplesIgnored(TestRunner& test)
@@ -147,7 +214,32 @@ void testViewportChangeClearsEnvelope(TestRunner& test)
     test.require(maxSample(controller) == 0.0, "viewport change clears envelope");
 }
 
-void testDecayReducesAndClearsEnvelope(TestRunner& test)
+void testRepeatedSignalStaysStableDuringHold(TestRunner& test)
+{
+    app::SpectrumEnvelopeControllerConfig config;
+    config.decayIntervalMs = 5;
+    config.decayPerSecond = 1000.0;
+    app::SpectrumEnvelopeController controller(config);
+    controller.setViewport(2'750'000'000.0, 3'250'000'000.0);
+
+    const hardware::BcoSampleBatch batch{{makeSample(0, 100)}};
+    controller.ingestBatch(batch);
+    const auto bin = expectedBin(2'750'000'000.0, 3'250'000'000.0, 3'000'000'000LL);
+
+    processEventsFor(120);
+    test.require(nearlyEqual(sampleAt(controller, bin), 100.0),
+                 "hold prevents decay before the refresh timeout");
+
+    controller.ingestBatch(batch);
+    processEventsFor(180);
+
+    test.require(nearlyEqual(sampleAt(controller, bin), 100.0),
+                 "repeated identical batch refreshes bin freshness without amplitude jitter");
+    test.require(nearlyEqual(sampleAt(controller, bin - 1), expectedSpreadAmplitude(100.0, -1)),
+                 "spread bin remains stable while signal is continuously refreshed");
+}
+
+void testDecayStartsAfterHoldAndClearsEnvelope(TestRunner& test)
 {
     app::SpectrumEnvelopeControllerConfig config;
     config.decayIntervalMs = 5;
@@ -157,14 +249,19 @@ void testDecayReducesAndClearsEnvelope(TestRunner& test)
     controller.ingestBatch(hardware::BcoSampleBatch{{makeSample(0, 100)}});
 
     const auto bin = expectedBin(2'750'000'000.0, 3'250'000'000.0, 3'000'000'000LL);
+    processEventsFor(120);
+    test.require(nearlyEqual(sampleAt(controller, bin), 100.0),
+                 "envelope does not decay before hold expires");
+
     const bool decreased = waitUntil([&] {
-        return sampleAt(controller, bin) < 100.0;
-    }, 200);
+        return sampleAt(controller, bin) < 100.0
+            && sampleAt(controller, bin - 1) < expectedSpreadAmplitude(100.0, -1);
+    }, 700);
     const bool cleared = waitUntil([&] {
-        return sampleAt(controller, bin) == 0.0;
+        return maxSample(controller) == 0.0;
     }, 1000);
 
-    test.require(decreased, "decay decreases envelope amplitude");
+    test.require(decreased, "decay decreases envelope amplitude after hold expires");
     test.require(cleared, "decay eventually clears envelope amplitude");
 }
 
@@ -176,10 +273,12 @@ int main(int argc, char* argv[])
     TestRunner test;
 
     testSampleMapsToFrequencyBin(test);
+    testSampleSpreadsToNeighborBins(test);
     testMaxAmplitudeAcrossBeams(test);
     testOutOfViewportSamplesIgnored(test);
     testViewportChangeClearsEnvelope(test);
-    testDecayReducesAndClearsEnvelope(test);
+    testRepeatedSignalStaysStableDuringHold(test);
+    testDecayStartsAfterHoldAndClearsEnvelope(test);
 
     return test.result();
 }
