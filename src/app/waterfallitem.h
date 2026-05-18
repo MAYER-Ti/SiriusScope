@@ -25,6 +25,7 @@ class WaterfallItem : public QQuickItem
     Q_PROPERTY(bool freshData READ freshData NOTIFY freshDataChanged)
     Q_PROPERTY(qulonglong activeGenerationId READ activeGenerationId NOTIFY activeGenerationIdChanged)
     Q_PROPERTY(bool directionalEnabled READ directionalEnabled WRITE setDirectionalEnabled NOTIFY colorParamsChanged)
+    Q_PROPERTY(int displayAmplitudeThreshold READ displayAmplitudeThreshold WRITE setDisplayAmplitudeThreshold NOTIFY colorParamsChanged)
     Q_PROPERTY(double colorGamma READ colorGamma WRITE setColorGamma NOTIFY colorParamsChanged)
     Q_PROPERTY(double directionDeadZone READ directionDeadZone WRITE setDirectionDeadZone NOTIFY colorParamsChanged)
     Q_PROPERTY(double directionalAlpha READ directionalAlpha WRITE setDirectionalAlpha NOTIFY colorParamsChanged)
@@ -59,6 +60,8 @@ public:
     qulonglong activeGenerationId() const noexcept { return m_activeGenerationId; }
     bool directionalEnabled() const noexcept { return m_colorParams.directionalEnabled; }
     void setDirectionalEnabled(bool enabled);
+    int displayAmplitudeThreshold() const noexcept { return m_colorParams.displayAmplitudeThreshold; }
+    void setDisplayAmplitudeThreshold(int threshold);
     double colorGamma() const noexcept { return m_colorParams.gamma; }
     void setColorGamma(double gamma);
     double directionDeadZone() const noexcept { return m_colorParams.directionDeadZone; }

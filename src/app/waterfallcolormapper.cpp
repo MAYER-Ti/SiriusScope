@@ -26,7 +26,7 @@ uint8_t alphaForBrightness(double brightness)
 double normalizedBrightness(const WaterfallBeamBin& bin, const WaterfallColorParams& params)
 {
     const uint16_t amplitude = std::max(bin.left, bin.right);
-    if (amplitude == 0) {
+    if (amplitude == 0 || amplitude < params.displayAmplitudeThreshold) {
         return 0.0;
     }
 

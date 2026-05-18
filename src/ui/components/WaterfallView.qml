@@ -186,6 +186,7 @@ Item {
                     anchors.fill: plotArea
                     ringBuffer: root.ringBuffer
                     directionalEnabled: Sirius.WaterfallController.directionalEnabled
+                    displayAmplitudeThreshold: Sirius.WaterfallController.displayAmplitudeThreshold
                     colorGamma: Sirius.WaterfallController.colorGamma
                     directionDeadZone: Sirius.WaterfallController.directionDeadZone
                     directionalAlpha: Sirius.WaterfallController.directionalAlpha

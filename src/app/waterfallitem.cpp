@@ -79,6 +79,19 @@ void WaterfallItem::setDirectionalEnabled(bool enabled)
     update();
 }
 
+void WaterfallItem::setDisplayAmplitudeThreshold(int threshold)
+{
+    const auto normalizedThreshold = static_cast<uint16_t>(
+        std::clamp(threshold, 0, static_cast<int>(kWaterfallRenderAmplitudeMax)));
+    if (m_colorParams.displayAmplitudeThreshold == normalizedThreshold) {
+        return;
+    }
+    m_colorParams.displayAmplitudeThreshold = normalizedThreshold;
+    ++m_colorRevision;
+    emit colorParamsChanged();
+    update();
+}
+
 void WaterfallItem::setColorGamma(double gamma)
 {
     if (qFuzzyCompare(m_colorParams.gamma, gamma)) {

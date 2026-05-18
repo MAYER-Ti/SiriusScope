@@ -1,9 +1,15 @@
 #include "app/waterfallrenderbufferadapter.h"
+#include "hardware/simulator/simulator_antenna_state.h"
+#include "hardware/simulator/simulator_bco_sample_source.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -60,6 +66,79 @@ processing::WaterfallFrame makeFrame(processing::WaterfallCell cell)
 WaterfallBeamBin centerBin(const WaterfallRow& row)
 {
     return row.bins.at(row.bins.size() / 2);
+}
+
+siriusscope::core::BandConfig makeBandConfig(int bandIndex,
+                                             std::int64_t centerHz,
+                                             std::int64_t widthHz = 500'000'000LL)
+{
+    const auto created = siriusscope::core::BandConfig::create(bandIndex, centerHz, widthHz);
+    return *created.value();
+}
+
+bool waitForSimulatorBatch(siriusscope::hardware::SimulatorBcoSampleSource& source,
+                           siriusscope::hardware::BcoSampleBatch& firstBatch)
+{
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::atomic<int> callbackCount = 0;
+    bool received = false;
+
+    const auto startResult = source.start([&](const siriusscope::hardware::BcoSampleBatch& batch) {
+        ++callbackCount;
+        {
+            std::lock_guard lock(mutex);
+            if (!received) {
+                firstBatch = batch;
+                received = true;
+            }
+        }
+        condition.notify_one();
+    });
+    if (!startResult) {
+        return false;
+    }
+
+    std::unique_lock lock(mutex);
+    return condition.wait_for(lock, std::chrono::milliseconds(500), [&] { return received; });
+}
+
+siriusscope::app::WaterfallRenderBufferAdapterResult renderSimulatorBatch(
+    double antennaAzimuthDeg,
+    const std::vector<siriusscope::core::BandConfig>& configs,
+    bool& received)
+{
+    siriusscope::hardware::SimulatorAntennaState state(antennaAzimuthDeg);
+    siriusscope::hardware::SimulatorBcoSampleSource source(
+        siriusscope::hardware::SimulatorBcoSampleSourceConfig{
+            std::chrono::milliseconds(10),
+            10,
+            0,
+            1,
+        },
+        &state);
+    source.setBandConfigs(configs);
+
+    siriusscope::hardware::BcoSampleBatch batch;
+    received = waitForSimulatorBatch(source, batch);
+    source.stop();
+    if (!received) {
+        return {};
+    }
+
+    processing::SampleProcessingConfig processingConfig;
+    processingConfig.bands = configs;
+    processingConfig.aggregationWindow.frequencyBinWidthHz = 10'000'000LL;
+    processingConfig.aggregationWindow.diagnoseMissingWaterfallCells = false;
+
+    processing::SampleProcessor processor(processingConfig);
+    const auto processed = processor.processBatch(processing::SampleBatch{batch.samples});
+    return siriusscope::app::WaterfallRenderBufferAdapter::adaptFrame(
+        processed.waterfallFrame,
+        1,
+        2'750'000'000.0,
+        3'250'000'000.0,
+        128);
 }
 
 void testFrameConvertsToRenderRow(TestRunner& test)
@@ -151,6 +230,36 @@ void testDirectionalInputs(TestRunner& test)
                  "A0 ~= A1 maps to neutral render input");
 }
 
+void testSimulatorProcessingRenderVisibility(TestRunner& test)
+{
+    bool visibleReceived = false;
+    const auto visible = renderSimulatorBatch(75.0,
+                                              {makeBandConfig(0, 3'000'000'000LL)},
+                                              visibleReceived);
+    test.require(visibleReceived, "simulator emits target when band covers its absolute frequency");
+    test.require(visible.hasVisibleCells,
+                 "simulator to processing to render adapter reports visible cells");
+
+    bool hiddenByFrequencyReceived = false;
+    const auto hiddenByFrequency =
+        renderSimulatorBatch(75.0,
+                             {makeBandConfig(0, 3'300'000'000LL, 100'000'000LL)},
+                             hiddenByFrequencyReceived);
+    test.require(!hiddenByFrequencyReceived,
+                 "simulator emits no batch when band misses target frequency");
+    test.require(!hiddenByFrequency.hasVisibleCells,
+                 "frequency-missed target has no render cells");
+
+    bool hiddenByAzimuthReceived = false;
+    const auto hiddenByAzimuth = renderSimulatorBatch(200.0,
+                                                      {makeBandConfig(0, 3'000'000'000LL)},
+                                                      hiddenByAzimuthReceived);
+    test.require(!hiddenByAzimuthReceived,
+                 "simulator emits no batch when both beams miss target azimuth");
+    test.require(!hiddenByAzimuth.hasVisibleCells,
+                 "azimuth-missed target has no render cells");
+}
+
 } // namespace
 
 int main()
@@ -161,6 +270,7 @@ int main()
     testAmplitudeRangeIsPreserved(test);
     testEmptyCellStaysEmpty(test);
     testDirectionalInputs(test);
+    testSimulatorProcessingRenderVisibility(test);
 
     return test.result();
 }

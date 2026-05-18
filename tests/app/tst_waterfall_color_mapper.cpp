@@ -81,12 +81,31 @@ void testStandardModeDependsOnlyOnMaxAmplitude(TestRunner& test)
                  "standard mode depends only on max amplitude");
 }
 
-void testMinimumDomainAmplitudeIsVisible(TestRunner& test)
+void testBelowDisplayThresholdIsTransparent(TestRunner& test)
 {
     const Rgba8 color = WaterfallColorMapper::map({1, 0}, defaultParams());
-    test.require(color.a == 255, "minimum domain amplitude is not treated as empty");
+    test.require(color.a == 0, "amplitude below display threshold is transparent");
+    test.require(color.r == 0 && color.g == 0 && color.b == 0,
+                 "amplitude below display threshold is dark");
+}
+
+void testThresholdAmplitudeIsVisible(TestRunner& test)
+{
+    const Rgba8 color = WaterfallColorMapper::map({4, 0}, defaultParams());
+    test.require(color.a == 255, "amplitude at display threshold is visible");
     test.require(color.r > 0 || color.g > 0 || color.b > 0,
-                 "minimum domain amplitude has a visible render level");
+                 "amplitude at display threshold has a render level");
+}
+
+void testMinimumDomainAmplitudeCanBeEnabled(TestRunner& test)
+{
+    WaterfallColorParams params = defaultParams();
+    params.displayAmplitudeThreshold = 1;
+
+    const Rgba8 color = WaterfallColorMapper::map({1, 0}, params);
+    test.require(color.a == 255, "minimum domain amplitude is visible when threshold is one");
+    test.require(color.r > 0 || color.g > 0 || color.b > 0,
+                 "minimum domain amplitude has a visible render level when enabled");
 }
 
 } // namespace
@@ -101,7 +120,9 @@ int main()
     testRightDominantIsGreen(test);
     testDeadZoneNeutralizesSmallDifference(test);
     testStandardModeDependsOnlyOnMaxAmplitude(test);
-    testMinimumDomainAmplitudeIsVisible(test);
+    testBelowDisplayThresholdIsTransparent(test);
+    testThresholdAmplitudeIsVisible(test);
+    testMinimumDomainAmplitudeCanBeEnabled(test);
 
     return test.result();
 }

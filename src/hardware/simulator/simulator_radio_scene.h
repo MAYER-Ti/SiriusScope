@@ -7,9 +7,9 @@ namespace siriusscope::hardware {
 
 struct SimulatedRadioSource
 {
-    int bandIndex = 0;
     double azimuthDeg = 45.0;
-    std::int64_t frequencyOffsetHz = 0;
+    // Physical source frequency; BandConfig only decides whether it is received.
+    std::int64_t absoluteFrequencyHz = 0;
     int peakAmplitude = 110;
     double beamSigmaDeg = 22.0;
     bool frequencyDriftEnabled = false;

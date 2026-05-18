@@ -23,6 +23,8 @@ struct SimulatorBcoSampleSourceConfig
     std::size_t samplesPerBatch = 128;
     std::uint64_t firstSampleIndex = 0;
     std::uint64_t sampleIndexStep = 1;
+    // Values below this threshold are treated as no beam hit, not as BCO samples.
+    int minVisibleAmplitude = 4;
 };
 
 class SimulatorBcoSampleSource final : public IBcoSampleSource

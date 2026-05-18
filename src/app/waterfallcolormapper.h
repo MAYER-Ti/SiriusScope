@@ -9,6 +9,8 @@ struct WaterfallColorParams
 {
     uint16_t amplitudeMin = kWaterfallRenderAmplitudeMin;
     uint16_t amplitudeMax = kWaterfallRenderAmplitudeMax;
+    // Render threshold only; domain amplitude 1 remains valid input data.
+    uint16_t displayAmplitudeThreshold = 4;
     double gamma = 0.7;
     double directionDeadZone = 0.10;
     double directionalAlpha = 0.35;

@@ -57,6 +57,7 @@ class WaterfallController final : public QObject, public IProcessingFlushControl
     Q_PROPERTY(int visibleRowCount READ visibleRowCount CONSTANT)
     Q_PROPERTY(qulonglong timeTicksVersion READ timeTicksVersion NOTIFY timeTicksChanged)
     Q_PROPERTY(bool directionalEnabled READ directionalEnabled NOTIFY colorParamsChanged)
+    Q_PROPERTY(int displayAmplitudeThreshold READ displayAmplitudeThreshold NOTIFY colorParamsChanged)
     Q_PROPERTY(double colorGamma READ colorGamma NOTIFY colorParamsChanged)
     Q_PROPERTY(double directionDeadZone READ directionDeadZone NOTIFY colorParamsChanged)
     Q_PROPERTY(double directionalAlpha READ directionalAlpha NOTIFY colorParamsChanged)
@@ -86,6 +87,7 @@ public:
     int visibleRowCount() const noexcept { return m_timelineViewport.visibleRowCount(); }
     qulonglong timeTicksVersion() const noexcept { return m_timeTicksVersion; }
     bool directionalEnabled() const noexcept { return true; }
+    int displayAmplitudeThreshold() const noexcept { return 4; }
     double colorGamma() const noexcept { return 0.7; }
     double directionDeadZone() const noexcept { return 0.10; }
     double directionalAlpha() const noexcept { return 0.35; }
