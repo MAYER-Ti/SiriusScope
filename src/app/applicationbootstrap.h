@@ -18,6 +18,7 @@
 #include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
+#include "spectrumenvelopecontroller.h"
 #include "statusmodel.h"
 #include "waterfallcontroller.h"
 #include "waterfallscanrecordingadapter.h"
@@ -52,6 +53,10 @@ public:
     FrequencyGridModel* frequencyGridModel() noexcept { return &m_frequencyGridModel; }
     SpectrumControllerStub* spectrumController() noexcept { return &m_spectrumController; }
     SpectrumDecimator* spectrumDecimator() noexcept { return &m_spectrumDecimator; }
+    SpectrumEnvelopeController* spectrumEnvelopeController() noexcept
+    {
+        return &m_spectrumEnvelopeController;
+    }
     WaterfallController* waterfallController() noexcept { return m_waterfallController.get(); }
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
     BandListModel* bandListModel() noexcept { return &m_bandListModel; }
@@ -117,6 +122,7 @@ private:
     FrequencyGridModel m_frequencyGridModel;
     SpectrumControllerStub m_spectrumController;
     SpectrumDecimator m_spectrumDecimator;
+    SpectrumEnvelopeController m_spectrumEnvelopeController;
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::DiagnosticLogWriter> m_diagnosticLogWriter;
     std::unique_ptr<DiagnosticsService> m_diagnosticsService;

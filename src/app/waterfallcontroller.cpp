@@ -2,6 +2,7 @@
 
 #include "bearingframebus.h"
 #include "frequencyviewportmodel.h"
+#include "spectrumenvelopecontroller.h"
 #include "waterfallringbuffer.h"
 #include "waterfallrowresampler.h"
 
@@ -87,12 +88,14 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                          infrastructure::IDiagnosticsSink* diagnosticsSink,
                                          WaterfallControllerConfig config,
                                          BearingFrameBus* bearingFrameBus,
+                                         SpectrumEnvelopeController* spectrumEnvelopeController,
                                          QObject* parent)
     : QObject(parent)
     , m_viewportModel(viewportModel)
     , m_sampleSource(sampleSource)
     , m_diagnosticsSink(diagnosticsSink)
     , m_bearingFrameBus(bearingFrameBus)
+    , m_spectrumEnvelopeController(spectrumEnvelopeController)
     , m_ringBuffer(new WaterfallRingBuffer(config.renderBinCount,
                                            config.visibleRowCount,
                                            300e6,
@@ -542,6 +545,15 @@ void WaterfallController::enqueueSampleBatch(const hardware::BcoSampleBatch& bat
     }
 
     m_workerCondition.notify_all();
+
+    if (m_spectrumEnvelopeController) {
+        auto* controller = m_spectrumEnvelopeController;
+        QMetaObject::invokeMethod(controller,
+                                  [controller, batch]() {
+                                      controller->ingestBatch(batch);
+                                  },
+                                  Qt::QueuedConnection);
+    }
 }
 
 void WaterfallController::processingLoop()

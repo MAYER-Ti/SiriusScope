@@ -90,7 +90,7 @@ void testApplyValidSettings(TestRunner& test)
     const bool ok = controller.applyBandSettings(1,
                                                  6'000'000'000.0,
                                                  400'000'000.0,
-                                                 155.0,
+                                                 55.0,
                                                  10,
                                                  20,
                                                  QStringLiteral("vertical"));
@@ -129,7 +129,7 @@ void testRejectsTooWideBand(TestRunner& test)
     const bool ok = controller.applyBandSettings(0,
                                                  3'000'000'000.0,
                                                  500'000'001.0,
-                                                 150.0,
+                                                 50.0,
                                                  0,
                                                  0,
                                                  QStringLiteral("horizontal"));
@@ -155,7 +155,7 @@ void testRejectsOutOfRangeBand(TestRunner& test)
     const bool ok = controller.applyBandSettings(0,
                                                  400'000'000.0,
                                                  500'000'000.0,
-                                                 150.0,
+                                                 50.0,
                                                  0,
                                                  0,
                                                  QStringLiteral("horizontal"));
@@ -219,14 +219,85 @@ void testThresholdPreview(TestRunner& test)
     BandConfigController controller(&model, &bco, &diagnostics);
 
     const double originalCenter = model.getByBandId(3).value(QStringLiteral("centerHz")).toDouble();
-    const bool ok = controller.setBandThresholdPreview(3, 210.0);
+    const bool ok = controller.setBandThresholdPreview(3, 70.0);
 
     test.require(ok, "threshold preview is accepted");
     test.require(bco.applySingleCount == 0, "threshold preview does not call BCO");
-    test.require(model.getByBandId(3).value(QStringLiteral("thresholdAmplitude")).toDouble() == 210.0,
+    test.require(model.getByBandId(3).value(QStringLiteral("thresholdAmplitude")).toDouble() == 70.0,
                  "threshold preview updates threshold");
     test.require(model.getByBandId(3).value(QStringLiteral("centerHz")).toDouble() == originalCenter,
                  "threshold preview keeps center frequency");
+}
+
+void testThresholdRange(TestRunner& test)
+{
+    {
+        BandListModel model;
+        RecordingBcoControl bco;
+        RecordingDiagnosticsSink diagnostics;
+        BandConfigController controller(&model, &bco, &diagnostics);
+
+        const bool ok = controller.applyBandSettings(0,
+                                                     3'000'000'000.0,
+                                                     500'000'000.0,
+                                                     0.0,
+                                                     0,
+                                                     0,
+                                                     QStringLiteral("horizontal"));
+        test.require(!ok, "threshold 0 is rejected");
+        test.require(bco.applySingleCount == 0, "threshold 0 is not sent to BCO");
+    }
+
+    {
+        BandListModel model;
+        RecordingBcoControl bco;
+        RecordingDiagnosticsSink diagnostics;
+        BandConfigController controller(&model, &bco, &diagnostics);
+
+        const bool ok = controller.applyBandSettings(0,
+                                                     3'000'000'000.0,
+                                                     500'000'000.0,
+                                                     1.0,
+                                                     0,
+                                                     0,
+                                                     QStringLiteral("horizontal"));
+        test.require(ok, "threshold 1 is accepted");
+        test.require(bco.applySingleCount == 1, "threshold 1 is sent to BCO");
+    }
+
+    {
+        BandListModel model;
+        RecordingBcoControl bco;
+        RecordingDiagnosticsSink diagnostics;
+        BandConfigController controller(&model, &bco, &diagnostics);
+
+        const bool ok = controller.applyBandSettings(0,
+                                                     3'000'000'000.0,
+                                                     500'000'000.0,
+                                                     127.0,
+                                                     0,
+                                                     0,
+                                                     QStringLiteral("horizontal"));
+        test.require(ok, "threshold 127 is accepted");
+        test.require(bco.applySingleCount == 1, "threshold 127 is sent to BCO");
+    }
+
+    {
+        BandListModel model;
+        RecordingBcoControl bco;
+        RecordingDiagnosticsSink diagnostics;
+        BandConfigController controller(&model, &bco, &diagnostics);
+
+        const bool ok = controller.applyBandSettings(0,
+                                                     3'000'000'000.0,
+                                                     500'000'000.0,
+                                                     128.0,
+                                                     0,
+                                                     0,
+                                                     QStringLiteral("horizontal"));
+        test.require(!ok, "threshold 128 is rejected");
+        test.require(bco.applySingleCount == 0, "threshold 128 is not sent to BCO");
+    }
 }
 
 void testEditingLockRejectsChanges(TestRunner& test)
@@ -317,6 +388,7 @@ int main(int argc, char *argv[])
     testRejectsOutOfRangeBand(test);
     testPreviewAndCancel(test);
     testThresholdPreview(test);
+    testThresholdRange(test);
     testEditingLockRejectsChanges(test);
     testEditingLockRestoresActivePreview(test);
 

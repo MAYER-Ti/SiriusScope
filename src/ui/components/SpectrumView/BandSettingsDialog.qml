@@ -16,8 +16,8 @@ Window {
     property string polarization: "horizontal"
     property real globalMinHz: 0
     property real globalMaxHz: 0
-    property real minAmplitude: 0
-    property real maxAmplitude: 500
+    property real minAmplitude: 1
+    property real maxAmplitude: 127
     property bool readOnly: false
 
     property bool _updatingFields: false

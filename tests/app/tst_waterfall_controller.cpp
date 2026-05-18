@@ -1,5 +1,6 @@
 #include "app/bearingframebus.h"
 #include "app/frequencyviewportmodel.h"
+#include "app/spectrumenvelopecontroller.h"
 #include "app/waterfallcontroller.h"
 #include "app/waterfallringbuffer.h"
 #include "core/domain_models.h"
@@ -47,6 +48,7 @@ public:
     {
         m_callback = std::move(callback);
         m_running = true;
+        ++m_startCount;
         return core::OperationResult::ok();
     }
 
@@ -63,9 +65,12 @@ public:
         }
     }
 
+    int startCount() const noexcept { return m_startCount; }
+
 private:
     SampleBatchCallback m_callback;
     bool m_running = false;
+    int m_startCount = 0;
 };
 
 class RecordingDiagnosticsSink final : public infrastructure::IDiagnosticsSink
@@ -157,6 +162,16 @@ void processEventsFor(int durationMs)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         QThread::msleep(5);
     }
+}
+
+double maxEnvelopeSample(const app::SpectrumEnvelopeController& controller)
+{
+    const QVariantList samples = controller.envelopeSamples();
+    double maxValue = 0.0;
+    for (const auto& sample : samples) {
+        maxValue = std::max(maxValue, sample.toDouble());
+    }
+    return maxValue;
 }
 
 void testControllerStartsWithRecordingDisabled(TestRunner& test)
@@ -297,6 +312,44 @@ void testProcessingPublishesBearingFrames(TestRunner& test)
     });
 
     test.require(published, "WaterfallController publishes bearing frames to bus");
+}
+
+void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 128;
+    config.visibleRowCount = 16;
+    config.sourceFlushIntervalMs = 20;
+
+    siriusscope::app::SpectrumEnvelopeControllerConfig envelopeConfig;
+    envelopeConfig.decayPerSecond = 0.0;
+    siriusscope::app::SpectrumEnvelopeController envelope(envelopeConfig);
+    envelope.setViewport(viewport.viewMinHz(), viewport.viewMaxHz());
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config,
+                                                     nullptr,
+                                                     &envelope);
+    controller.start();
+
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
+                                               makeSample(bands, 1, 0, 1, 40)}});
+
+    const bool updated = waitUntil([&envelope] {
+        return maxEnvelopeSample(envelope) == 90.0;
+    });
+
+    test.require(updated, "WaterfallController forwards input batch to spectrum envelope");
+    test.require(source.startCount() == 1, "BCO sample source is started once");
 }
 
 void testFlushProcessingDrainsQueuedBatches(TestRunner& test)
@@ -509,6 +562,7 @@ int main(int argc, char *argv[])
     testInactiveSessionIgnoresRenderableRows(test);
     testInputBatchUpdatesModel(test);
     testProcessingPublishesBearingFrames(test);
+    testInputBatchUpdatesSpectrumEnvelope(test);
     testFlushProcessingDrainsQueuedBatches(test);
     testScrollHistoryNoopDoesNotRebuildEmptyHistory(test);
     testScrollHistoryRebuildsOnlyWhenWindowChanges(test);

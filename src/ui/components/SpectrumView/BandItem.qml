@@ -10,7 +10,7 @@ Item {
     property int bandId: 0
     property real centerHz: 0
     property real widthHz: 0
-    property real thresholdAmplitude: 180
+    property real thresholdAmplitude: 30
     property color bandColor: Theme.bandColor(bandId)
     property color bandBorderColor: Theme.bandBorderColor(bandId)
     property color bandTextColor: Theme.bandTextColor(bandId)

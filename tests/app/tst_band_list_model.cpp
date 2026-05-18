@@ -41,8 +41,12 @@ void testDefaultBands(TestRunner& test)
 
     for (int bandId = 0; bandId < model.count(); ++bandId) {
         const auto* config = model.bandConfig(bandId);
+        const auto threshold =
+            model.getByBandId(bandId).value(QStringLiteral("thresholdAmplitude")).toDouble();
         test.require(config != nullptr, "band config exists");
         test.require(config && config->validate().isValid(), "default band config is valid");
+        test.require(threshold >= 1.0 && threshold <= 127.0,
+                     "default threshold is in 1..127 range");
     }
 }
 

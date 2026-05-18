@@ -56,6 +56,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/spectrumcontrollerstub.cpp
     src/app/spectrumdecimator.h
     src/app/spectrumdecimator.cpp
+    src/app/spectrumenvelopecontroller.h
+    src/app/spectrumenvelopecontroller.cpp
     src/app/statusmodel.h
     src/app/statusmodel.cpp
     src/app/syntheticwaterfalldatasource.h

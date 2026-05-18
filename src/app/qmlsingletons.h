@@ -12,6 +12,7 @@
 #include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
+#include "spectrumenvelopecontroller.h"
 #include "statusmodel.h"
 #include "waterfallcontroller.h"
 
@@ -104,6 +105,24 @@ public:
     inline static SpectrumDecimator *instance = nullptr;
 
     static SpectrumDecimator *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct SpectrumEnvelopeControllerQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(SpectrumEnvelopeController)
+    QML_NAMED_ELEMENT(SpectrumEnvelopeController)
+    QML_SINGLETON
+
+public:
+    inline static SpectrumEnvelopeController *instance = nullptr;
+
+    static SpectrumEnvelopeController *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);

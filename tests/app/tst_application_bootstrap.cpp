@@ -42,6 +42,8 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides spectrum controller");
     test.require(bootstrap.spectrumDecimator() != nullptr,
                  "bootstrap provides spectrum decimator");
+    test.require(bootstrap.spectrumEnvelopeController() != nullptr,
+                 "bootstrap provides spectrum envelope controller");
     test.require(bootstrap.waterfallController() != nullptr,
                  "bootstrap provides waterfall controller");
     test.require(bootstrap.antennaController() != nullptr,
@@ -105,6 +107,9 @@ void testBootstrapProvidesObjects(TestRunner& test)
     test.require(siriusscope::app::BandConfigControllerQmlSingleton::instance
                      == bootstrap.bandConfigController(),
                  "bootstrap registers band config controller singleton");
+    test.require(siriusscope::app::SpectrumEnvelopeControllerQmlSingleton::instance
+                     == bootstrap.spectrumEnvelopeController(),
+                 "bootstrap registers spectrum envelope singleton");
     test.require(siriusscope::app::DiagnosticsServiceQmlSingleton::instance
                      == bootstrap.diagnosticsService(),
                  "bootstrap registers diagnostics service singleton");

@@ -336,6 +336,23 @@ target_include_directories(tst_band_config_controller
 
 add_test(NAME tst_band_config_controller COMMAND tst_band_config_controller)
 
+add_executable(tst_spectrum_envelope_controller
+    app/tst_spectrum_envelope_controller.cpp
+)
+
+target_link_libraries(tst_spectrum_envelope_controller
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_spectrum_envelope_controller
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_spectrum_envelope_controller COMMAND tst_spectrum_envelope_controller)
+
 add_executable(tst_diagnostics_service
     app/tst_diagnostics_service.cpp
 )
@@ -535,6 +552,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_band_config_controller PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_spectrum_envelope_controller PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_diagnostics_service PROPERTIES

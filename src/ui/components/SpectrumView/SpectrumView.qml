@@ -11,7 +11,7 @@ Item {
     readonly property string monoFontFamily: Theme.monoFontFamily
 
     readonly property real amplitudeMin: 0
-    readonly property real amplitudeMax: 500
+    readonly property real amplitudeMax: 127
     readonly property real viewMinHz: FrequencyViewportModel.viewMinHz
     readonly property real viewMaxHz: FrequencyViewportModel.viewMaxHz
     readonly property real globalMinHz: FrequencyViewportModel.globalMinHz
@@ -21,20 +21,12 @@ Item {
     readonly property real maxSpanHz: globalMaxHz - globalMinHz
     property var rawSamples: []
     property var decimatedMinMax: []
-    property real pendingRequestMinHz: viewMinHz
-    property real pendingRequestMaxHz: viewMaxHz
     property bool spacePressed: false
     property var bandSettingsWindows: ({})
     property bool pendingBandPreviewValid: false
     property int pendingBandPreviewId: -1
     property real pendingBandPreviewCenterHz: 0
     property real pendingBandPreviewWidthHz: 0
-
-    function scheduleSpectrumRequest() {
-        pendingRequestMinHz = viewMinHz
-        pendingRequestMaxHz = viewMaxHz
-        spectrumRequestTimer.restart()
-    }
 
     function decimateAndRepaint() {
         if (plot.width <= 0 || rawSamples.length === 0) {
@@ -46,20 +38,6 @@ Item {
 
     function xForHz(hz, pixelWidth) {
         return (hz - viewMinHz) / Math.max(1.0, viewMaxHz - viewMinHz) * pixelWidth
-    }
-
-    function samplesAsAmplitude(samples, sampleMin, sampleMax) {
-        if (sampleMin >= amplitudeMin && sampleMax <= amplitudeMax) {
-            return samples
-        }
-
-        var sourceSpan = Math.max(1.0, sampleMax - sampleMin)
-        var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
-        var amplitudes = []
-        for (var i = 0; i < samples.length; i++) {
-            amplitudes.push(amplitudeMin + ((samples[i] - sampleMin) / sourceSpan) * amplitudeSpan)
-        }
-        return amplitudes
     }
 
     function clampAmplitude(value) {
@@ -106,7 +84,7 @@ Item {
             polarization: band.polarization,
             globalMinHz: root.globalMinHz,
             globalMaxHz: root.globalMaxHz,
-            minAmplitude: root.amplitudeMin,
+            minAmplitude: 1,
             maxAmplitude: root.amplitudeMax,
             readOnly: root.bandEditingLocked
         })
@@ -259,15 +237,6 @@ Item {
     }
 
     Timer {
-        id: spectrumRequestTimer
-        interval: 50
-        repeat: false
-        onTriggered: {
-            SpectrumController.requestSpectrum(pendingRequestMinHz, pendingRequestMaxHz)
-        }
-    }
-
-    Timer {
         id: bandPreviewTimer
         interval: 33
         repeat: false
@@ -275,12 +244,12 @@ Item {
     }
 
     Connections {
-        target: SpectrumController
-        function onSpectrumReady(minHz, maxHz, samples, sampleMinValue, sampleMaxValue) {
+        target: SpectrumEnvelopeController
+        function onEnvelopeChanged(minHz, maxHz, samples) {
             if (Math.abs(minHz - viewMinHz) > 1 || Math.abs(maxHz - viewMaxHz) > 1) {
                 return
             }
-            rawSamples = samplesAsAmplitude(samples, sampleMinValue, sampleMaxValue)
+            rawSamples = samples
             decimateAndRepaint()
         }
     }
@@ -298,16 +267,15 @@ Item {
     }
 
     onViewMinHzChanged: {
-        scheduleSpectrumRequest()
         plot.requestPaint()
     }
     onViewMaxHzChanged: {
-        scheduleSpectrumRequest()
         plot.requestPaint()
     }
 
     Component.onCompleted: {
-        scheduleSpectrumRequest()
+        rawSamples = SpectrumEnvelopeController.envelopeSamples()
+        decimateAndRepaint()
     }
 
     Rectangle {

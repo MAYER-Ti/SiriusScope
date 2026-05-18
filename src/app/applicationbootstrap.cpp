@@ -73,13 +73,16 @@ ApplicationBootstrap::ApplicationBootstrap()
     , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsService.get())
 {
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
+    m_spectrumEnvelopeController.setViewport(m_viewportModel.viewMinHz(),
+                                             m_viewportModel.viewMaxHz());
     m_waterfallController = std::make_unique<WaterfallController>(&m_viewportModel,
                                                                   m_bcoSampleSource.get(),
                                                                   m_bandListModel.bandConfigs(),
                                                                   m_waterfallSessionStorage.get(),
                                                                   m_diagnosticsService.get(),
                                                                   WaterfallControllerConfig{},
-                                                                  m_bearingFrameBus.get());
+                                                                  m_bearingFrameBus.get(),
+                                                                  &m_spectrumEnvelopeController);
     m_scanRecordingControl =
         std::make_unique<WaterfallScanRecordingAdapter>(m_waterfallController.get());
 
@@ -122,6 +125,12 @@ ApplicationBootstrap::ApplicationBootstrap()
                              m_waterfallController->setBandConfigs(m_bandListModel.bandConfigs());
                          }
                      });
+    QObject::connect(&m_viewportModel,
+                     &FrequencyViewportModel::viewportChanged,
+                     &m_spectrumEnvelopeController,
+                     [this](double minHz, double maxHz, const QString&) {
+                         m_spectrumEnvelopeController.setViewport(minHz, maxHz);
+                     });
 
     QObject::connect(m_waterfallController.get(),
                      &WaterfallController::recordingStateChanged,
@@ -156,6 +165,7 @@ void ApplicationBootstrap::registerQmlSingletons()
     FrequencyGridModelQmlSingleton::instance = &m_frequencyGridModel;
     SpectrumControllerQmlSingleton::instance = &m_spectrumController;
     SpectrumDecimatorQmlSingleton::instance = &m_spectrumDecimator;
+    SpectrumEnvelopeControllerQmlSingleton::instance = &m_spectrumEnvelopeController;
     WaterfallControllerQmlSingleton::instance = m_waterfallController.get();
     AntennaControllerQmlSingleton::instance = &m_antennaController;
     ScanControllerQmlSingleton::instance = m_scanController.get();
