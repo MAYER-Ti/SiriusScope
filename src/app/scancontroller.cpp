@@ -434,6 +434,18 @@ void ScanController::handleAzimuthSample(const hardware::AntennaAzimuthSample& s
 
 void ScanController::updateAzimuth(const hardware::AntennaAzimuthSample& sample)
 {
+    if (sample.timestamp != std::chrono::system_clock::time_point{}) {
+        const auto now = std::chrono::system_clock::now();
+        const auto latencyMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - sample.timestamp).count();
+        const auto steadyNow = std::chrono::steady_clock::now();
+        if (latencyMs > 150 && steadyNow >= m_nextAzimuthLatencyDiagnostic) {
+            publish(infrastructure::DiagnosticSeverity::Warning,
+                    "ScanController: azimuth UI latency " + std::to_string(latencyMs) + " ms");
+            m_nextAzimuthLatencyDiagnostic = steadyNow + std::chrono::seconds{1};
+        }
+    }
+
     const auto normalized = core::AntennaMotionPlanner::normalizeAzimuth(sample.degrees);
     const bool changed = std::abs(m_currentAzimuthDeg - normalized) > 0.001;
     m_currentAzimuthDeg = normalized;
@@ -551,13 +563,23 @@ void ScanController::completeScan()
     }
 
     if (m_processingFlushControl) {
-        const auto flushResult =
-            m_processingFlushControl->flushProcessing(std::chrono::milliseconds{1500});
-        if (!flushResult) {
-            publish(infrastructure::DiagnosticSeverity::Warning,
-                    "ScanController: processing flush before bearing calculation failed: "
-                        + flushResult.message);
-        }
+        m_processingFlushControl->flushProcessingAsync(
+            std::chrono::milliseconds{1500},
+            [this, sessionId](core::OperationResult flushResult) {
+                QMetaObject::invokeMethod(this,
+                                          [this, sessionId, flushResult = std::move(flushResult)] {
+                                              if (!flushResult) {
+                                                  publish(
+                                                      infrastructure::DiagnosticSeverity::Warning,
+                                                      "ScanController: processing flush before "
+                                                      "bearing calculation failed: "
+                                                          + flushResult.message);
+                                              }
+                                              finalizeCompletedScan(sessionId);
+                                          },
+                                          Qt::QueuedConnection);
+            });
+        return;
     }
 
     QMetaObject::invokeMethod(this,

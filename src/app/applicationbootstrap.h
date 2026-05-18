@@ -19,6 +19,7 @@
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "spectrumenvelopecontroller.h"
+#include "spectrumenvelopeworker.h"
 #include "statusmodel.h"
 #include "waterfallcontroller.h"
 #include "waterfallscanrecordingadapter.h"
@@ -40,12 +41,15 @@
 
 #include <memory>
 
+#include <QThread>
+
 namespace siriusscope::app {
 
 class ApplicationBootstrap
 {
 public:
     ApplicationBootstrap();
+    ~ApplicationBootstrap();
 
     void registerQmlSingletons();
 
@@ -123,6 +127,8 @@ private:
     SpectrumControllerStub m_spectrumController;
     SpectrumDecimator m_spectrumDecimator;
     SpectrumEnvelopeController m_spectrumEnvelopeController;
+    QThread m_spectrumEnvelopeThread;
+    SpectrumEnvelopeWorker* m_spectrumEnvelopeWorker = nullptr;
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::DiagnosticLogWriter> m_diagnosticLogWriter;
     std::unique_ptr<DiagnosticsService> m_diagnosticsService;

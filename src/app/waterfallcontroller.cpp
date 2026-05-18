@@ -2,7 +2,7 @@
 
 #include "bearingframebus.h"
 #include "frequencyviewportmodel.h"
-#include "spectrumenvelopecontroller.h"
+#include "spectrumenvelopeworker.h"
 #include "waterfallringbuffer.h"
 #include "waterfallrowresampler.h"
 
@@ -88,14 +88,14 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                          infrastructure::IDiagnosticsSink* diagnosticsSink,
                                          WaterfallControllerConfig config,
                                          BearingFrameBus* bearingFrameBus,
-                                         SpectrumEnvelopeController* spectrumEnvelopeController,
+                                         SpectrumEnvelopeWorker* spectrumEnvelopeWorker,
                                          QObject* parent)
     : QObject(parent)
     , m_viewportModel(viewportModel)
     , m_sampleSource(sampleSource)
     , m_diagnosticsSink(diagnosticsSink)
     , m_bearingFrameBus(bearingFrameBus)
-    , m_spectrumEnvelopeController(spectrumEnvelopeController)
+    , m_spectrumEnvelopeWorker(spectrumEnvelopeWorker)
     , m_ringBuffer(new WaterfallRingBuffer(config.renderBinCount,
                                            config.visibleRowCount,
                                            300e6,
@@ -278,6 +278,41 @@ core::OperationResult WaterfallController::flushProcessing(std::chrono::millisec
     }
 
     return core::OperationResult::ok();
+}
+
+void WaterfallController::flushProcessingAsync(std::chrono::milliseconds timeout,
+                                               FlushCallback callback)
+{
+    if (!callback) {
+        return;
+    }
+
+    if (timeout.count() < 0) {
+        callback(core::OperationResult::failure("processing flush timeout is invalid"));
+        return;
+    }
+
+    std::uint64_t requestId = 0;
+    {
+        std::lock_guard lock(m_workerMutex);
+        if (!m_workerRunning) {
+            callback(core::OperationResult::failure("processing worker is not running"));
+            return;
+        }
+
+        requestId = ++m_flushRequestId;
+    }
+
+    {
+        std::lock_guard lock(m_asyncFlushMutex);
+        m_asyncFlushRequests.emplace_back(requestId, std::move(callback));
+    }
+
+    m_workerCondition.notify_all();
+    QTimer::singleShot(static_cast<int>(timeout.count()), this, [this, requestId] {
+        completeAsyncFlush(requestId,
+                           core::OperationResult::failure("processing flush timed out"));
+    });
 }
 
 void WaterfallController::startHistoryWorker()
@@ -546,11 +581,11 @@ void WaterfallController::enqueueSampleBatch(const hardware::BcoSampleBatch& bat
 
     m_workerCondition.notify_all();
 
-    if (m_spectrumEnvelopeController) {
-        auto* controller = m_spectrumEnvelopeController;
-        QMetaObject::invokeMethod(controller,
-                                  [controller, batch]() {
-                                      controller->ingestBatch(batch);
+    if (m_spectrumEnvelopeWorker) {
+        auto* worker = m_spectrumEnvelopeWorker;
+        QMetaObject::invokeMethod(worker,
+                                  [worker, batch]() mutable {
+                                      worker->ingestBatch(std::move(batch));
                                   },
                                   Qt::QueuedConnection);
     }
@@ -623,6 +658,11 @@ void WaterfallController::processingLoop()
                     std::max(m_completedFlushRequestId, flushRequestId);
             }
             m_workerCondition.notify_all();
+            QMetaObject::invokeMethod(this,
+                                      [this, flushRequestId] {
+                                          completeAsyncFlushesUpTo(flushRequestId);
+                                      },
+                                      Qt::QueuedConnection);
         };
 
         if (configChanged) {
@@ -704,6 +744,55 @@ void WaterfallController::processingLoop()
 
         completeFlush();
     }
+}
+
+void WaterfallController::completeAsyncFlushesUpTo(std::uint64_t requestId)
+{
+    std::vector<FlushCallback> callbacks;
+    {
+        std::lock_guard lock(m_asyncFlushMutex);
+        auto writeIt = m_asyncFlushRequests.begin();
+        for (auto readIt = m_asyncFlushRequests.begin(); readIt != m_asyncFlushRequests.end();
+             ++readIt) {
+            if (readIt->first <= requestId) {
+                callbacks.push_back(std::move(readIt->second));
+                continue;
+            }
+
+            if (writeIt != readIt) {
+                *writeIt = std::move(*readIt);
+            }
+            ++writeIt;
+        }
+        m_asyncFlushRequests.erase(writeIt, m_asyncFlushRequests.end());
+    }
+
+    for (auto& callback : callbacks) {
+        callback(core::OperationResult::ok());
+    }
+}
+
+void WaterfallController::completeAsyncFlush(std::uint64_t requestId,
+                                             core::OperationResult result)
+{
+    FlushCallback callback;
+    {
+        std::lock_guard lock(m_asyncFlushMutex);
+        const auto found =
+            std::find_if(m_asyncFlushRequests.begin(),
+                         m_asyncFlushRequests.end(),
+                         [requestId](const auto& request) {
+                             return request.first == requestId;
+                         });
+        if (found == m_asyncFlushRequests.end()) {
+            return;
+        }
+
+        callback = std::move(found->second);
+        m_asyncFlushRequests.erase(found);
+    }
+
+    callback(std::move(result));
 }
 
 processing::SampleProcessingConfig WaterfallController::makeProcessingConfig(

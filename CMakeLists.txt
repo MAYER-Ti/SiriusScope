@@ -58,6 +58,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/spectrumdecimator.cpp
     src/app/spectrumenvelopecontroller.h
     src/app/spectrumenvelopecontroller.cpp
+    src/app/spectrumenvelopeworker.h
+    src/app/spectrumenvelopeworker.cpp
     src/app/statusmodel.h
     src/app/statusmodel.cpp
     src/app/syntheticwaterfalldatasource.h
@@ -101,6 +103,8 @@ set(SIRIUSSCOPE_PROCESSING_SOURCES
     src/processing/bearing_service.cpp
     src/processing/sample_processor.h
     src/processing/sample_processor.cpp
+    src/processing/spectrum_envelope_processor.h
+    src/processing/spectrum_envelope_processor.cpp
 )
 
 set(SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES

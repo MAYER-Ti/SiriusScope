@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 class FrequencyViewportModel;
@@ -31,7 +32,7 @@ class WaterfallRingBuffer;
 namespace siriusscope::app {
 
 class BearingFrameBus;
-class SpectrumEnvelopeController;
+class SpectrumEnvelopeWorker;
 
 struct WaterfallControllerConfig
 {
@@ -71,7 +72,7 @@ public:
                                  infrastructure::IDiagnosticsSink* diagnosticsSink,
                                  WaterfallControllerConfig config = {},
                                  BearingFrameBus* bearingFrameBus = nullptr,
-                                 SpectrumEnvelopeController* spectrumEnvelopeController = nullptr,
+                                 SpectrumEnvelopeWorker* spectrumEnvelopeWorker = nullptr,
                                  QObject* parent = nullptr);
     ~WaterfallController() override;
 
@@ -98,6 +99,8 @@ public:
     void stop();
     void setBandConfigs(std::vector<core::BandConfig> bandConfigs);
     core::OperationResult flushProcessing(std::chrono::milliseconds timeout) override;
+    void flushProcessingAsync(std::chrono::milliseconds timeout,
+                              FlushCallback callback) override;
 
     Q_INVOKABLE QVariantList visibleTimeTicks(int pixelHeight) const;
     Q_INVOKABLE void scrollHistory(int wheelSteps);
@@ -170,12 +173,14 @@ private:
         const std::vector<processing::ProcessingDiagnostic>& diagnostics) const;
     std::string processingDiagnosticMessage(
         const processing::ProcessingDiagnostic& diagnostic) const;
+    void completeAsyncFlushesUpTo(std::uint64_t requestId);
+    void completeAsyncFlush(std::uint64_t requestId, core::OperationResult result);
 
     FrequencyViewportModel* m_viewportModel = nullptr;
     hardware::IBcoSampleSource* m_sampleSource = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
-    SpectrumEnvelopeController* m_spectrumEnvelopeController = nullptr;
+    SpectrumEnvelopeWorker* m_spectrumEnvelopeWorker = nullptr;
     WaterfallRingBuffer* m_ringBuffer = nullptr;
     IWaterfallSessionStorage* m_sessionStorage = nullptr;
     std::unique_ptr<InMemoryWaterfallSessionStorage> m_ownedSessionStorage;
@@ -206,6 +211,9 @@ private:
     std::uint64_t m_completedFlushRequestId = 0;
     bool m_workerRunning = false;
     bool m_stopRequested = false;
+
+    mutable std::mutex m_asyncFlushMutex;
+    std::vector<std::pair<std::uint64_t, FlushCallback>> m_asyncFlushRequests;
 
     mutable std::mutex m_historyMutex;
     std::condition_variable m_historyCondition;

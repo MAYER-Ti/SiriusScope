@@ -6,6 +6,7 @@
 #include "qmlsingletons.h"
 
 #include <QDir>
+#include <QMetaObject>
 #include <QObject>
 #include <QStandardPaths>
 
@@ -72,9 +73,29 @@ ApplicationBootstrap::ApplicationBootstrap()
           m_diagnosticsService.get()))
     , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsService.get())
 {
+    m_spectrumEnvelopeController.setDiagnosticsSink(m_diagnosticsService.get());
+    m_spectrumEnvelopeWorker =
+        new SpectrumEnvelopeWorker(SpectrumEnvelopeWorkerConfig{}, m_diagnosticsService.get());
+    m_spectrumEnvelopeWorker->moveToThread(&m_spectrumEnvelopeThread);
+    QObject::connect(&m_spectrumEnvelopeThread,
+                     &QThread::finished,
+                     m_spectrumEnvelopeWorker,
+                     &QObject::deleteLater);
+    QObject::connect(m_spectrumEnvelopeWorker,
+                     &SpectrumEnvelopeWorker::envelopeSnapshotReady,
+                     &m_spectrumEnvelopeController,
+                     &SpectrumEnvelopeController::acceptSnapshot,
+                     Qt::QueuedConnection);
+    m_spectrumEnvelopeThread.start();
+
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
-    m_spectrumEnvelopeController.setViewport(m_viewportModel.viewMinHz(),
-                                             m_viewportModel.viewMaxHz());
+    QMetaObject::invokeMethod(m_spectrumEnvelopeWorker,
+                              [worker = m_spectrumEnvelopeWorker,
+                               minHz = m_viewportModel.viewMinHz(),
+                               maxHz = m_viewportModel.viewMaxHz()] {
+                                  worker->setViewport(minHz, maxHz);
+                              },
+                              Qt::QueuedConnection);
     m_waterfallController = std::make_unique<WaterfallController>(&m_viewportModel,
                                                                   m_bcoSampleSource.get(),
                                                                   m_bandListModel.bandConfigs(),
@@ -82,7 +103,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                                   m_diagnosticsService.get(),
                                                                   WaterfallControllerConfig{},
                                                                   m_bearingFrameBus.get(),
-                                                                  &m_spectrumEnvelopeController);
+                                                                  m_spectrumEnvelopeWorker);
     m_scanRecordingControl =
         std::make_unique<WaterfallScanRecordingAdapter>(m_waterfallController.get());
 
@@ -127,9 +148,9 @@ ApplicationBootstrap::ApplicationBootstrap()
                      });
     QObject::connect(&m_viewportModel,
                      &FrequencyViewportModel::viewportChanged,
-                     &m_spectrumEnvelopeController,
-                     [this](double minHz, double maxHz, const QString&) {
-                         m_spectrumEnvelopeController.setViewport(minHz, maxHz);
+                     m_spectrumEnvelopeWorker,
+                     [worker = m_spectrumEnvelopeWorker](double minHz, double maxHz, const QString&) {
+                         worker->setViewport(minHz, maxHz);
                      });
 
     QObject::connect(m_waterfallController.get(),
@@ -156,6 +177,20 @@ ApplicationBootstrap::ApplicationBootstrap()
         "SiriusScope application bootstrap completed",
         std::chrono::system_clock::now(),
     });
+}
+
+ApplicationBootstrap::~ApplicationBootstrap()
+{
+    if (m_waterfallController) {
+        m_waterfallController->stop();
+    }
+
+    if (m_spectrumEnvelopeThread.isRunning()) {
+        m_spectrumEnvelopeThread.quit();
+        m_spectrumEnvelopeThread.wait();
+    }
+
+    m_spectrumEnvelopeWorker = nullptr;
 }
 
 void ApplicationBootstrap::registerQmlSingletons()

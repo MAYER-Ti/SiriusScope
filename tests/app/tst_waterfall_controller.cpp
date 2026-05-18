@@ -1,6 +1,7 @@
 #include "app/bearingframebus.h"
 #include "app/frequencyviewportmodel.h"
 #include "app/spectrumenvelopecontroller.h"
+#include "app/spectrumenvelopeworker.h"
 #include "app/waterfallcontroller.h"
 #include "app/waterfallringbuffer.h"
 #include "core/domain_models.h"
@@ -327,9 +328,19 @@ void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
     config.sourceFlushIntervalMs = 20;
 
     siriusscope::app::SpectrumEnvelopeControllerConfig envelopeConfig;
-    envelopeConfig.decayPerSecond = 0.0;
+    envelopeConfig.binCount = 128;
+    envelopeConfig.publishIntervalMs = 1;
     siriusscope::app::SpectrumEnvelopeController envelope(envelopeConfig);
-    envelope.setViewport(viewport.viewMinHz(), viewport.viewMaxHz());
+    siriusscope::app::SpectrumEnvelopeWorkerConfig workerConfig;
+    workerConfig.processor.binCount = 128;
+    workerConfig.processor.decayPerSecond = 0.0;
+    workerConfig.publishIntervalMs = 1;
+    siriusscope::app::SpectrumEnvelopeWorker envelopeWorker(workerConfig, &diagnostics);
+    QObject::connect(&envelopeWorker,
+                     &siriusscope::app::SpectrumEnvelopeWorker::envelopeSnapshotReady,
+                     &envelope,
+                     &siriusscope::app::SpectrumEnvelopeController::acceptSnapshot);
+    envelopeWorker.setViewport(viewport.viewMinHz(), viewport.viewMaxHz());
 
     siriusscope::app::WaterfallController controller(&viewport,
                                                      &source,
@@ -338,7 +349,7 @@ void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
                                                      &diagnostics,
                                                      config,
                                                      nullptr,
-                                                     &envelope);
+                                                     &envelopeWorker);
     controller.start();
 
     source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
@@ -392,6 +403,55 @@ void testFlushProcessingDrainsQueuedBatches(TestRunner& test)
 
     test.require(flushResult.success, "flushProcessing returns success");
     test.require(published, "flushProcessing drains queued batches into bearing frames");
+}
+
+void testFlushProcessingAsyncDrainsQueuedBatches(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    app::BearingFrameBus bearingFrameBus;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 128;
+    config.visibleRowCount = 16;
+    config.sourceFlushIntervalMs = 60'000;
+
+    std::mutex mutex;
+    int receivedFrameCount = 0;
+    bearingFrameBus.subscribe([&](std::vector<processing::BearingInputFrame> frames) {
+        std::lock_guard lock(mutex);
+        receivedFrameCount += static_cast<int>(frames.size());
+    });
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config,
+                                                     &bearingFrameBus);
+    controller.start();
+
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 10, 0, 0, 90),
+                                               makeSample(bands, 10, 0, 1, 40)}});
+
+    bool callbackCalled = false;
+    core::OperationResult callbackResult;
+    controller.flushProcessingAsync(std::chrono::milliseconds{1500},
+                                    [&](core::OperationResult result) {
+                                        callbackResult = std::move(result);
+                                        callbackCalled = true;
+                                    });
+
+    const bool completed = waitUntil([&] {
+        std::lock_guard lock(mutex);
+        return callbackCalled && receivedFrameCount > 0;
+    });
+
+    test.require(completed, "flushProcessingAsync drains queued batches and calls callback");
+    test.require(callbackResult.success, "flushProcessingAsync callback reports success");
 }
 
 void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
@@ -564,6 +624,7 @@ int main(int argc, char *argv[])
     testProcessingPublishesBearingFrames(test);
     testInputBatchUpdatesSpectrumEnvelope(test);
     testFlushProcessingDrainsQueuedBatches(test);
+    testFlushProcessingAsyncDrainsQueuedBatches(test);
     testScrollHistoryNoopDoesNotRebuildEmptyHistory(test);
     testScrollHistoryRebuildsOnlyWhenWindowChanges(test);
     testEmptyBatchDoesNotCrashAndReportsDiagnostic(test);

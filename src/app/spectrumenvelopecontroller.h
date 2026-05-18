@@ -1,24 +1,21 @@
 #pragma once
 
-#include "hardware/interfaces/bco_sample_source.h"
+#include "infrastructure/interfaces/diagnostics_sink.h"
 
 #include <QElapsedTimer>
 #include <QObject>
 #include <QTimer>
+#include <QVector>
 #include <QVariantList>
 
-#include <cstddef>
-#include <cstdint>
-#include <optional>
-#include <vector>
+#include <string>
 
 namespace siriusscope::app {
 
 struct SpectrumEnvelopeControllerConfig
 {
     int binCount = 1024;
-    int decayIntervalMs = 33;
-    double decayPerSecond = 80.0;
+    int publishIntervalMs = 66;
 };
 
 class SpectrumEnvelopeController final : public QObject
@@ -30,8 +27,8 @@ public:
     explicit SpectrumEnvelopeController(SpectrumEnvelopeControllerConfig config,
                                         QObject* parent = nullptr);
 
-    void setViewport(double minHz, double maxHz);
-    void ingestBatch(const hardware::BcoSampleBatch& batch);
+    void setDiagnosticsSink(infrastructure::IDiagnosticsSink* diagnosticsSink) noexcept;
+    void acceptSnapshot(double minHz, double maxHz, const QVector<float>& samples);
 
     Q_INVOKABLE QVariantList envelopeSamples() const;
 
@@ -39,23 +36,27 @@ signals:
     void envelopeChanged(double minHz, double maxHz, const QVariantList& samples);
 
 private slots:
-    void applyDecay();
+    void publishPendingEnvelope();
 
 private:
-    std::optional<std::size_t> frequencyBinFor(std::int64_t frequencyHz) const;
     QVariantList buildSamples() const;
+    void schedulePublish();
     void publishEnvelope();
-    void clearEnvelope();
-    void ensureDecayTimerRunning();
+    void publish(infrastructure::DiagnosticSeverity severity, const std::string& message) const;
 
     SpectrumEnvelopeControllerConfig m_config;
-    QTimer m_decayTimer;
-    QElapsedTimer m_decayClock;
-    QElapsedTimer m_monotonicClock;
-    std::vector<double> m_envelope;
-    std::vector<qint64> m_lastRefreshMs;
+    infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
+    QTimer m_publishTimer;
+    QElapsedTimer m_publishClock;
+    QElapsedTimer m_publishRateClock;
+    QVector<float> m_samples;
+    QVector<float> m_pendingSamples;
     double m_viewMinHz = 0.0;
     double m_viewMaxHz = 0.0;
+    double m_pendingMinHz = 0.0;
+    double m_pendingMaxHz = 0.0;
+    int m_publishCount = 0;
+    bool m_publishPending = false;
 };
 
 } // namespace siriusscope::app

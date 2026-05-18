@@ -301,9 +301,42 @@ public:
         return core::OperationResult::ok();
     }
 
+    void flushProcessingAsync(std::chrono::milliseconds, FlushCallback callback) override
+    {
+        ++flushCalls;
+        if (events) {
+            events->push_back("processing.flush");
+        }
+        if (onFlush) {
+            onFlush();
+        }
+        if (failFlush) {
+            callback(core::OperationResult::failure("flush failed"));
+            return;
+        }
+        if (deferAsyncCallback) {
+            pendingCallback = std::move(callback);
+            return;
+        }
+        callback(core::OperationResult::ok());
+    }
+
+    void completePendingFlush(core::OperationResult result = core::OperationResult::ok())
+    {
+        if (!pendingCallback) {
+            return;
+        }
+
+        auto callback = std::move(pendingCallback);
+        pendingCallback = nullptr;
+        callback(std::move(result));
+    }
+
     int flushCalls = 0;
     bool failFlush = false;
+    bool deferAsyncCallback = false;
     std::function<void()> onFlush;
+    FlushCallback pendingCallback;
     std::vector<std::string>* events = nullptr;
 };
 
@@ -597,6 +630,45 @@ void testFlushDrainFramesBeforeClose(TestRunner& test)
                  "result table context receives final antenna azimuth");
 }
 
+void testCompletionWaitsForAsyncFlushCallback(TestRunner& test)
+{
+    ControllerFixture fixture;
+    fixture.flushControl.deferAsyncCallback = true;
+    int completedFrames = -1;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::scanCompleted,
+                     [&](qulonglong, int frameCount) {
+                         completedFrames = frameCount;
+                     });
+
+    fixture.controller.startScan(10.0, 60.0, 10.0);
+    fixture.azimuthSource.emitAzimuth(10.0);
+    const bool scanStarted = waitUntil([&fixture] {
+        return fixture.recorder.beginCalls == 1;
+    });
+
+    fixture.azimuthSource.emitAzimuth(60.0);
+    const bool completing = waitUntil([&fixture] {
+        return fixture.controller.scanStateText() == QStringLiteral("completing");
+    });
+
+    test.require(scanStarted, "scan starts before async completion test");
+    test.require(completing, "scan enters Completing while async flush is pending");
+    test.require(fixture.recorder.closeCalls == 0,
+                 "scan acquisition remains open until async flush callback");
+    test.require(completedFrames == -1,
+                 "scanCompleted is not emitted before async flush callback");
+
+    fixture.flushControl.completePendingFlush();
+    const bool completed = waitUntil([&] {
+        return completedFrames == 0;
+    });
+
+    test.require(completed, "scan completes after async flush callback");
+    test.require(fixture.recorder.closeCalls == 1,
+                 "scan acquisition closes after async flush callback");
+}
+
 void testStopScanClosesAcquisitionAndRecording(TestRunner& test)
 {
     ControllerFixture fixture;
@@ -884,6 +956,7 @@ int main(int argc, char *argv[])
     testAcquisitionOpensOnlyWhenSectorScanBegins(test);
     testBearingFramesOutsideScanIgnored(test);
     testFlushDrainFramesBeforeClose(test);
+    testCompletionWaitsForAsyncFlushCallback(test);
     testStopScanClosesAcquisitionAndRecording(test);
     testAzimuthProgressCompletionAndFrames(test);
     testReverseScanProgressAndCompletion(test);

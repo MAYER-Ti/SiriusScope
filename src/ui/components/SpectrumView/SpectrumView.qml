@@ -20,7 +20,9 @@ Item {
     property real minSpanHz: 1050e6
     readonly property real maxSpanHz: globalMaxHz - globalMinHz
     property var rawSamples: []
+    property var pendingEnvelopeSamples: []
     property var decimatedMinMax: []
+    property bool signalRepaintPending: false
     property bool spacePressed: false
     property var bandSettingsWindows: ({})
     property bool pendingBandPreviewValid: false
@@ -35,7 +37,8 @@ Item {
         if (rawSamples.length === 0) {
             decimatedMinMax = []
         } else {
-            decimatedMinMax = SpectrumDecimator.decimateMinMax(rawSamples, Math.floor(signalCanvas.width))
+            var targetWidth = Math.min(512, Math.floor(signalCanvas.width))
+            decimatedMinMax = SpectrumDecimator.decimateMinMax(rawSamples, targetWidth)
         }
         signalCanvas.requestPaint()
     }
@@ -236,14 +239,28 @@ Item {
         onTriggered: flushBandPreviewFromDrag()
     }
 
+    Timer {
+        id: signalRepaintTimer
+        interval: ScanController.scanActive ? 100 : 66
+        repeat: false
+        onTriggered: {
+            root.signalRepaintPending = false
+            rawSamples = pendingEnvelopeSamples
+            decimateAndRepaint()
+        }
+    }
+
     Connections {
         target: SpectrumEnvelopeController
         function onEnvelopeChanged(minHz, maxHz, samples) {
             if (Math.abs(minHz - viewMinHz) > 1 || Math.abs(maxHz - viewMaxHz) > 1) {
                 return
             }
-            rawSamples = samples
-            decimateAndRepaint()
+            pendingEnvelopeSamples = samples
+            if (!signalRepaintPending) {
+                signalRepaintPending = true
+                signalRepaintTimer.start()
+            }
         }
     }
 
@@ -261,13 +278,19 @@ Item {
 
     onViewMinHzChanged: {
         rawSamples = []
+        pendingEnvelopeSamples = []
         decimatedMinMax = []
+        signalRepaintPending = false
+        signalRepaintTimer.stop()
         plot.requestPaint()
         signalCanvas.requestPaint()
     }
     onViewMaxHzChanged: {
         rawSamples = []
+        pendingEnvelopeSamples = []
         decimatedMinMax = []
+        signalRepaintPending = false
+        signalRepaintTimer.stop()
         plot.requestPaint()
         signalCanvas.requestPaint()
     }
@@ -539,61 +562,42 @@ Item {
                         }
 
                         var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
-                        var hasSignal = false
-
-                        for (var probePx = 0; probePx < width; probePx++) {
-                            var probeIdx = probePx * 2
-                            if (probeIdx + 1 >= decimatedMinMax.length) {
-                                break
-                            }
-                            if (clampAmplitude(decimatedMinMax[probeIdx + 1]) > amplitudeMin) {
-                                hasSignal = true
-                                break
-                            }
-                        }
-
-                        if (!hasSignal) {
-                            return
-                        }
+                        var pointCount = Math.floor(decimatedMinMax.length / 2)
 
                         function traceEnvelopePath() {
                             ctx.beginPath()
 
                             var started = false
-                            for (var px = 0; px < width; px++) {
-                                var idx = px * 2
+                            for (var point = 0; point < pointCount; point++) {
+                                var idx = point * 2
                                 if (idx + 1 >= decimatedMinMax.length) {
                                     break
                                 }
 
                                 var maxVal = clampAmplitude(decimatedMinMax[idx + 1])
+                                if (maxVal <= amplitudeMin) {
+                                    continue
+                                }
+                                var x = pointCount <= 1 ? width * 0.5 : (point / (pointCount - 1)) * width
                                 var y = height - (maxVal - amplitudeMin) / amplitudeSpan * height
 
                                 if (!started) {
-                                    ctx.moveTo(px + 0.5, y)
+                                    ctx.moveTo(x + 0.5, y)
                                     started = true
                                 } else {
-                                    ctx.lineTo(px + 0.5, y)
+                                    ctx.lineTo(x + 0.5, y)
                                 }
                             }
+                            return started
                         }
-
-                        ctx.save()
-                        ctx.globalAlpha = 0.25
-                        ctx.strokeStyle = String(Theme.textPrimary)
-                        ctx.lineWidth = 5.0
-                        ctx.lineJoin = "round"
-                        ctx.lineCap = "round"
-                        traceEnvelopePath()
-                        ctx.stroke()
-                        ctx.restore()
 
                         ctx.strokeStyle = String(Theme.textPrimary)
                         ctx.lineWidth = 2.0
                         ctx.lineJoin = "round"
                         ctx.lineCap = "round"
-                        traceEnvelopePath()
-                        ctx.stroke()
+                        if (traceEnvelopePath()) {
+                            ctx.stroke()
+                        }
                     }
                 }
             }

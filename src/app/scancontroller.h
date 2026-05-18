@@ -178,6 +178,7 @@ private:
     std::vector<core::BearingResult> m_lastBearingResults;
     QVariantList m_targetBearings;
     QVariantList m_targetAzimuthsDeg;
+    std::chrono::steady_clock::time_point m_nextAzimuthLatencyDiagnostic;
 };
 
 } // namespace siriusscope::app
