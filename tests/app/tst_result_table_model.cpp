@@ -125,6 +125,21 @@ void testAppendAndData(TestRunner& test)
                  "sampleIndex is preserved");
 }
 
+void testAppendInsertsNewRowsAtTop(TestRunner& test)
+{
+    ResultTableModel model;
+    const auto older = makeRow(12, 1'700'000'000'000'000'000LL, 1);
+    const auto newer = makeRow(13, 1'700'000'001'000'000'000LL, 1);
+
+    test.require(model.appendRow(older), "older row is appended");
+    test.require(model.appendRow(newer), "newer row is appended");
+
+    test.require(dataAt(model, 0, ResultTableModel::SampleIndexRole).toULongLong() == 13,
+                 "newly appended row is inserted at the top");
+    test.require(dataAt(model, 1, ResultTableModel::SampleIndexRole).toULongLong() == 12,
+                 "previous row moves down after append");
+}
+
 void testResetAndDeduplication(TestRunner& test)
 {
     ResultTableModel model;
@@ -135,8 +150,10 @@ void testResetAndDeduplication(TestRunner& test)
     model.resetRows({second, duplicate, first});
 
     test.require(model.count() == 2, "resetRows removes duplicates");
-    test.require(dataAt(model, 0, ResultTableModel::SampleIndexRole).toULongLong() == 12,
-                 "resetRows sorts by time");
+    test.require(dataAt(model, 0, ResultTableModel::SampleIndexRole).toULongLong() == 13,
+                 "resetRows sorts newest rows first");
+    test.require(dataAt(model, 1, ResultTableModel::SampleIndexRole).toULongLong() == 12,
+                 "resetRows keeps older rows below newer rows");
     test.require(!model.appendRow(first), "appendRow rejects duplicate row");
     test.require(model.count() == 2, "duplicate append does not change count");
     test.require(model.containsRow(second), "containsRow finds existing row");
@@ -177,6 +194,7 @@ int main(int argc, char* argv[])
     testEmptyModel(test);
     testRoleNames(test);
     testAppendAndData(test);
+    testAppendInsertsNewRowsAtTop(test);
     testResetAndDeduplication(test);
     testQualityAndDiagnosticsText(test);
 

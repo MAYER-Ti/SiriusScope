@@ -2,7 +2,6 @@
 #include "infrastructure/storage/result_table_storage_format.h"
 
 #include <QCoreApplication>
-#include <QDataStream>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -89,7 +88,7 @@ QString resultTableDir(const QTemporaryDir& tempDir)
     return QDir(tempDir.path()).filePath(QStringLiteral("result_table"));
 }
 
-void writeUnsupportedVersionFile(const QString& dataRootPath)
+void writeUnsupportedVersionFile(const QString& dataRootPath, std::uint32_t formatVersion = 999)
 {
     QDir().mkpath(QDir(dataRootPath).filePath(QStringLiteral("result_table")));
     QFile file(QDir(QDir(dataRootPath).filePath(QStringLiteral("result_table")))
@@ -102,52 +101,11 @@ void writeUnsupportedVersionFile(const QString& dataRootPath)
     std::memcpy(header.magic,
                 siriusscope::infrastructure::result_table_storage_format::kResultTableBinMagic,
                 sizeof(header.magic));
-    header.formatVersion = 999;
+    header.formatVersion = formatVersion;
     header.headerSize = sizeof(header);
     header.byteOrder =
         siriusscope::infrastructure::result_table_storage_format::kByteOrderLittleEndian;
     file.write(reinterpret_cast<const char*>(&header), sizeof(header));
-}
-
-void writeLegacyV1File(const QString& dataRootPath)
-{
-    namespace format = siriusscope::infrastructure::result_table_storage_format;
-
-    QDir().mkpath(QDir(dataRootPath).filePath(QStringLiteral("result_table")));
-    QFile file(QDir(QDir(dataRootPath).filePath(QStringLiteral("result_table")))
-                   .filePath(QStringLiteral("result_table.bin")));
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        return;
-    }
-
-    format::ResultTableBinFileHeader fileHeader{};
-    std::memcpy(fileHeader.magic, format::kResultTableBinMagic, sizeof(fileHeader.magic));
-    fileHeader.formatVersion = format::kLegacyFormatVersion;
-    fileHeader.headerSize = sizeof(fileHeader);
-    fileHeader.byteOrder = format::kByteOrderLittleEndian;
-    file.write(reinterpret_cast<const char*>(&fileHeader), sizeof(fileHeader));
-
-    QByteArray payload;
-    QDataStream stream(&payload, QIODevice::WriteOnly);
-    stream.setByteOrder(QDataStream::LittleEndian);
-    stream.setVersion(QDataStream::Qt_6_0);
-    stream << static_cast<quint64>(12);
-    stream << static_cast<qint64>(1'700'000'000'000'000'000LL);
-    stream << 46.0;
-    stream << static_cast<qint32>(1);
-    stream << static_cast<qint32>(1);
-    stream << 0.84;
-    stream << static_cast<quint32>(1);
-    stream << static_cast<qint64>(3'000'000'000LL);
-    stream << static_cast<quint32>(0);
-
-    format::ResultTableRecordDiskHeader recordHeader{};
-    recordHeader.recordMagic = format::kResultTableRecordMagic;
-    recordHeader.recordVersion = format::kLegacyFormatVersion;
-    recordHeader.payloadSizeBytes = static_cast<quint32>(payload.size());
-    recordHeader.crc32 = 0;
-    file.write(reinterpret_cast<const char*>(&recordHeader), sizeof(recordHeader));
-    file.write(payload);
 }
 
 void testAppendCreatesFiles(TestRunner& test)
@@ -214,21 +172,19 @@ void testMultipleRowsSortedAndQualityNull(TestRunner& test)
     test.require(!rows.back().quality, "null quality round-trips");
 }
 
-void testLegacyV1RecordCompatibility(TestRunner& test)
+void testV1FormatRejected(TestRunner& test)
 {
     QTemporaryDir tempDir;
-    writeLegacyV1File(tempDir.path());
+    writeUnsupportedVersionFile(tempDir.path(), 1);
 
     RecordingDiagnosticsSink diagnostics;
     BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
 
     const auto rows = storage.readAll();
 
-    test.require(rows.size() == 1, "legacy v1 row is readable");
-    test.require(rows.front().bearingAzimuthDeg == 46.0,
-                 "legacy v1 single azimuth maps to bearing azimuth");
-    test.require(rows.front().antennaAzimuthDeg == 46.0,
-                 "legacy v1 single azimuth maps to antenna azimuth");
+    test.require(rows.empty(), "v1 result table storage is not loaded");
+    test.require(diagnostics.contains("Unsupported result_table.bin format version"),
+                 "v1 result table storage is diagnosed as unsupported");
 }
 
 void testEmptyStorage(TestRunner& test)
@@ -299,7 +255,7 @@ int main(int argc, char* argv[])
     testAppendCreatesFiles(test);
     testAppendReadAllRoundTrip(test);
     testMultipleRowsSortedAndQualityNull(test);
-    testLegacyV1RecordCompatibility(test);
+    testV1FormatRejected(test);
     testEmptyStorage(test);
     testCorruptedFileDoesNotCrash(test);
     testUnsupportedVersionDiagnosed(test);

@@ -55,8 +55,7 @@ private:
     void writeMetadata(int rowCount) const;
 
     QByteArray serializeRow(const core::ResultTableRow& row) const;
-    std::optional<core::ResultTableRow> deserializeRow(const QByteArray& payload,
-                                                       std::uint32_t recordVersion) const;
+    std::optional<core::ResultTableRow> deserializeRow(const QByteArray& payload) const;
 
     void publish(DiagnosticSeverity severity, const QString& message) const;
     void publishInfo(const QString& message) const;

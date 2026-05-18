@@ -246,6 +246,33 @@ void testReloadLoadsRows(TestRunner& test)
     test.require(storage.readCalls == 1, "reload reads storage once");
 }
 
+void testAppendNewerResultAppearsAtTop(TestRunner& test)
+{
+    ResultTableModel model;
+    FakeResultTableStorage storage;
+    RecordingDiagnosticsSink diagnostics;
+    ResultTableController controller(&model, &storage, &diagnostics);
+
+    const auto older = makeBearingResult(12, 1'700'000'000'000'000'000LL, 1);
+    const auto newer = makeBearingResult(13, 1'700'000'001'000'000'000LL, 1);
+
+    controller.appendBearingResults({42, 50.0}, {older});
+    controller.waitUntilIdle(std::chrono::milliseconds{1500});
+    waitUntil([&model] {
+        return model.count() == 1;
+    });
+
+    controller.appendBearingResults({42, 50.0}, {newer});
+    controller.waitUntilIdle(std::chrono::milliseconds{1500});
+    waitUntil([&model] {
+        return model.count() == 2;
+    });
+
+    test.require(model.count() == 2, "two appends reach model");
+    test.require(model.rows().front().sampleIndex == 13,
+                 "newer async append is visible at the top of the table");
+}
+
 void testDuplicateAppendSkipped(TestRunner& test)
 {
     ResultTableModel model;
@@ -283,6 +310,7 @@ int main(int argc, char* argv[])
     testInvalidBearingResultRejected(test);
     testStorageFailureDoesNotUpdateModel(test);
     testReloadLoadsRows(test);
+    testAppendNewerResultAppearsAtTop(test);
     testDuplicateAppendSkipped(test);
 
     return test.result();

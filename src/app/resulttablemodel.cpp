@@ -242,12 +242,12 @@ int ResultTableModel::appendRows(const std::vector<core::ResultTableRow>& rows)
         return 0;
     }
 
-    const int firstRow = rowCount();
-    const int lastRow = firstRow + static_cast<int>(uniqueRows.size()) - 1;
+    const int firstRow = 0;
+    const int lastRow = static_cast<int>(uniqueRows.size()) - 1;
     beginInsertRows(QModelIndex{}, firstRow, lastRow);
+    m_rows.insert(m_rows.begin(), uniqueRows.begin(), uniqueRows.end());
     for (const auto& row : uniqueRows) {
         m_rowKeys.insert(rowKey(row));
-        m_rows.push_back(row);
     }
     endInsertRows();
     emit countChanged();
@@ -258,10 +258,10 @@ void ResultTableModel::resetRows(std::vector<core::ResultTableRow> rows)
 {
     std::sort(rows.begin(), rows.end(), [](const auto& left, const auto& right) {
         if (left.resultTimeUtcNs != right.resultTimeUtcNs) {
-            return left.resultTimeUtcNs < right.resultTimeUtcNs;
+            return left.resultTimeUtcNs > right.resultTimeUtcNs;
         }
         if (left.sampleIndex != right.sampleIndex) {
-            return left.sampleIndex < right.sampleIndex;
+            return left.sampleIndex > right.sampleIndex;
         }
         return left.bandIndex < right.bandIndex;
     });

@@ -38,11 +38,6 @@ bool magicEquals(const char* actual, const char* expected)
     return std::memcmp(actual, expected, 8) == 0;
 }
 
-bool isSupportedFormatVersion(std::uint32_t version)
-{
-    return version == kFormatVersion || version == kLegacyFormatVersion;
-}
-
 ResultTableBinFileHeader binHeader()
 {
     ResultTableBinFileHeader header{};
@@ -208,7 +203,7 @@ std::vector<core::ResultTableRow> BinaryResultTableStorage::readAll()
             break;
         }
         if (header.recordMagic != kResultTableRecordMagic
-            || !isSupportedFormatVersion(header.recordVersion)
+            || header.recordVersion != kFormatVersion
             || header.payloadSizeBytes > static_cast<std::uint32_t>(kMaxRecordPayloadBytes)) {
             publishWarning(QStringLiteral("Corrupted result table record at offset %1")
                                .arg(recordOffset));
@@ -223,7 +218,7 @@ std::vector<core::ResultTableRow> BinaryResultTableStorage::readAll()
             break;
         }
 
-        const auto row = deserializeRow(payload, header.recordVersion);
+        const auto row = deserializeRow(payload);
         if (!row) {
             publishWarning(QStringLiteral("Cannot deserialize result table record at offset %1")
                                .arg(recordOffset));
@@ -305,21 +300,7 @@ bool BinaryResultTableStorage::ensureBinHeader(QFile& file) const
         return written;
     }
 
-    auto header = readBinHeaderValue(file, true);
-    if (!header) {
-        return false;
-    }
-    if (header->formatVersion == kLegacyFormatVersion) {
-        header->formatVersion = kFormatVersion;
-        if (!file.seek(0) || !writeStruct(file, *header)) {
-            publishError(QStringLiteral("Cannot upgrade result_table.bin header"));
-            return false;
-        }
-        file.flush();
-        publishInfo(QStringLiteral("Result table binary file upgraded to format v%1")
-                        .arg(kFormatVersion));
-    }
-    return true;
+    return readBinHeader(file, true);
 }
 
 bool BinaryResultTableStorage::ensureIndexHeader(QFile& file) const
@@ -328,19 +309,7 @@ bool BinaryResultTableStorage::ensureIndexHeader(QFile& file) const
         return file.seek(0) && writeStruct(file, indexHeader());
     }
 
-    auto header = readIndexHeaderValue(file, true);
-    if (!header) {
-        return false;
-    }
-    if (header->formatVersion == kLegacyFormatVersion) {
-        header->formatVersion = kFormatVersion;
-        if (!file.seek(0) || !writeStruct(file, *header)) {
-            publishWarning(QStringLiteral("Cannot upgrade result_table.idx header"));
-            return false;
-        }
-        file.flush();
-    }
-    return true;
+    return readIndexHeader(file, true);
 }
 
 std::optional<result_table_storage_format::ResultTableBinFileHeader>
@@ -368,7 +337,7 @@ BinaryResultTableStorage::readBinHeaderValue(
         }
         return std::nullopt;
     }
-    if (!isSupportedFormatVersion(header.formatVersion)) {
+    if (header.formatVersion != kFormatVersion) {
         if (publishDiagnostics) {
             publishError(QStringLiteral("Unsupported result_table.bin format version %1")
                              .arg(header.formatVersion));
@@ -405,7 +374,7 @@ BinaryResultTableStorage::readIndexHeaderValue(
         return std::nullopt;
     }
     const bool valid = magicEquals(header.magic, kResultTableIndexMagic)
-        && isSupportedFormatVersion(header.formatVersion)
+        && header.formatVersion == kFormatVersion
         && header.headerSize == sizeof(ResultTableIndexFileHeader)
         && header.recordSize == sizeof(ResultTableIndexRecord);
     if (!valid && publishDiagnostics) {
@@ -502,8 +471,7 @@ QByteArray BinaryResultTableStorage::serializeRow(const core::ResultTableRow& ro
 }
 
 std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
-    const QByteArray& payload,
-    std::uint32_t recordVersion) const
+    const QByteArray& payload) const
 {
     QDataStream stream(payload);
     stream.setByteOrder(QDataStream::LittleEndian);
@@ -520,13 +488,8 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
 
     stream >> sampleIndex;
     stream >> resultTimeUtcNs;
-    if (recordVersion == kLegacyFormatVersion) {
-        stream >> antennaAzimuthDeg;
-        bearingAzimuthDeg = antennaAzimuthDeg;
-    } else {
-        stream >> bearingAzimuthDeg;
-        stream >> antennaAzimuthDeg;
-    }
+    stream >> bearingAzimuthDeg;
+    stream >> antennaAzimuthDeg;
     stream >> bandIndex;
     stream >> qualityState;
     stream >> qualityValue;

@@ -60,7 +60,7 @@ Panel {
                         height: 32
 
                         HeaderCell { width: tableContent.width * 150 / root.tableWeight; title: qsTr("Время") }
-                        HeaderCell { width: tableContent.width * 100 / root.tableWeight; title: qsTr("Азимут") }
+                        HeaderCell { width: tableContent.width * 100 / root.tableWeight; title: qsTr("Пеленг") }
                         HeaderCell { width: tableContent.width * 120 / root.tableWeight; title: qsTr("Диапазон") }
                         HeaderCell { width: tableContent.width * 170 / root.tableWeight; title: qsTr("Частоты") }
                         HeaderCell { width: tableContent.width * 90 / root.tableWeight; title: qsTr("Качество") }

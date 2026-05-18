@@ -174,8 +174,8 @@ diagnostics[]     ValidationCode + message bytes
 Version 2 stores both azimuth values. `bearingAzimuthDeg` is the calculated bearing
 shown in the result table and must match the bearing rendered by `AntennaIndicator`.
 `antennaAzimuthDeg` is retained only as scan context for storage/internal diagnostics and
-is not exposed by the result-table UI model. Legacy version 1 records stored only one
-azimuth value; readers may map it to both fields as a best-effort compatibility fallback.
+is not exposed by the result-table UI model. Version 1 result-table files are not
+supported and must be cleared before writing new scan results.
 
 ### `result_table.idx`
 
