@@ -13,6 +13,7 @@
 #include "interfaces/scan_acquisition_recorder.h"
 #include "interfaces/scan_recording_control.h"
 #include "processing/bearing_service.h"
+#include "recordingcontroller.h"
 #include "resulttablecontroller.h"
 #include "resulttablemodel.h"
 #include "scancontroller.h"
@@ -67,6 +68,7 @@ public:
     BandConfigController* bandConfigController() noexcept { return &m_bandConfigController; }
     DiagnosticsService* diagnosticsService() noexcept { return m_diagnosticsService.get(); }
     StatusModel* statusModel() noexcept { return m_statusModel.get(); }
+    RecordingController* recordingController() noexcept { return m_recordingController.get(); }
     ScanController* scanController() noexcept { return m_scanController.get(); }
     ResultTableModel* resultTableModel() noexcept { return m_resultTableModel.get(); }
     ResultTableController* resultTableController() noexcept
@@ -149,6 +151,7 @@ private:
     BandListModel m_bandListModel;
     BandConfigController m_bandConfigController;
     std::unique_ptr<WaterfallController> m_waterfallController;
+    std::unique_ptr<RecordingController> m_recordingController;
     std::unique_ptr<ScanController> m_scanController;
     std::unique_ptr<StatusModel> m_statusModel;
 };

@@ -62,6 +62,11 @@ void SpectrumEnvelopeProcessor::setViewport(double minHz, double maxHz)
     clearEnvelope();
 }
 
+void SpectrumEnvelopeProcessor::reset()
+{
+    clearEnvelope();
+}
+
 bool SpectrumEnvelopeProcessor::ingestSamples(const std::vector<core::SignalSample>& samples,
                                               std::int64_t nowMs)
 {

@@ -104,8 +104,15 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                                   WaterfallControllerConfig{},
                                                                   m_bearingFrameBus.get(),
                                                                   m_spectrumEnvelopeWorker);
+    m_recordingController = std::make_unique<RecordingController>(m_bcoControl.get(),
+                                                                  &m_bandListModel,
+                                                                  &m_bandConfigController,
+                                                                  m_waterfallController.get(),
+                                                                  &m_spectrumEnvelopeController,
+                                                                  m_spectrumEnvelopeWorker,
+                                                                  m_diagnosticsService.get());
     m_scanRecordingControl =
-        std::make_unique<WaterfallScanRecordingAdapter>(m_waterfallController.get());
+        std::make_unique<WaterfallScanRecordingAdapter>(m_recordingController.get());
 
     m_scanController = std::make_unique<ScanController>(m_antennaControl.get(),
                                                         m_antennaAzimuthSource.get(),
@@ -120,6 +127,7 @@ ApplicationBootstrap::ApplicationBootstrap()
     m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),
                                                   &AppState::instance(),
                                                   m_waterfallController.get(),
+                                                  m_recordingController.get(),
                                                   m_scanController.get());
 
     QObject::connect(&m_antennaController,
@@ -151,21 +159,6 @@ ApplicationBootstrap::ApplicationBootstrap()
                      m_spectrumEnvelopeWorker,
                      [worker = m_spectrumEnvelopeWorker](double minHz, double maxHz, const QString&) {
                          worker->setViewport(minHz, maxHz);
-                     });
-
-    QObject::connect(m_waterfallController.get(),
-                     &WaterfallController::recordingStateChanged,
-                     &m_bandConfigController,
-                     [this]() {
-                         m_bandConfigController.setEditingLocked(
-                             m_waterfallController && m_waterfallController->sessionActive());
-                     });
-    QObject::connect(m_waterfallController.get(),
-                     &WaterfallController::recordingStateChanged,
-                     &AppState::instance(),
-                     [this]() {
-                         AppState::instance().setModeChangeLocked(
-                             m_waterfallController && m_waterfallController->sessionActive());
                      });
 
     m_waterfallController->start();
@@ -202,6 +195,7 @@ void ApplicationBootstrap::registerQmlSingletons()
     SpectrumDecimatorQmlSingleton::instance = &m_spectrumDecimator;
     SpectrumEnvelopeControllerQmlSingleton::instance = &m_spectrumEnvelopeController;
     WaterfallControllerQmlSingleton::instance = m_waterfallController.get();
+    RecordingControllerQmlSingleton::instance = m_recordingController.get();
     AntennaControllerQmlSingleton::instance = &m_antennaController;
     ScanControllerQmlSingleton::instance = m_scanController.get();
     BandListModelQmlSingleton::instance = &m_bandListModel;

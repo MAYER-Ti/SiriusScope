@@ -41,6 +41,7 @@ public:
 
     void setBandConfigs(std::vector<core::BandConfig> configs);
     std::vector<core::BandConfig> bandConfigs() const;
+    void resetSession(std::uint64_t firstSampleIndex = 0);
 
 private:
     BcoSampleBatch generateBatch();

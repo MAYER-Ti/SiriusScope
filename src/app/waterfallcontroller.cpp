@@ -180,6 +180,17 @@ QString WaterfallController::viewportModeText() const
 
 void WaterfallController::start()
 {
+    startWorkers();
+}
+
+void WaterfallController::stop()
+{
+    stopLiveSource();
+    stopWorkers();
+}
+
+void WaterfallController::startWorkers()
+{
     {
         std::lock_guard lock(m_workerMutex);
         if (m_workerRunning) {
@@ -191,11 +202,19 @@ void WaterfallController::start()
     }
 
     m_worker = std::thread(&WaterfallController::processingLoop, this);
+}
 
+core::OperationResult WaterfallController::startLiveSource()
+{
+    startWorkers();
     if (!m_sampleSource) {
         publish(infrastructure::DiagnosticSeverity::Warning,
                 "Waterfall sample source is not configured");
-        return;
+        return core::OperationResult::failure("waterfall sample source is not configured");
+    }
+
+    if (m_sourceStarted) {
+        return core::OperationResult::ok();
     }
 
     const auto started = m_sampleSource->start([this](const hardware::BcoSampleBatch& batch) {
@@ -204,24 +223,33 @@ void WaterfallController::start()
     if (!started) {
         publish(infrastructure::DiagnosticSeverity::Error,
                 "Waterfall sample source start failed: " + started.message);
-        stop();
-        return;
+        return started;
     }
 
     m_sourceStarted = true;
     emit sourceActiveChanged();
     publish(infrastructure::DiagnosticSeverity::Info, "BCO sample source started");
+    return core::OperationResult::ok();
 }
 
-void WaterfallController::stop()
+core::OperationResult WaterfallController::stopLiveSource()
 {
     if (m_sampleSource && m_sourceStarted) {
-        m_sampleSource->stop();
+        const auto stopped = m_sampleSource->stop();
         m_sourceStarted = false;
         emit sourceActiveChanged();
+        if (!stopped) {
+            publish(infrastructure::DiagnosticSeverity::Error,
+                    "Waterfall sample source stop failed: " + stopped.message);
+            return stopped;
+        }
         publish(infrastructure::DiagnosticSeverity::Info, "BCO sample source stopped");
     }
+    return core::OperationResult::ok();
+}
 
+void WaterfallController::stopWorkers()
+{
     {
         std::lock_guard lock(m_workerMutex);
         if (!m_workerRunning && !m_worker.joinable()) {
@@ -242,6 +270,20 @@ void WaterfallController::stop()
         m_stopRequested = false;
         m_queuedBatches.clear();
     }
+}
+
+void WaterfallController::setAcceptingLiveSamples(bool accepting)
+{
+    std::lock_guard lock(m_workerMutex);
+    m_acceptingLiveSamples = accepting;
+}
+
+void WaterfallController::clearQueuedBatches()
+{
+    std::lock_guard lock(m_workerMutex);
+    m_queuedBatches.clear();
+    m_droppedBatchCount = 0;
+    m_droppedSampleCount = 0;
 }
 
 void WaterfallController::setBandConfigs(std::vector<core::BandConfig> bandConfigs)
@@ -521,6 +563,7 @@ void WaterfallController::startRecording()
     metadata = m_sessionStorage->startSession(metadata);
     m_activeSessionId = metadata.id;
     m_sessionActive = true;
+    setAcceptingLiveSamples(true);
     m_timelineViewport.switchToSession(metadata.id,
                                        metadata.endUtcMs,
                                        metadata.rowPeriodMs,
@@ -543,6 +586,8 @@ void WaterfallController::stopRecording()
     const auto metadata = m_sessionStorage->session(m_activeSessionId);
     const qint64 endUtcMs = metadata ? metadata->endUtcMs : m_timelineViewport.topUtcMs();
 
+    setAcceptingLiveSamples(false);
+    clearQueuedBatches();
     m_sessionStorage->closeSession(m_activeSessionId, endUtcMs);
     m_sessionActive = false;
     m_timelineViewport.setMode(WaterfallTimelineViewport::Mode::History);
@@ -568,6 +613,10 @@ void WaterfallController::enqueueSampleBatch(const hardware::BcoSampleBatch& bat
 {
     {
         std::lock_guard lock(m_workerMutex);
+        if (!m_acceptingLiveSamples) {
+            return;
+        }
+
         if (m_controllerConfig.maxQueuedBatches > 0
             && m_queuedBatches.size() >= m_controllerConfig.maxQueuedBatches) {
             const auto& dropped = m_queuedBatches.front();

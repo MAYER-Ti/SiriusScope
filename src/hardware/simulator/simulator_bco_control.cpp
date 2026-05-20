@@ -105,6 +105,47 @@ core::OperationResult SimulatorBcoControl::applyBandConfigs(
     return core::OperationResult::ok();
 }
 
+core::OperationResult SimulatorBcoControl::startProcessing(
+    const BcoProcessingStartCommand& command)
+{
+    m_processingState = BcoProcessingState::Starting;
+
+    const auto applied = applyBandConfigs(command.bandConfigs);
+    if (!applied) {
+        m_processingState = BcoProcessingState::Failed;
+        return applied;
+    }
+
+    const auto timeValidation = command.timeBase.validate();
+    if (!timeValidation) {
+        const auto message = "invalid BCO processing TimeBase: "
+            + validationMessage(timeValidation);
+        publish(infrastructure::DiagnosticSeverity::Error, message);
+        m_processingState = BcoProcessingState::Failed;
+        return core::OperationResult::failure(message);
+    }
+
+    m_sampleSource->resetSession(command.timeBase.firstSampleIndex);
+    m_processingState = BcoProcessingState::Active;
+    publish(infrastructure::DiagnosticSeverity::Info,
+            "BCO simulator processing started for session "
+                + std::to_string(command.sessionId));
+    return core::OperationResult::ok();
+}
+
+core::OperationResult SimulatorBcoControl::stopProcessing()
+{
+    if (m_processingState == BcoProcessingState::Idle) {
+        return core::OperationResult::ok();
+    }
+
+    m_processingState = BcoProcessingState::Stopping;
+    m_processingState = BcoProcessingState::Idle;
+    publish(infrastructure::DiagnosticSeverity::Info,
+            "BCO simulator processing stopped");
+    return core::OperationResult::ok();
+}
+
 void SimulatorBcoControl::publish(infrastructure::DiagnosticSeverity severity,
                                   const std::string& message) const
 {

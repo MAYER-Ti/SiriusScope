@@ -58,6 +58,17 @@ QVariantList SpectrumEnvelopeController::envelopeSamples() const
     return buildSamples();
 }
 
+void SpectrumEnvelopeController::clear()
+{
+    m_publishTimer.stop();
+    m_samples.fill(0.0F);
+    m_pendingSamples.fill(0.0F);
+    m_pendingMinHz = m_viewMinHz;
+    m_pendingMaxHz = m_viewMaxHz;
+    m_publishPending = false;
+    publishEnvelope();
+}
+
 void SpectrumEnvelopeController::publishPendingEnvelope()
 {
     if (!m_publishPending) {

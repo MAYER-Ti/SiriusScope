@@ -146,7 +146,7 @@ Rectangle {
             Layout.preferredWidth: 176
             Layout.minimumWidth: 136
             Layout.fillHeight: true
-            enabled: WaterfallController.sessionActive
+            enabled: RecordingController.recordingActive
             text: qsTr("К текущим данным")
             normalColor: "#183B2A"
             accentBorderColor: Theme.statusGood
@@ -157,7 +157,7 @@ Rectangle {
             Layout.preferredWidth: 158
             Layout.minimumWidth: 118
             Layout.fillHeight: true
-            enabled: !WaterfallController.sessionActive
+            enabled: RecordingController.canStartRecording
             text: qsTr("Включить запись")
             normalColor: "#183B2A"
             accentBorderColor: Theme.statusGood
@@ -168,7 +168,7 @@ Rectangle {
             Layout.preferredWidth: 166
             Layout.minimumWidth: 122
             Layout.fillHeight: true
-            enabled: WaterfallController.sessionActive
+            enabled: RecordingController.canStopRecording
             text: qsTr("Выключить запись")
             normalColor: "#3B2418"
             accentBorderColor: Theme.statusWarn

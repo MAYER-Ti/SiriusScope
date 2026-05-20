@@ -58,6 +58,17 @@ public:
         }
         return nextResult;
     }
+
+    siriusscope::core::OperationResult startProcessing(
+        const siriusscope::hardware::BcoProcessingStartCommand&) override
+    {
+        return siriusscope::core::OperationResult::ok();
+    }
+
+    siriusscope::core::OperationResult stopProcessing() override
+    {
+        return siriusscope::core::OperationResult::ok();
+    }
 };
 
 class RecordingDiagnosticsSink final : public siriusscope::infrastructure::IDiagnosticsSink

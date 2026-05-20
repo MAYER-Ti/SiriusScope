@@ -31,6 +31,7 @@ public:
     void acceptSnapshot(double minHz, double maxHz, const QVector<float>& samples);
 
     Q_INVOKABLE QVariantList envelopeSamples() const;
+    Q_INVOKABLE void clear();
 
 signals:
     void envelopeChanged(double minHz, double maxHz, const QVariantList& samples);

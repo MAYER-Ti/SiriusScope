@@ -2,6 +2,7 @@
 
 #include "appstate.h"
 #include "diagnosticsservice.h"
+#include "recordingcontroller.h"
 #include "scancontroller.h"
 #include "waterfallcontroller.h"
 
@@ -52,16 +53,18 @@ bool isStorageSubsystem(const QString& subsystem)
 StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
                          AppState* appState,
                          WaterfallController* waterfallController,
+                         RecordingController* recordingController,
                          ScanController* scanController,
                          QObject* parent)
     : QObject(parent)
     , m_diagnosticsService(diagnosticsService)
     , m_appState(appState)
     , m_waterfallController(waterfallController)
+    , m_recordingController(recordingController)
     , m_scanController(scanController)
 {
     updateModeStatus();
-    if (!m_waterfallController) {
+    if (!m_recordingController) {
         setBcoStatus(QStringLiteral("источник не задан"), StatusLevel::Warning);
     } else if (m_waterfallController->sourceActive()) {
         updateBcoSourceStatus();
@@ -85,13 +88,13 @@ StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
                 });
     }
 
-    if (m_waterfallController) {
-        connect(m_waterfallController,
-                &WaterfallController::sourceActiveChanged,
+    if (m_recordingController) {
+        connect(m_recordingController,
+                &RecordingController::bcoProcessingStateChanged,
                 this,
                 &StatusModel::updateBcoSourceStatus);
-        connect(m_waterfallController,
-                &WaterfallController::recordingStateChanged,
+        connect(m_recordingController,
+                &RecordingController::recordingStateChanged,
                 this,
                 &StatusModel::updateRecordingStatus);
     }
@@ -136,30 +139,26 @@ void StatusModel::updateModeStatus()
 
 void StatusModel::updateBcoSourceStatus()
 {
-    if (!m_waterfallController) {
+    if (!m_recordingController) {
         setBcoStatus(QStringLiteral("источник не задан"), StatusLevel::Warning);
         return;
     }
 
-    if (m_waterfallController->sourceActive()) {
-        setBcoStatus(QStringLiteral("поток активен"), StatusLevel::Good);
-    } else {
-        setBcoStatus(QStringLiteral("остановлен"), StatusLevel::Neutral);
-    }
+    setBcoStatus(m_recordingController->bcoProcessingStateText(),
+                 m_recordingController->bcoProcessingActive() ? StatusLevel::Good
+                                                              : StatusLevel::Neutral);
 }
 
 void StatusModel::updateRecordingStatus()
 {
-    if (!m_waterfallController) {
+    if (!m_recordingController) {
         setRecordingStatus(QStringLiteral("недоступна"), StatusLevel::Warning);
         return;
     }
 
-    if (m_waterfallController->sessionActive()) {
-        setRecordingStatus(QStringLiteral("включена"), StatusLevel::Good);
-    } else {
-        setRecordingStatus(QStringLiteral("выключена"), StatusLevel::Neutral);
-    }
+    setRecordingStatus(m_recordingController->recordingStateText(),
+                       m_recordingController->recordingActive() ? StatusLevel::Good
+                                                                : StatusLevel::Neutral);
 }
 
 void StatusModel::updateAzimuthStatus()

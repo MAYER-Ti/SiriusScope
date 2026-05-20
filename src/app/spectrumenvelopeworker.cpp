@@ -71,6 +71,16 @@ void SpectrumEnvelopeWorker::ingestBatch(hardware::BcoSampleBatch batch)
     }
 }
 
+void SpectrumEnvelopeWorker::reset()
+{
+    m_decayTimer.stop();
+    m_snapshotTimer.stop();
+    m_decayClock.invalidate();
+    m_snapshotClock.invalidate();
+    m_processor.reset();
+    publishSnapshot();
+}
+
 void SpectrumEnvelopeWorker::timerEvent(QTimerEvent* event)
 {
     if (event->timerId() == m_decayTimer.timerId()) {

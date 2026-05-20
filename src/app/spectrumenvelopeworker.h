@@ -34,6 +34,7 @@ public:
 public slots:
     void setViewport(double minHz, double maxHz);
     void ingestBatch(hardware::BcoSampleBatch batch);
+    void reset();
 
 signals:
     void envelopeSnapshotReady(double minHz, double maxHz, QVector<float> samples);

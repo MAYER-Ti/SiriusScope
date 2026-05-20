@@ -241,6 +241,13 @@ std::vector<core::BandConfig> SimulatorBcoSampleSource::bandConfigs() const
     return m_bandConfigs;
 }
 
+void SimulatorBcoSampleSource::resetSession(std::uint64_t firstSampleIndex)
+{
+    std::lock_guard lock(m_mutex);
+    m_nextSampleIndex = firstSampleIndex;
+    m_signalStep = 0;
+}
+
 BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
 {
     std::vector<core::BandConfig> configs;

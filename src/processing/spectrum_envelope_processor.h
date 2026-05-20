@@ -23,6 +23,7 @@ public:
     explicit SpectrumEnvelopeProcessor(SpectrumEnvelopeProcessorConfig config = {});
 
     void setViewport(double minHz, double maxHz);
+    void reset();
     bool ingestSamples(const std::vector<core::SignalSample>& samples, std::int64_t nowMs);
     bool applyDecay(std::int64_t elapsedMs, std::int64_t nowMs);
 

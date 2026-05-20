@@ -1,11 +1,14 @@
 #include "app/appstate.h"
+#include "app/bandlistmodel.h"
 #include "app/diagnosticsservice.h"
 #include "app/frequencyviewportmodel.h"
+#include "app/recordingcontroller.h"
 #include "app/scancontroller.h"
 #include "app/statusmodel.h"
 #include "app/waterfallcontroller.h"
 #include "app/waterfallstorage.h"
 #include "core/domain_models.h"
+#include "hardware/interfaces/bco_control.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -162,7 +165,20 @@ void testInitialStatuses(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
+    hardware::StubBcoControl bcoControl;
+    app::BandListModel bandListModel;
+    app::RecordingController recordingController(&bcoControl,
+                                                 &bandListModel,
+                                                 nullptr,
+                                                 &controller,
+                                                 nullptr,
+                                                 nullptr,
+                                                 &diagnostics);
+    app::StatusModel model(&diagnostics,
+                           &AppState::instance(),
+                           &controller,
+                           &recordingController,
+                           &scanController);
 
     test.require(model.programValue() == QStringLiteral("работает"),
                  "initial program status is running");
@@ -208,10 +224,23 @@ void testModeAndSourceStatuses(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
+    hardware::StubBcoControl bcoControl;
+    app::BandListModel bandListModel;
+    app::RecordingController recordingController(&bcoControl,
+                                                 &bandListModel,
+                                                 nullptr,
+                                                 &controller,
+                                                 nullptr,
+                                                 nullptr,
+                                                 &diagnostics);
+    app::StatusModel model(&diagnostics,
+                           &AppState::instance(),
+                           &controller,
+                           &recordingController,
+                           &scanController);
 
     AppState::instance().setMode(AppState::Mode::Combat);
-    controller.start();
+    recordingController.startRecording();
 
     test.require(model.modeValue() == QStringLiteral("аппаратура"),
                  "mode status follows AppState");
@@ -249,7 +278,20 @@ void testDiagnosticRules(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
+    hardware::StubBcoControl bcoControl;
+    app::BandListModel bandListModel;
+    app::RecordingController recordingController(&bcoControl,
+                                                 &bandListModel,
+                                                 nullptr,
+                                                 &controller,
+                                                 nullptr,
+                                                 nullptr,
+                                                 &diagnostics);
+    app::StatusModel model(&diagnostics,
+                           &AppState::instance(),
+                           &controller,
+                           &recordingController,
+                           &scanController);
 
     publish(diagnostics,
             infrastructure::DiagnosticSeverity::Info,
@@ -324,9 +366,22 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
                                         &storage,
                                         &diagnostics,
                                         config);
-    app::StatusModel model(&diagnostics, &AppState::instance(), &controller, &scanController);
+    hardware::StubBcoControl bcoControl;
+    app::BandListModel bandListModel;
+    app::RecordingController recordingController(&bcoControl,
+                                                 &bandListModel,
+                                                 nullptr,
+                                                 &controller,
+                                                 nullptr,
+                                                 nullptr,
+                                                 &diagnostics);
+    app::StatusModel model(&diagnostics,
+                           &AppState::instance(),
+                           &controller,
+                           &recordingController,
+                           &scanController);
 
-    controller.startRecording();
+    recordingController.startRecording();
     test.require(model.recordingValue() == QStringLiteral("включена"),
                  "startRecording updates recording chip");
     test.require(model.recordingLevel() == app::StatusModel::StatusLevel::Good,

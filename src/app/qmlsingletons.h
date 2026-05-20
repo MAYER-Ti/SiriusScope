@@ -8,6 +8,7 @@
 #include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
 #include "frequencyviewportmodel.h"
+#include "recordingcontroller.h"
 #include "resulttablemodel.h"
 #include "scancontroller.h"
 #include "spectrumcontrollerstub.h"
@@ -141,6 +142,24 @@ public:
     inline static WaterfallController *instance = nullptr;
 
     static WaterfallController *create(QQmlEngine *, QJSEngine *engine)
+    {
+        Q_ASSERT(instance);
+        engine->setObjectOwnership(instance, QJSEngine::CppOwnership);
+        return instance;
+    }
+};
+
+struct RecordingControllerQmlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(RecordingController)
+    QML_NAMED_ELEMENT(RecordingController)
+    QML_SINGLETON
+
+public:
+    inline static RecordingController *instance = nullptr;
+
+    static RecordingController *create(QQmlEngine *, QJSEngine *engine)
     {
         Q_ASSERT(instance);
         engine->setObjectOwnership(instance, QJSEngine::CppOwnership);

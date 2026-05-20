@@ -219,6 +219,7 @@ void testInactiveSessionIgnoresRenderableRows(TestRunner& test)
                                                      &diagnostics,
                                                      config);
     controller.start();
+    controller.startLiveSource();
 
     auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
     const std::uint64_t initialWriteIndex = buffer ? buffer->writeIndex() : 0;
@@ -253,6 +254,7 @@ void testInputBatchUpdatesModel(TestRunner& test)
                                                      &diagnostics,
                                                      config);
     controller.start();
+    controller.startLiveSource();
     controller.startRecording();
 
     source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
@@ -303,6 +305,8 @@ void testProcessingPublishesBearingFrames(TestRunner& test)
                                                      config,
                                                      &bearingFrameBus);
     controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
 
     source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
                                                makeSample(bands, 1, 0, 1, 40)}});
@@ -351,6 +355,8 @@ void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
                                                      nullptr,
                                                      &envelopeWorker);
     controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
 
     source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
                                                makeSample(bands, 1, 0, 1, 40)}});
@@ -391,6 +397,8 @@ void testFlushProcessingDrainsQueuedBatches(TestRunner& test)
                                                      config,
                                                      &bearingFrameBus);
     controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
 
     source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 10, 0, 0, 90),
                                                makeSample(bands, 10, 0, 1, 40)}});
@@ -433,6 +441,8 @@ void testFlushProcessingAsyncDrainsQueuedBatches(TestRunner& test)
                                                      config,
                                                      &bearingFrameBus);
     controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
 
     source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 10, 0, 0, 90),
                                                makeSample(bands, 10, 0, 1, 40)}});
@@ -509,6 +519,7 @@ void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
                                                      config);
     controller.start();
     controller.startRecording();
+    controller.startLiveSource();
 
     auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
     const bool rowsReady =
@@ -565,6 +576,8 @@ void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
                                                      &diagnostics,
                                                      config);
     controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
 
     source.emitBatch(hardware::BcoSampleBatch{});
 
@@ -594,6 +607,7 @@ void testStopRecordingFreezesWaterfallFlow(TestRunner& test)
                                                      &diagnostics,
                                                      config);
     controller.start();
+    controller.startLiveSource();
     controller.startRecording();
 
     auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());

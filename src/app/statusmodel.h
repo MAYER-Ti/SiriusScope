@@ -8,6 +8,7 @@ class AppState;
 namespace siriusscope::app {
 
 class DiagnosticsService;
+class RecordingController;
 class ScanController;
 class WaterfallController;
 
@@ -43,6 +44,7 @@ public:
     explicit StatusModel(DiagnosticsService* diagnosticsService,
                          AppState* appState,
                          WaterfallController* waterfallController,
+                         RecordingController* recordingController,
                          ScanController* scanController,
                          QObject* parent = nullptr);
 
@@ -103,6 +105,7 @@ private:
     DiagnosticsService* m_diagnosticsService = nullptr;
     AppState* m_appState = nullptr;
     WaterfallController* m_waterfallController = nullptr;
+    RecordingController* m_recordingController = nullptr;
     ScanController* m_scanController = nullptr;
 
     QString m_programValue = QStringLiteral("работает");

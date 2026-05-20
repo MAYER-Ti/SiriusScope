@@ -14,6 +14,7 @@ find_package(Qt6 REQUIRED COMPONENTS
     QuickControls2
     ShaderTools
 )
+find_package(Threads REQUIRED)
 qt_standard_project_setup(REQUIRES 6.8)
 
 set(SIRIUSSCOPE_APPLICATION_SOURCES
@@ -44,6 +45,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/interfaces/scan_recording_control.h
     src/app/nullresulttablesink.h
     src/app/nullresulttablesink.cpp
+    src/app/recordingcontroller.h
+    src/app/recordingcontroller.cpp
     src/app/resulttablecontroller.h
     src/app/resulttablecontroller.cpp
     src/app/resulttablemodel.h
@@ -234,6 +237,7 @@ target_include_directories(siriusscope_infrastructure
 
 target_link_libraries(siriusscope_infrastructure
     PUBLIC
+        Threads::Threads
         Qt6::Core
         siriusscope_infrastructure_iface
 )
@@ -253,6 +257,7 @@ target_include_directories(siriusscope_hardware
 
 target_link_libraries(siriusscope_hardware
     PUBLIC
+        Threads::Threads
         siriusscope_hardware_iface
         siriusscope_infrastructure_iface
 )
@@ -263,6 +268,7 @@ add_library(siriusscope_application STATIC
 
 target_link_libraries(siriusscope_application
     PUBLIC
+        Threads::Threads
         Qt6::Core
         Qt6::Gui
         Qt6::Quick

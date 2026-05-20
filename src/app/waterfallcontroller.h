@@ -97,6 +97,12 @@ public:
 
     void start();
     void stop();
+    void startWorkers();
+    void stopWorkers();
+    core::OperationResult startLiveSource();
+    core::OperationResult stopLiveSource();
+    void setAcceptingLiveSamples(bool accepting);
+    void clearQueuedBatches();
     void setBandConfigs(std::vector<core::BandConfig> bandConfigs);
     core::OperationResult flushProcessing(std::chrono::milliseconds timeout) override;
     void flushProcessingAsync(std::chrono::milliseconds timeout,
@@ -198,6 +204,7 @@ private:
     bool m_historyLoading = false;
     bool m_sourceStarted = false;
     bool m_sessionActive = false;
+    bool m_acceptingLiveSamples = false;
 
     mutable std::mutex m_workerMutex;
     std::condition_variable m_workerCondition;

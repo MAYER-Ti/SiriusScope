@@ -527,6 +527,9 @@ if(WIN32)
         set_tests_properties(tst_binary_result_table_storage PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
+        set_tests_properties(tst_architecture_baseline PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
         set_tests_properties(tst_waterfall_row_resampler PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )

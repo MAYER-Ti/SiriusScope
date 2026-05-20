@@ -43,8 +43,8 @@ ApplicationWindow {
                 canScanSector: ScanController.hasSelectedSector && !ScanController.scanActive
 
                 onLiveRequested: WaterfallController.jumpToLive()
-                onRecordingStartRequested: WaterfallController.startRecording()
-                onRecordingStopRequested: WaterfallController.stopRecording()
+                onRecordingStartRequested: RecordingController.startRecording()
+                onRecordingStopRequested: RecordingController.stopRecording()
                 onScanSectorRequested: ScanController.startSelectedSectorScan()
             }
 
