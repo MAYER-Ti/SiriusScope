@@ -17,7 +17,13 @@ Item {
     readonly property real globalMinHz: FrequencyViewportModel.globalMinHz
     readonly property real globalMaxHz: FrequencyViewportModel.globalMaxHz
     readonly property bool bandEditingLocked: BandConfigController.editingLocked
+    readonly property color envelopeStrokeColor: "#72B8DA"
     property real minSpanHz: 1050e6
+    property real envelopeLineWidth: 2.2
+    property real envelopeCurveTension: 0.65
+    property bool envelopeVisualSmoothingEnabled: true
+    property real envelopeVisualSmoothingStrength: 0.25
+    property int envelopeMaxRenderPoints: 768
     readonly property real maxSpanHz: globalMaxHz - globalMinHz
     property var rawSamples: []
     property var pendingEnvelopeSamples: []
@@ -37,7 +43,7 @@ Item {
         if (rawSamples.length === 0) {
             decimatedMinMax = []
         } else {
-            var targetWidth = Math.min(512, Math.floor(signalCanvas.width))
+            var targetWidth = Math.min(root.envelopeMaxRenderPoints, Math.floor(signalCanvas.width))
             decimatedMinMax = SpectrumDecimator.decimateMinMax(rawSamples, targetWidth)
         }
         signalCanvas.requestPaint()
@@ -49,6 +55,79 @@ Item {
 
     function clampAmplitude(value) {
         return Math.max(amplitudeMin, Math.min(amplitudeMax, value))
+    }
+
+    function smoothEnvelopeAmplitude(previousValue, currentValue, nextValue) {
+        if (!envelopeVisualSmoothingEnabled) {
+            return currentValue
+        }
+
+        var neighborhoodAverage = previousValue * 0.25 + currentValue * 0.50 + nextValue * 0.25
+        var strength = Math.max(0.0, Math.min(1.0, envelopeVisualSmoothingStrength))
+        return currentValue * (1.0 - strength) + neighborhoodAverage * strength
+    }
+
+    function buildEnvelopePoints(pixelWidth, pixelHeight) {
+        if (decimatedMinMax.length < 2) {
+            return []
+        }
+
+        var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
+        var pointCount = Math.floor(decimatedMinMax.length / 2)
+        var amplitudes = []
+
+        for (var point = 0; point < pointCount; point++) {
+            var idx = point * 2
+            if (idx + 1 >= decimatedMinMax.length) {
+                break
+            }
+            amplitudes.push(clampAmplitude(decimatedMinMax[idx + 1]))
+        }
+
+        var points = []
+        for (var amplitudeIndex = 0; amplitudeIndex < amplitudes.length; amplitudeIndex++) {
+            var currentValue = amplitudes[amplitudeIndex]
+            var previousValue = amplitudeIndex > 0 ? amplitudes[amplitudeIndex - 1] : currentValue
+            var nextValue = amplitudeIndex + 1 < amplitudes.length ? amplitudes[amplitudeIndex + 1] : currentValue
+            var displayValue = clampAmplitude(smoothEnvelopeAmplitude(previousValue, currentValue, nextValue))
+            var x = amplitudes.length <= 1 ? pixelWidth * 0.5 : (amplitudeIndex / (amplitudes.length - 1)) * pixelWidth
+            var y = pixelHeight - (displayValue - amplitudeMin) / amplitudeSpan * pixelHeight
+            points.push({ "x": x + 0.5, "y": y })
+        }
+        return points
+    }
+
+    function traceEnvelopeBezierPath(ctx, points) {
+        if (points.length < 2) {
+            return false
+        }
+
+        ctx.beginPath()
+        ctx.moveTo(points[0].x, points[0].y)
+
+        if (points.length === 2) {
+            ctx.lineTo(points[1].x, points[1].y)
+            return true
+        }
+
+        var tension = Math.max(0.0, envelopeCurveTension)
+        for (var index = 0; index < points.length - 1; index++) {
+            var p0 = index > 0 ? points[index - 1] : points[index]
+            var p1 = points[index]
+            var p2 = points[index + 1]
+            var p3 = index + 2 < points.length ? points[index + 2] : p2
+            var c1x = p1.x + (p2.x - p0.x) * tension / 6.0
+            var c1y = p1.y + (p2.y - p0.y) * tension / 6.0
+            var c2x = p2.x - (p3.x - p1.x) * tension / 6.0
+            var c2y = p2.y - (p3.y - p1.y) * tension / 6.0
+            var minY = Math.min(p1.y, p2.y)
+            var maxY = Math.max(p1.y, p2.y)
+
+            c1y = Math.max(minY, Math.min(maxY, c1y))
+            c2y = Math.max(minY, Math.min(maxY, c2y))
+            ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2.x, p2.y)
+        }
+        return true
     }
 
     function bandIndexForId(bandId) {
@@ -557,45 +636,16 @@ Item {
                         var ctx = getContext("2d")
                         ctx.clearRect(0, 0, width, height)
 
-                        if (decimatedMinMax.length < 2) {
+                        var points = buildEnvelopePoints(width, height)
+                        if (points.length < 2) {
                             return
                         }
 
-                        var amplitudeSpan = Math.max(1.0, amplitudeMax - amplitudeMin)
-                        var pointCount = Math.floor(decimatedMinMax.length / 2)
-
-                        function traceEnvelopePath() {
-                            ctx.beginPath()
-
-                            var started = false
-                            for (var point = 0; point < pointCount; point++) {
-                                var idx = point * 2
-                                if (idx + 1 >= decimatedMinMax.length) {
-                                    break
-                                }
-
-                                var maxVal = clampAmplitude(decimatedMinMax[idx + 1])
-                                if (maxVal <= amplitudeMin) {
-                                    continue
-                                }
-                                var x = pointCount <= 1 ? width * 0.5 : (point / (pointCount - 1)) * width
-                                var y = height - (maxVal - amplitudeMin) / amplitudeSpan * height
-
-                                if (!started) {
-                                    ctx.moveTo(x + 0.5, y)
-                                    started = true
-                                } else {
-                                    ctx.lineTo(x + 0.5, y)
-                                }
-                            }
-                            return started
-                        }
-
-                        ctx.strokeStyle = String(Theme.textPrimary)
-                        ctx.lineWidth = 2.0
+                        ctx.strokeStyle = String(root.envelopeStrokeColor)
+                        ctx.lineWidth = root.envelopeLineWidth
                         ctx.lineJoin = "round"
                         ctx.lineCap = "round"
-                        if (traceEnvelopePath()) {
+                        if (traceEnvelopeBezierPath(ctx, points)) {
                             ctx.stroke()
                         }
                     }
