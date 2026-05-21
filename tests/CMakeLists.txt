@@ -42,6 +42,17 @@ target_link_libraries(tst_bearing_service
 
 add_test(NAME tst_bearing_service COMMAND tst_bearing_service)
 
+add_executable(tst_signal_parameter_estimator
+    processing/tst_signal_parameter_estimator.cpp
+)
+
+target_link_libraries(tst_signal_parameter_estimator
+    PRIVATE
+        siriusscope_processing
+)
+
+add_test(NAME tst_signal_parameter_estimator COMMAND tst_signal_parameter_estimator)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )
