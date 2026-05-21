@@ -1,0 +1,46 @@
+#pragma once
+
+#include "hardware/interfaces/bco_stream_source.h"
+
+#include <chrono>
+#include <cstddef>
+
+namespace siriusscope::hardware {
+
+enum class DataSourceMode
+{
+    Simulator,
+    RealHardware,
+};
+
+enum class SimulatorLoadProfile
+{
+    UiDemo,
+    MediumLoad,
+    RealBcoEquivalent,
+    Stress150Percent,
+};
+
+struct SimulatorBcoLoadConfig
+{
+    SimulatorLoadProfile profile = SimulatorLoadProfile::UiDemo;
+
+    std::size_t samplesPerSecond = 1'280;
+    std::chrono::milliseconds batchPeriod{100};
+
+    bool deterministic = true;
+    bool burstModeEnabled = false;
+    double burstMultiplier = 1.0;
+    std::chrono::milliseconds burstDuration{0};
+    std::chrono::milliseconds calmDuration{0};
+};
+
+struct HardwareProfile
+{
+    DataSourceMode dataSourceMode = DataSourceMode::Simulator;
+
+    BcoStreamConfig bcoStreamConfig;
+    SimulatorBcoLoadConfig simulatorLoadConfig;
+};
+
+} // namespace siriusscope::hardware

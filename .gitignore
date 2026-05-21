@@ -84,3 +84,6 @@ CMakeUserPresets.json
 .rcc/
 .uic/
 /build*/
+
+# Todo
+Todo.md

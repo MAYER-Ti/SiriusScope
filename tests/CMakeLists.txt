@@ -53,6 +53,28 @@ target_link_libraries(tst_simulator_bco_sample_source
 
 add_test(NAME tst_simulator_bco_sample_source COMMAND tst_simulator_bco_sample_source)
 
+add_executable(tst_legacy_bco_sample_source_adapter
+    hardware/tst_legacy_bco_sample_source_adapter.cpp
+)
+
+target_link_libraries(tst_legacy_bco_sample_source_adapter
+    PRIVATE
+        siriusscope_hardware
+)
+
+add_test(NAME tst_legacy_bco_sample_source_adapter COMMAND tst_legacy_bco_sample_source_adapter)
+
+add_executable(tst_data_source_factory
+    hardware/tst_data_source_factory.cpp
+)
+
+target_link_libraries(tst_data_source_factory
+    PRIVATE
+        siriusscope_hardware
+)
+
+add_test(NAME tst_data_source_factory COMMAND tst_data_source_factory)
+
 add_executable(tst_simulator_bco_control
     hardware/tst_simulator_bco_control.cpp
 )

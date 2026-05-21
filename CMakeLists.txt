@@ -111,10 +111,27 @@ set(SIRIUSSCOPE_PROCESSING_SOURCES
 )
 
 set(SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES
+    src/hardware/hardware_profile.h
     src/hardware/interfaces/antenna_azimuth_source.h
     src/hardware/interfaces/antenna_control.h
     src/hardware/interfaces/bco_control.h
     src/hardware/interfaces/bco_sample_source.h
+    src/hardware/interfaces/bco_stream_source.h
+)
+
+set(SIRIUSSCOPE_HARDWARE_ADAPTER_SOURCES
+    src/hardware/adapters/legacy_bco_sample_source_adapter.h
+    src/hardware/adapters/legacy_bco_sample_source_adapter.cpp
+)
+
+set(SIRIUSSCOPE_HARDWARE_FACTORY_SOURCES
+    src/hardware/data_source_factory.h
+    src/hardware/data_source_factory.cpp
+)
+
+set(SIRIUSSCOPE_HARDWARE_STUB_SOURCES
+    src/hardware/stubs/real_bco_stream_source_stub.h
+    src/hardware/stubs/real_bco_stream_source_stub.cpp
 )
 
 set(SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES
@@ -243,6 +260,9 @@ target_link_libraries(siriusscope_infrastructure
 )
 
 add_library(siriusscope_hardware STATIC
+    ${SIRIUSSCOPE_HARDWARE_ADAPTER_SOURCES}
+    ${SIRIUSSCOPE_HARDWARE_FACTORY_SOURCES}
+    ${SIRIUSSCOPE_HARDWARE_STUB_SOURCES}
     ${SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES}
 )
 
