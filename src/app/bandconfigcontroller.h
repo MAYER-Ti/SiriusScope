@@ -37,10 +37,15 @@ public:
     Q_INVOKABLE bool previewBandSettings(int bandId, double centerHz, double widthHz);
     Q_INVOKABLE void cancelBandSettingsPreview(int bandId);
     Q_INVOKABLE bool setBandThresholdPreview(int bandId, double thresholdAmplitude);
+    Q_INVOKABLE bool applyGeneratorPulseSettings(int bandId,
+                                                 double pulsePeriodUs,
+                                                 double pulseWidthUs);
 
 signals:
     void bandSettingsApplied(int bandId);
     void bandSettingsRejected(int bandId, QString reason);
+    void generatorPulseSettingsApplied(int bandId);
+    void generatorPulseSettingsRejected(int bandId, QString reason);
     void bandPreviewChanged(int bandId);
     void bandPreviewCanceled(int bandId);
     void editingLockedChanged();
@@ -69,6 +74,7 @@ private:
                                                         double widthHz,
                                                         QString* reason) const;
     bool rejectApply(int bandId, const QString& reason);
+    bool rejectGeneratorPulseSettings(int bandId, const QString& reason);
     void publish(infrastructure::DiagnosticSeverity severity, const QString& message) const;
     QString validationMessage(const core::ValidationResult& validation) const;
     QString normalizedPolarization(const QString& polarization) const;

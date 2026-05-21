@@ -4,9 +4,12 @@
 #include "infrastructure/interfaces/diagnostics_sink.h"
 
 #include <QCoreApplication>
+#include <QVariantMap>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -387,6 +390,127 @@ void testEditingLockRestoresActivePreview(TestRunner& test)
                  "locking restores previewed threshold to committed state");
 }
 
+void testApplyValidGeneratorPulseSettings(TestRunner& test)
+{
+    BandListModel model;
+    RecordingBcoControl bco;
+    RecordingDiagnosticsSink diagnostics;
+    BandConfigController controller(&model, &bco, &diagnostics);
+
+    int applied = 0;
+    QObject::connect(&controller,
+                     &BandConfigController::generatorPulseSettingsApplied,
+                     [&applied](int bandId) {
+                         if (bandId == 1) {
+                             ++applied;
+                         }
+                     });
+
+    const bool ok = controller.applyGeneratorPulseSettings(1, 200000.0, 25000.0);
+    const QVariantMap band = model.getByBandId(1);
+
+    test.require(ok, "valid generator pulse settings are accepted");
+    test.require(applied == 1, "generator pulse applied signal is emitted");
+    test.require(bco.applySingleCount == 0, "generator pulse settings are not sent to BCO");
+    test.require(band.value(QStringLiteral("generatorPulsePeriodUs")).toDouble() == 200000.0,
+                 "model stores generator pulse period");
+    test.require(band.value(QStringLiteral("generatorPulseWidthUs")).toDouble() == 25000.0,
+                 "model stores generator pulse width");
+    test.require(band.value(QStringLiteral("valid")).toBool(),
+                 "accepted generator pulse settings clear invalid state");
+    test.require(!diagnostics.events.empty(), "generator pulse diagnostics are published");
+}
+
+void testRejectsInvalidGeneratorPulseSettings(TestRunner& test)
+{
+    struct Case
+    {
+        double periodUs = 0.0;
+        double widthUs = 0.0;
+        const char* message = "";
+    };
+
+    const Case cases[] = {
+        {1000.0, 1000.0, "pulse width equal to period is rejected"},
+        {1000.0, 1001.0, "pulse width greater than period is rejected"},
+        {0.0, 100.0, "zero period is rejected"},
+        {1000.0, 0.0, "zero width is rejected"},
+        {-1000.0, 100.0, "negative period is rejected"},
+        {1000.0, -100.0, "negative width is rejected"},
+        {std::numeric_limits<double>::quiet_NaN(), 100.0, "NaN period is rejected"},
+        {1000.0, std::numeric_limits<double>::quiet_NaN(), "NaN width is rejected"},
+        {std::numeric_limits<double>::infinity(), 100.0, "infinite period is rejected"},
+        {1000.0, std::numeric_limits<double>::infinity(), "infinite width is rejected"},
+    };
+
+    for (const auto& testCase : cases) {
+        BandListModel model;
+        RecordingBcoControl bco;
+        RecordingDiagnosticsSink diagnostics;
+        BandConfigController controller(&model, &bco, &diagnostics);
+
+        const double originalPeriod =
+            model.getByBandId(0).value(QStringLiteral("generatorPulsePeriodUs")).toDouble();
+        const double originalWidth =
+            model.getByBandId(0).value(QStringLiteral("generatorPulseWidthUs")).toDouble();
+        int rejected = 0;
+        QObject::connect(&controller,
+                         &BandConfigController::generatorPulseSettingsRejected,
+                         [&rejected](int, const QString&) { ++rejected; });
+
+        const bool ok = controller.applyGeneratorPulseSettings(0,
+                                                               testCase.periodUs,
+                                                               testCase.widthUs);
+        const QVariantMap band = model.getByBandId(0);
+
+        test.require(!ok, testCase.message);
+        test.require(rejected == 1, "invalid generator pulse emits rejection");
+        test.require(bco.applySingleCount == 0, "invalid generator pulse is not sent to BCO");
+        test.require(band.value(QStringLiteral("generatorPulsePeriodUs")).toDouble()
+                         == originalPeriod,
+                     "invalid generator pulse keeps previous period");
+        test.require(band.value(QStringLiteral("generatorPulseWidthUs")).toDouble()
+                         == originalWidth,
+                     "invalid generator pulse keeps previous width");
+        test.require(!band.value(QStringLiteral("valid")).toBool(),
+                     "invalid generator pulse exposes diagnostics state");
+    }
+}
+
+void testEditingLockRejectsGeneratorPulseSettings(TestRunner& test)
+{
+    BandListModel model;
+    RecordingBcoControl bco;
+    RecordingDiagnosticsSink diagnostics;
+    BandConfigController controller(&model, &bco, &diagnostics);
+
+    const double originalPeriod =
+        model.getByBandId(2).value(QStringLiteral("generatorPulsePeriodUs")).toDouble();
+    const double originalWidth =
+        model.getByBandId(2).value(QStringLiteral("generatorPulseWidthUs")).toDouble();
+
+    int rejected = 0;
+    QObject::connect(&controller,
+                     &BandConfigController::generatorPulseSettingsRejected,
+                     [&rejected](int bandId, const QString&) {
+                         if (bandId == 2) {
+                             ++rejected;
+                         }
+                     });
+
+    controller.setEditingLocked(true);
+    const bool ok = controller.applyGeneratorPulseSettings(2, 200000.0, 25000.0);
+    const QVariantMap band = model.getByBandId(2);
+
+    test.require(!ok, "locked controller rejects generator pulse settings");
+    test.require(rejected == 1, "locked generator pulse emits rejection");
+    test.require(bco.applySingleCount == 0, "locked generator pulse is not sent to BCO");
+    test.require(band.value(QStringLiteral("generatorPulsePeriodUs")).toDouble() == originalPeriod,
+                 "locked controller keeps generator pulse period");
+    test.require(band.value(QStringLiteral("generatorPulseWidthUs")).toDouble() == originalWidth,
+                 "locked controller keeps generator pulse width");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -402,6 +526,9 @@ int main(int argc, char *argv[])
     testThresholdRange(test);
     testEditingLockRejectsChanges(test);
     testEditingLockRestoresActivePreview(test);
+    testApplyValidGeneratorPulseSettings(test);
+    testRejectsInvalidGeneratorPulseSettings(test);
+    testEditingLockRejectsGeneratorPulseSettings(test);
 
     return test.result();
 }

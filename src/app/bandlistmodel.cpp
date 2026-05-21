@@ -88,6 +88,10 @@ QVariant BandListModel::data(const QModelIndex& index, int role) const
         return band.textColor;
     case SettingsWindowOpenRole:
         return band.settingsWindowOpen;
+    case GeneratorPulsePeriodUsRole:
+        return band.generatorPulsePeriodUs;
+    case GeneratorPulseWidthUsRole:
+        return band.generatorPulseWidthUs;
     case ValidRole:
         return band.valid;
     case DiagnosticsRole:
@@ -114,6 +118,8 @@ QHash<int, QByteArray> BandListModel::roleNames() const
         {BorderColorRole, QByteArrayLiteral("borderColor")},
         {TextColorRole, QByteArrayLiteral("textColor")},
         {SettingsWindowOpenRole, QByteArrayLiteral("settingsWindowOpen")},
+        {GeneratorPulsePeriodUsRole, QByteArrayLiteral("generatorPulsePeriodUs")},
+        {GeneratorPulseWidthUsRole, QByteArrayLiteral("generatorPulseWidthUs")},
         {ValidRole, QByteArrayLiteral("valid")},
         {DiagnosticsRole, QByteArrayLiteral("diagnostics")},
     };
@@ -256,6 +262,33 @@ bool BandListModel::setThresholdAmplitude(int bandId,
     return true;
 }
 
+bool BandListModel::updateGeneratorPulseSettings(int bandId,
+                                                 double pulsePeriodUs,
+                                                 double pulseWidthUs,
+                                                 bool valid,
+                                                 const QString& diagnostics)
+{
+    const int row = indexForBandId(bandId);
+    if (row < 0) {
+        return false;
+    }
+
+    auto& band = m_bands.at(static_cast<std::size_t>(row));
+    band.generatorPulsePeriodUs = pulsePeriodUs;
+    band.generatorPulseWidthUs = pulseWidthUs;
+    band.valid = valid;
+    band.diagnostics = diagnostics;
+
+    const auto modelIndex = index(row);
+    emit dataChanged(modelIndex,
+                     modelIndex,
+                     {GeneratorPulsePeriodUsRole,
+                      GeneratorPulseWidthUsRole,
+                      ValidRole,
+                      DiagnosticsRole});
+    return true;
+}
+
 bool BandListModel::setBandDiagnostics(int bandId, bool valid, const QString& diagnostics)
 {
     const int row = indexForBandId(bandId);
@@ -290,6 +323,8 @@ QVariantMap BandListModel::toMap(const BandPresentationState& band) const
         {QStringLiteral("borderColor"), band.borderColor},
         {QStringLiteral("textColor"), band.textColor},
         {QStringLiteral("settingsWindowOpen"), band.settingsWindowOpen},
+        {QStringLiteral("generatorPulsePeriodUs"), band.generatorPulsePeriodUs},
+        {QStringLiteral("generatorPulseWidthUs"), band.generatorPulseWidthUs},
         {QStringLiteral("valid"), band.valid},
         {QStringLiteral("diagnostics"), band.diagnostics},
     };

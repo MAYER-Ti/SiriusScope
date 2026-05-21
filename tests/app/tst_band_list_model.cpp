@@ -70,6 +70,8 @@ void testGetReturnsExpectedRoles(TestRunner& test)
         QStringLiteral("borderColor"),
         QStringLiteral("textColor"),
         QStringLiteral("settingsWindowOpen"),
+        QStringLiteral("generatorPulsePeriodUs"),
+        QStringLiteral("generatorPulseWidthUs"),
         QStringLiteral("valid"),
         QStringLiteral("diagnostics"),
     };
@@ -85,6 +87,10 @@ void testGetReturnsExpectedRoles(TestRunner& test)
                  "widthHz role has default value");
     test.require(band.value(QStringLiteral("polarization")).toString() == QStringLiteral("horizontal"),
                  "polarization defaults to horizontal");
+    test.require(band.value(QStringLiteral("generatorPulsePeriodUs")).toDouble() == 100000.0,
+                 "generator pulse period has default value");
+    test.require(band.value(QStringLiteral("generatorPulseWidthUs")).toDouble() == 10000.0,
+                 "generator pulse width has default value");
 }
 
 void testLookupByBandId(TestRunner& test)
@@ -112,6 +118,31 @@ void testSettingsWindowState(TestRunner& test)
                  "settings window state closes");
 }
 
+void testGeneratorPulseSettings(TestRunner& test)
+{
+    BandListModel model;
+
+    const bool ok = model.updateGeneratorPulseSettings(2, 250000.0, 12500.0);
+    const QVariantMap band = model.getByBandId(2);
+
+    test.require(ok, "generator pulse settings update succeeds");
+    test.require(band.value(QStringLiteral("generatorPulsePeriodUs")).toDouble() == 250000.0,
+                 "generator pulse period is updated");
+    test.require(band.value(QStringLiteral("generatorPulseWidthUs")).toDouble() == 12500.0,
+                 "generator pulse width is updated");
+    test.require(band.value(QStringLiteral("valid")).toBool(),
+                 "generator pulse update keeps valid state");
+}
+
+void testGeneratorPulseSettingsRejectUnknownBand(TestRunner& test)
+{
+    BandListModel model;
+
+    const bool ok = model.updateGeneratorPulseSettings(9, 250000.0, 12500.0);
+
+    test.require(!ok, "generator pulse settings reject unknown band");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -123,6 +154,8 @@ int main(int argc, char *argv[])
     testGetReturnsExpectedRoles(test);
     testLookupByBandId(test);
     testSettingsWindowState(test);
+    testGeneratorPulseSettings(test);
+    testGeneratorPulseSettingsRejectUnknownBand(test);
 
     return test.result();
 }

@@ -197,6 +197,52 @@ bool BandConfigController::setBandThresholdPreview(int bandId, double thresholdA
     return true;
 }
 
+bool BandConfigController::applyGeneratorPulseSettings(int bandId,
+                                                       double pulsePeriodUs,
+                                                       double pulseWidthUs)
+{
+    if (m_editingLocked) {
+        return rejectGeneratorPulseSettings(bandId,
+                                            QStringLiteral("Р—Р°РїРёСЃСЊ РІРєР»СЋС‡РµРЅР°"));
+    }
+    if (!m_bandListModel) {
+        return rejectGeneratorPulseSettings(bandId,
+                                            QStringLiteral("Band model is not available"));
+    }
+    if (!std::isfinite(pulsePeriodUs) || !std::isfinite(pulseWidthUs)) {
+        return rejectGeneratorPulseSettings(
+            bandId,
+            QStringLiteral("generator pulse settings must be finite"));
+    }
+    if (pulsePeriodUs <= 0.0 || pulseWidthUs <= 0.0) {
+        return rejectGeneratorPulseSettings(
+            bandId,
+            QStringLiteral("generator pulse settings must be greater than 0"));
+    }
+    if (pulseWidthUs >= pulsePeriodUs) {
+        return rejectGeneratorPulseSettings(
+            bandId,
+            QStringLiteral("generator pulse width must be less than pulse period"));
+    }
+
+    if (!m_bandListModel->updateGeneratorPulseSettings(bandId,
+                                                       pulsePeriodUs,
+                                                       pulseWidthUs,
+                                                       true,
+                                                       QString())) {
+        return rejectGeneratorPulseSettings(bandId, QStringLiteral("Band is not available"));
+    }
+
+    const QString message =
+        QStringLiteral("Band %1 generator pulse settings applied: period=%2 us, width=%3 us")
+            .arg(bandId + 1)
+            .arg(pulsePeriodUs, 0, 'f', 3)
+            .arg(pulseWidthUs, 0, 'f', 3);
+    publish(infrastructure::DiagnosticSeverity::Info, message);
+    emit generatorPulseSettingsApplied(bandId);
+    return true;
+}
+
 bool BandConfigController::initializeCommittedState()
 {
     if (!m_bandListModel) {
@@ -305,6 +351,20 @@ bool BandConfigController::rejectApply(int bandId, const QString& reason)
         QStringLiteral("Band %1 settings rejected: %2").arg(bandId + 1).arg(reason);
     publish(infrastructure::DiagnosticSeverity::Warning, message);
     emit bandSettingsRejected(bandId, reason);
+    return false;
+}
+
+bool BandConfigController::rejectGeneratorPulseSettings(int bandId, const QString& reason)
+{
+    if (m_bandListModel) {
+        m_bandListModel->setBandDiagnostics(bandId, false, reason);
+    }
+
+    const QString message = QStringLiteral("Band %1 generator pulse settings rejected: %2")
+                                .arg(bandId + 1)
+                                .arg(reason);
+    publish(infrastructure::DiagnosticSeverity::Warning, message);
+    emit generatorPulseSettingsRejected(bandId, reason);
     return false;
 }
 

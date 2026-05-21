@@ -144,6 +144,8 @@ Item {
         var existingWindow = bandSettingsWindows[key]
         if (existingWindow) {
             existingWindow.readOnly = root.bandEditingLocked
+            existingWindow.updateGeneratorPulseSettingsDraft(band.generatorPulsePeriodUs,
+                                                             band.generatorPulseWidthUs)
             existingWindow.raise()
             existingWindow.requestActivate()
             return
@@ -157,6 +159,8 @@ Item {
             inputAttenuatorDb: band.inputAttenuatorDb,
             outputAttenuatorDb: band.outputAttenuatorDb,
             polarization: band.polarization,
+            generatorPulsePeriodUs: band.generatorPulsePeriodUs,
+            generatorPulseWidthUs: band.generatorPulseWidthUs,
             globalMinHz: root.globalMinHz,
             globalMaxHz: root.globalMaxHz,
             minAmplitude: 1,
@@ -189,6 +193,20 @@ Item {
             }
             window.markSettingsSaved()
             plot.requestPaint()
+        })
+
+        window.generatorPulseSettingsSaveRequested.connect(function(bandId, pulsePeriodUs, pulseWidthUs) {
+            if (root.bandEditingLocked) {
+                window.showControllerError(qsTr("Запись включена. Настройки доступны только для просмотра."))
+                return
+            }
+
+            var accepted = BandConfigController.applyGeneratorPulseSettings(bandId,
+                                                                            pulsePeriodUs,
+                                                                            pulseWidthUs)
+            if (!accepted) {
+                window.showControllerError(qsTr("Параметры генератора отклонены."))
+            }
         })
 
         window.thresholdPreviewChanged.connect(function(bandId, thresholdAmplitude) {

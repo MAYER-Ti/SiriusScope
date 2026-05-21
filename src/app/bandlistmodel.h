@@ -32,6 +32,8 @@ public:
         BorderColorRole,
         TextColorRole,
         SettingsWindowOpenRole,
+        GeneratorPulsePeriodUsRole,
+        GeneratorPulseWidthUsRole,
         ValidRole,
         DiagnosticsRole
     };
@@ -48,6 +50,8 @@ public:
         QColor borderColor;
         QColor textColor;
         bool settingsWindowOpen = false;
+        double generatorPulsePeriodUs = 100000.0;
+        double generatorPulseWidthUs = 10000.0;
         bool valid = true;
         QString diagnostics;
     };
@@ -80,6 +84,11 @@ public:
                                double thresholdAmplitude,
                                bool valid = true,
                                const QString& diagnostics = QString());
+    bool updateGeneratorPulseSettings(int bandId,
+                                      double pulsePeriodUs,
+                                      double pulseWidthUs,
+                                      bool valid = true,
+                                      const QString& diagnostics = QString());
     bool setBandDiagnostics(int bandId, bool valid, const QString& diagnostics);
 
 private:

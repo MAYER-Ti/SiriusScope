@@ -14,6 +14,9 @@ Window {
     property int inputAttenuatorDb: 0
     property int outputAttenuatorDb: 0
     property string polarization: "horizontal"
+    property real generatorPulsePeriodUs: 100000
+    property real generatorPulseWidthUs: 10000
+    property bool generatorSettingsVisible: AppState.mode === AppState.Test
     property real globalMinHz: 0
     property real globalMaxHz: 0
     property real minAmplitude: 1
@@ -26,13 +29,14 @@ Window {
 
     signal saveRequested(int bandId, real centerHz, real widthHz, real thresholdAmplitude,
                          int inputAttenuatorDb, int outputAttenuatorDb, string polarization)
+    signal generatorPulseSettingsSaveRequested(int bandId, real pulsePeriodUs, real pulseWidthUs)
     signal thresholdPreviewChanged(int bandId, real thresholdAmplitude)
     signal canceled(int bandId)
     signal windowClosed(int bandId)
 
     title: qsTr("Настройка диапазона %1").arg(bandId + 1)
     width: 520
-    height: 460
+    height: 560
     minimumWidth: 480
     minimumHeight: 460
     modality: Qt.NonModal
@@ -42,6 +46,8 @@ Window {
     Component.onCompleted: {
         _thresholdDraft = clampAmplitude(thresholdAmplitude)
         thresholdField.text = _thresholdDraft.toFixed(0)
+        generatorPulsePeriodField.text = generatorPulsePeriodUs.toFixed(0)
+        generatorPulseWidthField.text = generatorPulseWidthUs.toFixed(0)
         setFrequenciesHz(centerHz - widthHz * 0.5, centerHz + widthHz * 0.5)
         inputAttenuator.currentIndex = indexForAttenuator(inputAttenuatorDb)
         outputAttenuator.currentIndex = indexForAttenuator(outputAttenuatorDb)
@@ -53,6 +59,8 @@ Window {
         canceled(bandId)
         windowClosed(bandId)
     }
+
+    onGeneratorSettingsVisibleChanged: validateForm()
 
     Rectangle {
         anchors.fill: parent
@@ -287,6 +295,69 @@ Window {
                     }
                 }
 
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    visible: root.generatorSettingsVisible
+                    enabled: !root.readOnly
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Параметры генератора")
+                        color: Theme.textPrimary
+                        font.family: Theme.monoFontFamily
+                        font.pixelSize: Theme.fontNormal
+                        font.weight: Font.DemiBold
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: 2
+                        columnSpacing: 10
+                        rowSpacing: 8
+
+                        Label {
+                            text: qsTr("PRI, мкс")
+                            color: Theme.textSecondary
+                            font.family: Theme.monoFontFamily
+                            font.pixelSize: Theme.fontNormal
+                        }
+
+                        TextField {
+                            id: generatorPulsePeriodField
+                            Layout.fillWidth: true
+                            color: Theme.textPrimary
+                            selectionColor: Theme.signalCyan
+                            selectedTextColor: Theme.appBackgroundDeep
+                            font.family: Theme.monoFontFamily
+                            font.pixelSize: Theme.fontNormal
+                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                            background: FieldBackground {}
+                            onTextEdited: markDirtyAndValidate()
+                        }
+
+                        Label {
+                            text: qsTr("PW, мкс")
+                            color: Theme.textSecondary
+                            font.family: Theme.monoFontFamily
+                            font.pixelSize: Theme.fontNormal
+                        }
+
+                        TextField {
+                            id: generatorPulseWidthField
+                            Layout.fillWidth: true
+                            color: Theme.textPrimary
+                            selectionColor: Theme.signalCyan
+                            selectedTextColor: Theme.appBackgroundDeep
+                            font.family: Theme.monoFontFamily
+                            font.pixelSize: Theme.fontNormal
+                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                            background: FieldBackground {}
+                            onTextEdited: markDirtyAndValidate()
+                        }
+                    }
+                }
+
                 Text {
                     id: errorText
                     Layout.fillWidth: true
@@ -333,6 +404,12 @@ Window {
                                           Number(inputAttenuator.currentValue),
                                           Number(outputAttenuator.currentValue),
                                           currentPolarization())
+                            if (root.generatorSettingsVisible && errorText.text.length === 0) {
+                                generatorPulseSettingsSaveRequested(
+                                            root.bandId,
+                                            parseNumber(generatorPulsePeriodField.text),
+                                            parseNumber(generatorPulseWidthField.text))
+                            }
                         }
                     }
                 }
@@ -571,6 +648,23 @@ Window {
             return false
         }
 
+        if (root.generatorSettingsVisible) {
+            var pulsePeriodUs = parseNumber(generatorPulsePeriodField.text)
+            var pulseWidthUs = parseNumber(generatorPulseWidthField.text)
+            if (isNaN(pulsePeriodUs) || isNaN(pulseWidthUs)) {
+                errorText.text = qsTr("Введите числовые параметры генератора.")
+                return false
+            }
+            if (pulsePeriodUs <= 0 || pulseWidthUs <= 0) {
+                errorText.text = qsTr("Параметры генератора должны быть больше 0.")
+                return false
+            }
+            if (pulseWidthUs >= pulsePeriodUs) {
+                errorText.text = qsTr("PW должен быть меньше PRI.")
+                return false
+            }
+        }
+
         root._thresholdDraft = clampAmplitude(threshold)
         thresholdSlider.value = root._thresholdDraft
         errorText.text = ""
@@ -585,6 +679,15 @@ Window {
     function updateDraftFrequenciesHz(centerHz, widthHz) {
         _savedIndicatorActive = false
         setFrequenciesHz(centerHz - widthHz * 0.5, centerHz + widthHz * 0.5)
+    }
+
+    function updateGeneratorPulseSettingsDraft(pulsePeriodUs, pulseWidthUs) {
+        _savedIndicatorActive = false
+        generatorPulsePeriodUs = pulsePeriodUs
+        generatorPulseWidthUs = pulseWidthUs
+        generatorPulsePeriodField.text = pulsePeriodUs.toFixed(0)
+        generatorPulseWidthField.text = pulseWidthUs.toFixed(0)
+        validateForm()
     }
 
     function markSettingsSaved() {
