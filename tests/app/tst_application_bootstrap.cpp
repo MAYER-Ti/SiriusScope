@@ -1,9 +1,11 @@
 #include "app/applicationbootstrap.h"
 #include "app/qmlsingletons.h"
+#include "hardware/simulator/simulator_bco_sample_source.h"
 
 #include <QCoreApplication>
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -126,6 +128,37 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap registers result table model singleton");
 }
 
+void testBootstrapWiresGeneratorPulseSettingsToSimulator(TestRunner& test)
+{
+    siriusscope::app::ApplicationBootstrap bootstrap;
+    auto* sampleSource =
+        dynamic_cast<siriusscope::hardware::SimulatorBcoSampleSource*>(
+            bootstrap.bcoSampleSource());
+
+    test.require(sampleSource != nullptr,
+                 "bootstrap uses simulator BCO sample source in the legacy path");
+    if (!sampleSource) {
+        return;
+    }
+
+    const bool applied =
+        bootstrap.bandConfigController()->applyGeneratorPulseSettings(1, 200000.0, 25000.0);
+    test.require(applied, "generator pulse settings apply through bootstrap controller");
+
+    const auto configs = sampleSource->pulseBandConfigs();
+    const auto band1 = std::find_if(configs.begin(), configs.end(), [](const auto& config) {
+        return config.bandIndex == 1;
+    });
+
+    test.require(band1 != configs.end(), "simulator pulse configs contain updated band");
+    if (band1 != configs.end()) {
+        test.require(band1->pulsePeriodUs == 200000.0,
+                     "simulator receives updated generator pulse period");
+        test.require(band1->pulseWidthUs == 25000.0,
+                     "simulator receives updated generator pulse width");
+    }
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -135,6 +168,7 @@ int main(int argc, char *argv[])
     TestRunner test;
 
     testBootstrapProvidesObjects(test);
+    testBootstrapWiresGeneratorPulseSettingsToSimulator(test);
 
     return test.result();
 }

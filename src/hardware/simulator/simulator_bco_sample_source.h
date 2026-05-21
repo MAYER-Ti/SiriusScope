@@ -27,6 +27,14 @@ struct SimulatorBcoSampleSourceConfig
     int minVisibleAmplitude = 4;
 };
 
+struct SimulatorPulseBandConfig
+{
+    int bandIndex = 0;
+    bool enabled = true;
+    double pulsePeriodUs = 100000.0;
+    double pulseWidthUs = 10000.0;
+};
+
 class SimulatorBcoSampleSource final : public IBcoSampleSource
 {
 public:
@@ -41,6 +49,8 @@ public:
 
     void setBandConfigs(std::vector<core::BandConfig> configs);
     std::vector<core::BandConfig> bandConfigs() const;
+    void setPulseBandConfigs(std::vector<SimulatorPulseBandConfig> configs);
+    std::vector<SimulatorPulseBandConfig> pulseBandConfigs() const;
     void resetSession(std::uint64_t firstSampleIndex = 0);
 
 private:
@@ -59,6 +69,7 @@ private:
     bool m_running = false;
     bool m_stopRequested = false;
     std::vector<core::BandConfig> m_bandConfigs;
+    std::vector<SimulatorPulseBandConfig> m_pulseBandConfigs;
     std::uint64_t m_nextSampleIndex = 0;
     std::uint64_t m_signalStep = 0;
 };

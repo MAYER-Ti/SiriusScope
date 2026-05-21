@@ -11,6 +11,8 @@
 #include <QStandardPaths>
 
 #include <chrono>
+#include <cstddef>
+#include <vector>
 
 namespace siriusscope::app {
 namespace {
@@ -24,6 +26,29 @@ QString defaultWaterfallDataRootPath()
     }
 
     return QDir(QDir::currentPath()).filePath(QStringLiteral("SiriusScopeData"));
+}
+
+std::vector<hardware::SimulatorPulseBandConfig> simulatorPulseConfigsFromBands(
+    const BandListModel& model)
+{
+    std::vector<hardware::SimulatorPulseBandConfig> configs;
+    configs.reserve(static_cast<std::size_t>(model.count()));
+
+    for (int row = 0; row < model.count(); ++row) {
+        const auto* band = model.bandAt(row);
+        if (!band) {
+            continue;
+        }
+
+        configs.push_back(hardware::SimulatorPulseBandConfig{
+            band->config.bandIndex,
+            band->config.enabled,
+            band->generatorPulsePeriodUs,
+            band->generatorPulseWidthUs,
+        });
+    }
+
+    return configs;
 }
 
 } // namespace
@@ -89,6 +114,7 @@ ApplicationBootstrap::ApplicationBootstrap()
     m_spectrumEnvelopeThread.start();
 
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
+    m_bcoSampleSource->setPulseBandConfigs(simulatorPulseConfigsFromBands(m_bandListModel));
     QMetaObject::invokeMethod(m_spectrumEnvelopeWorker,
                               [worker = m_spectrumEnvelopeWorker,
                                minHz = m_viewportModel.viewMinHz(),
@@ -152,6 +178,15 @@ ApplicationBootstrap::ApplicationBootstrap()
                      [this](int) {
                          if (m_waterfallController) {
                              m_waterfallController->setBandConfigs(m_bandListModel.bandConfigs());
+                         }
+                     });
+    QObject::connect(&m_bandConfigController,
+                     &BandConfigController::generatorPulseSettingsApplied,
+                     &m_bandConfigController,
+                     [this](int) {
+                         if (m_bcoSampleSource) {
+                             m_bcoSampleSource->setPulseBandConfigs(
+                                 simulatorPulseConfigsFromBands(m_bandListModel));
                          }
                      });
     QObject::connect(&m_viewportModel,

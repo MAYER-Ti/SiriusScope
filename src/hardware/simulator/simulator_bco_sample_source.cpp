@@ -52,6 +52,18 @@ std::vector<core::BandConfig> makeDefaultBandConfigs()
     return configs;
 }
 
+std::vector<SimulatorPulseBandConfig> makeDefaultPulseBandConfigs()
+{
+    std::vector<SimulatorPulseBandConfig> configs;
+    configs.reserve(core::DomainConstraints::currentBandCount);
+
+    for (int bandIndex = 0; bandIndex < core::DomainConstraints::currentBandCount; ++bandIndex) {
+        configs.push_back(SimulatorPulseBandConfig{bandIndex, true, 100000.0, 10000.0});
+    }
+
+    return configs;
+}
+
 const core::BandConfig* findBandContainingFrequency(
     const std::vector<core::BandConfig>& configs,
     std::int64_t absoluteFrequencyHz)
@@ -61,6 +73,38 @@ const core::BandConfig* findBandContainingFrequency(
             return config.enabled && config.containsFrequency(absoluteFrequencyHz);
         });
     return found == configs.end() ? nullptr : &(*found);
+}
+
+const SimulatorPulseBandConfig* findPulseConfigForBand(
+    const std::vector<SimulatorPulseBandConfig>& configs,
+    int bandIndex)
+{
+    const auto found = std::find_if(configs.begin(), configs.end(), [bandIndex](const auto& config) {
+        return config.bandIndex == bandIndex;
+    });
+    return found == configs.end() ? nullptr : &(*found);
+}
+
+bool isInsidePulseWindow(std::uint64_t sampleIndex,
+                         std::uint64_t samplePeriodNs,
+                         const SimulatorPulseBandConfig& config)
+{
+    if (!config.enabled || !std::isfinite(config.pulsePeriodUs)
+        || !std::isfinite(config.pulseWidthUs) || config.pulsePeriodUs <= 0.0
+        || config.pulseWidthUs <= 0.0 || config.pulseWidthUs >= config.pulsePeriodUs) {
+        return false;
+    }
+
+    const long double periodNs = static_cast<long double>(config.pulsePeriodUs) * 1000.0L;
+    const long double widthNs = static_cast<long double>(config.pulseWidthUs) * 1000.0L;
+    if (periodNs <= 0.0L || widthNs <= 0.0L || widthNs >= periodNs) {
+        return false;
+    }
+
+    const long double phaseNs = std::fmod(
+        static_cast<long double>(sampleIndex) * static_cast<long double>(samplePeriodNs),
+        periodNs);
+    return phaseNs >= 0.0L && phaseNs < widthNs;
 }
 
 double normalize360(double value)
@@ -166,6 +210,7 @@ SimulatorBcoSampleSource::SimulatorBcoSampleSource(
     , m_diagnosticsSink(diagnosticsSink)
     , m_scene(makeDefaultSimulatorRadioScene())
     , m_bandConfigs(makeDefaultBandConfigs())
+    , m_pulseBandConfigs(makeDefaultPulseBandConfigs())
     , m_nextSampleIndex(m_config.firstSampleIndex)
 {
 }
@@ -241,6 +286,18 @@ std::vector<core::BandConfig> SimulatorBcoSampleSource::bandConfigs() const
     return m_bandConfigs;
 }
 
+void SimulatorBcoSampleSource::setPulseBandConfigs(std::vector<SimulatorPulseBandConfig> configs)
+{
+    std::lock_guard lock(m_mutex);
+    m_pulseBandConfigs = std::move(configs);
+}
+
+std::vector<SimulatorPulseBandConfig> SimulatorBcoSampleSource::pulseBandConfigs() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_pulseBandConfigs;
+}
+
 void SimulatorBcoSampleSource::resetSession(std::uint64_t firstSampleIndex)
 {
     std::lock_guard lock(m_mutex);
@@ -251,6 +308,7 @@ void SimulatorBcoSampleSource::resetSession(std::uint64_t firstSampleIndex)
 BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
 {
     std::vector<core::BandConfig> configs;
+    std::vector<SimulatorPulseBandConfig> pulseConfigs;
     SimulatorRadioScene scene;
     std::uint64_t nextSampleIndex = 0;
     std::uint64_t signalStep = 0;
@@ -261,6 +319,7 @@ BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
     {
         std::lock_guard lock(m_mutex);
         configs = m_bandConfigs;
+        pulseConfigs = m_pulseBandConfigs;
         scene = m_scene;
         nextSampleIndex = m_nextSampleIndex;
         signalStep = m_signalStep;
@@ -276,11 +335,14 @@ BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
     }
 
     batch.samples.reserve(samplesPerBatch);
+    const std::size_t maxAttempts = std::max(samplesPerBatch * 20, scene.sources.size() * 20);
     const double antennaAzimuthDeg =
         m_antennaState ? m_antennaState->currentAzimuthDeg() : 0.0;
 
     std::size_t skippedSources = 0;
-    while (batch.samples.size() < samplesPerBatch) {
+    std::size_t attempts = 0;
+    while (batch.samples.size() < samplesPerBatch && attempts < maxAttempts) {
+        ++attempts;
         const auto& source =
             scene.sources[static_cast<std::size_t>(signalStep % scene.sources.size())];
         const auto absoluteFrequencyHz = sourceAbsoluteFrequency(source, signalStep);
@@ -291,6 +353,16 @@ BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
             if (skippedSources >= scene.sources.size()) {
                 break;
             }
+            continue;
+        }
+
+        const auto* pulseConfig = findPulseConfigForBand(pulseConfigs, config->bandIndex);
+        if (!pulseConfig
+            || !isInsidePulseWindow(nextSampleIndex,
+                                    core::DomainConstraints::defaultSamplePeriodNs,
+                                    *pulseConfig)) {
+            ++signalStep;
+            nextSampleIndex += sampleIndexStep;
             continue;
         }
 

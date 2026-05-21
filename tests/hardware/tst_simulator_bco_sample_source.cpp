@@ -6,6 +6,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -13,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -72,6 +74,112 @@ core::BandConfig makeBandConfig(int bandIndex,
 {
     const auto created = core::BandConfig::create(bandIndex, centerHz, widthHz);
     return *created.value();
+}
+
+void testDefaultPulseConfigsExist(TestRunner& test)
+{
+    hardware::SimulatorBcoSampleSource source;
+    const auto configs = source.pulseBandConfigs();
+
+    test.require(static_cast<int>(configs.size()) == core::DomainConstraints::currentBandCount,
+                 "default pulse configs exist for current bands");
+
+    const auto band0 = std::find_if(configs.begin(), configs.end(), [](const auto& config) {
+        return config.bandIndex == 0;
+    });
+    test.require(band0 != configs.end(), "default pulse config contains band 0");
+    if (band0 != configs.end()) {
+        test.require(band0->enabled, "default pulse config for band 0 is enabled");
+        test.require(band0->pulsePeriodUs == 100000.0,
+                     "default pulse period for band 0 is 100000 us");
+        test.require(band0->pulseWidthUs == 10000.0,
+                     "default pulse width for band 0 is 10000 us");
+    }
+}
+
+void testPulseMaskRestrictsSamplesToActiveWindow(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state(45.0);
+    hardware::SimulatorBcoSampleSource source(
+        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(10), 32, 0, 1},
+        &state);
+
+    auto pulseConfigs = source.pulseBandConfigs();
+    for (auto& config : pulseConfigs) {
+        config.pulsePeriodUs = 1000.0;
+        config.pulseWidthUs = 100.0;
+    }
+    source.setPulseBandConfigs(pulseConfigs);
+
+    hardware::BcoSampleBatch firstBatch;
+    std::atomic<int> callbackCount = 0;
+    const bool received = waitForBatch(source, firstBatch, callbackCount);
+    source.stop();
+
+    test.require(received, "pulse mask source produces a batch in the active window");
+    test.require(!firstBatch.samples.empty(), "pulse mask batch is not empty");
+    for (const auto& sample : firstBatch.samples) {
+        const double phaseNs = std::fmod(
+            static_cast<double>(sample.sampleIndex)
+                * static_cast<double>(core::DomainConstraints::defaultSamplePeriodNs),
+            1000.0 * 1000.0);
+        test.require(phaseNs >= 0.0 && phaseNs < 100.0 * 1000.0,
+                     "pulse mask emits samples only inside active pulse width");
+    }
+}
+
+void testDisabledPulseBandProducesNoSamplesForBand(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state(45.0);
+    hardware::SimulatorBcoSampleSource source(
+        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(10), 32, 0, 1},
+        &state);
+
+    auto pulseConfigs = source.pulseBandConfigs();
+    for (auto& config : pulseConfigs) {
+        if (config.bandIndex == 0) {
+            config.enabled = false;
+        }
+    }
+    source.setPulseBandConfigs(pulseConfigs);
+
+    hardware::BcoSampleBatch firstBatch;
+    std::atomic<int> callbackCount = 0;
+    const bool received = waitForBatch(source, firstBatch, callbackCount);
+    source.stop();
+
+    test.require(received, "disabled pulse band still allows other bands to produce a batch");
+    for (const auto& sample : firstBatch.samples) {
+        test.require(sample.bandIndex != 0, "disabled pulse band produces no samples");
+    }
+}
+
+void testInvalidPulseWidthProducesNoSamplesForBand(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state(45.0);
+    hardware::SimulatorBcoSampleSource source(
+        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(10), 32, 0, 1},
+        &state);
+
+    auto pulseConfigs = source.pulseBandConfigs();
+    for (auto& config : pulseConfigs) {
+        if (config.bandIndex == 0) {
+            config.pulsePeriodUs = 1000.0;
+            config.pulseWidthUs = 1000.0;
+        }
+    }
+    source.setPulseBandConfigs(pulseConfigs);
+
+    hardware::BcoSampleBatch firstBatch;
+    std::atomic<int> callbackCount = 0;
+    const bool received = waitForBatch(source, firstBatch, callbackCount);
+    source.stop();
+
+    test.require(received, "invalid pulse width for one band still allows other bands to produce a batch");
+    for (const auto& sample : firstBatch.samples) {
+        test.require(sample.bandIndex != 0,
+                     "pulse width greater than or equal to period produces no samples for band");
+    }
 }
 
 std::map<int, int> firstTargetBeamAmplitudes(TestRunner& test,
@@ -294,6 +402,10 @@ int main()
 {
     TestRunner test;
 
+    testDefaultPulseConfigsExist(test);
+    testPulseMaskRestrictsSamplesToActiveWindow(test);
+    testDisabledPulseBandProducesNoSamplesForBand(test);
+    testInvalidPulseWidthProducesNoSamplesForBand(test);
     testStartProducesValidBatches(test);
     testRejectsInvalidStarts(test);
     testSingleVisibleBeamProducesSamples(test);
