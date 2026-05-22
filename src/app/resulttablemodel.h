@@ -28,6 +28,10 @@ public:
         FrequenciesHzRole,
         QualityRole,
         QualityTextRole,
+        PulseRepetitionPeriodUsRole,
+        PulseRepetitionPeriodTextRole,
+        PulseWidthUsRole,
+        PulseWidthTextRole,
         StatusTextRole,
         DiagnosticsTextRole,
         SampleIndexRole

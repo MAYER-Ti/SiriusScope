@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -153,6 +154,48 @@ void testResultModels(TestRunner& test)
     test.require((*row.value()).bandIndex == 1, "result row preserves band index");
     test.require((*row.value()).frequenciesHz.size() == 1, "result row preserves frequency set");
 
+    const auto rowWithSignalParameters =
+        ResultTableRow::fromBearingResult(*bearing.value(), 46.0, 100.0, 10.0);
+    test.require(rowWithSignalParameters.hasValue(),
+                 "valid result table row accepts signal parameters");
+    test.require((*rowWithSignalParameters.value()).pulseRepetitionPeriodUs
+                     && *(*rowWithSignalParameters.value()).pulseRepetitionPeriodUs == 100.0,
+                 "result row preserves pulse repetition period");
+    test.require((*rowWithSignalParameters.value()).pulseWidthUs
+                     && *(*rowWithSignalParameters.value()).pulseWidthUs == 10.0,
+                 "result row preserves pulse width");
+
+    const auto invalidPri =
+        ResultTableRow::fromBearingResult(*bearing.value(), 46.0, 0.0, 10.0);
+    test.require(invalidPri.validation().contains(ValidationCode::InvalidTimeBase),
+                 "zero pulse repetition period is invalid");
+
+    const auto invalidWidth =
+        ResultTableRow::fromBearingResult(*bearing.value(), 46.0, 100.0, -1.0);
+    test.require(invalidWidth.validation().contains(ValidationCode::InvalidTimeBase),
+                 "negative pulse width is invalid");
+
+    const auto invalidRatio =
+        ResultTableRow::fromBearingResult(*bearing.value(), 46.0, 100.0, 100.0);
+    test.require(invalidRatio.validation().contains(ValidationCode::InvalidTimeBase),
+                 "pulse width must be less than pulse repetition period");
+
+    const auto invalidNaN = ResultTableRow::fromBearingResult(
+        *bearing.value(),
+        46.0,
+        std::numeric_limits<double>::quiet_NaN(),
+        10.0);
+    test.require(invalidNaN.validation().contains(ValidationCode::InvalidTimeBase),
+                 "NaN pulse repetition period is invalid");
+
+    const auto invalidInf = ResultTableRow::fromBearingResult(
+        *bearing.value(),
+        46.0,
+        100.0,
+        std::numeric_limits<double>::infinity());
+    test.require(invalidInf.validation().contains(ValidationCode::InvalidTimeBase),
+                 "infinite pulse width is invalid");
+
     const auto invalidBearingAzimuth = BearingResult::create(12,
                                                              1'000'000LL,
                                                              1,
@@ -198,7 +241,16 @@ void testResultModels(TestRunner& test)
     test.require(invalidTime.validation().contains(ValidationCode::InvalidTimeBase),
                  "negative result time is invalid");
 
-    ResultTableRow invalidRow{12, 1'000'000LL, 45.0, -1.0, 1, {1'000'000'000LL}, std::nullopt, {}};
+    ResultTableRow invalidRow{12,
+                              1'000'000LL,
+                              45.0,
+                              -1.0,
+                              1,
+                              {1'000'000'000LL},
+                              std::nullopt,
+                              std::nullopt,
+                              std::nullopt,
+                              {}};
     test.require(invalidRow.validate().contains(ValidationCode::InvalidAzimuth),
                  "result row with invalid antenna azimuth is invalid");
 
@@ -208,6 +260,8 @@ void testResultModels(TestRunner& test)
                                      46.0,
                                      1,
                                      {1'000'000'000LL},
+                                     std::nullopt,
+                                     std::nullopt,
                                      std::nullopt,
                                      {}};
     test.require(invalidBearingRow.validate().contains(ValidationCode::InvalidAzimuth),

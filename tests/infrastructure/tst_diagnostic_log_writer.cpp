@@ -48,6 +48,11 @@ QString expectedLogPath(const QString& dataRootPath)
         .filePath(QStringLiteral("app_2024-01-01.log"));
 }
 
+QString tempDirTemplate()
+{
+    return QDir::current().filePath(QStringLiteral("tst_diagnostic_log_writer-XXXXXX"));
+}
+
 QString readTextFile(const QString& path)
 {
     QFile file(path);
@@ -62,7 +67,7 @@ QString readTextFile(const QString& path)
 
 void testWritesDiagnosticLine(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     test.require(tempDir.isValid(), "temporary log directory is valid");
 
     const QString logPath = expectedLogPath(tempDir.path());
@@ -91,7 +96,7 @@ void testWritesDiagnosticLine(TestRunner& test)
 
 void testDestructorFlushesQueue(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     test.require(tempDir.isValid(), "temporary flush directory is valid");
 
     const QString logPath = expectedLogPath(tempDir.path());

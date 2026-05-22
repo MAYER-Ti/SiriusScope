@@ -392,6 +392,7 @@ public:
         ++appendCalls;
         lastSessionId = context.scanSessionId;
         lastAntennaAzimuthDeg = context.antennaAzimuthDeg;
+        lastSignalParameters = context.signalParameters;
         lastResultCount = static_cast<int>(results.size());
         if (events) {
             events->push_back("result.append");
@@ -403,6 +404,7 @@ public:
     int lastResultCount = 0;
     std::uint64_t lastSessionId = 0;
     double lastAntennaAzimuthDeg = 0.0;
+    std::vector<processing::SignalParameters> lastSignalParameters;
     std::vector<std::string>* events = nullptr;
 };
 
@@ -815,6 +817,8 @@ void testSignalSamplesCollectedAndEstimatedOnCompletedScan(TestRunner& test)
     test.require(calculated, "completed scan emits signalParametersCalculated");
     test.require(fixture.controller.collectedSignalSampleCount() == 4,
                  "completed scan keeps collected sample count until next scan");
+    test.require(!fixture.resultTableSink.lastSignalParameters.empty(),
+                 "result table sink receives calculated signal parameters in context");
     test.require(band0 != nullptr, "signal parameter results contain band 0");
     if (band0) {
         test.require(band0->pulseCount >= 2, "signal parameter pulse count is calculated");

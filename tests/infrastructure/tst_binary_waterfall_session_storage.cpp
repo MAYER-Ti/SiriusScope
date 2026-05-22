@@ -52,6 +52,11 @@ public:
     std::vector<DiagnosticEvent> events;
 };
 
+QString tempDirTemplate()
+{
+    return QDir::current().filePath(QStringLiteral("tst_binary_waterfall_session_storage-XXXXXX"));
+}
+
 WaterfallSessionMetadata makeMetadata(QString id, qint64 startUtcMs)
 {
     WaterfallSessionMetadata metadata;
@@ -107,7 +112,7 @@ QJsonObject readMetadataJson(const QString& dataRootPath,
 
 void testCreateSession(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryWaterfallSessionStorage storage(
         BinaryWaterfallSessionStorage::Config{tempDir.path(), 20, false},
@@ -131,7 +136,7 @@ void testCreateSession(TestRunner& test)
 
 void testAppendReadRow(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryWaterfallSessionStorage storage(
         BinaryWaterfallSessionStorage::Config{tempDir.path(), 20, false},
@@ -157,7 +162,7 @@ void testAppendReadRow(TestRunner& test)
 
 void testMaxRowsReturnsLatestRows(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryWaterfallSessionStorage storage(
         BinaryWaterfallSessionStorage::Config{tempDir.path(), 20, false},
@@ -179,7 +184,7 @@ void testMaxRowsReturnsLatestRows(TestRunner& test)
 
 void testRestartRecovery(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     WaterfallSessionMetadata metadata;
 
@@ -204,7 +209,7 @@ void testRestartRecovery(TestRunner& test)
 
 void testCloseSessionUpdatesMetadata(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryWaterfallSessionStorage storage(
         BinaryWaterfallSessionStorage::Config{tempDir.path(), 20, false},
@@ -224,7 +229,7 @@ void testCloseSessionUpdatesMetadata(TestRunner& test)
 
 void testBrokenMetadataIsIgnored(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     const QString recordingsRoot =
         siriusscope::infrastructure::waterfall_storage_paths::recordingsRootPath(tempDir.path());
     const QString brokenDir = QDir(recordingsRoot).filePath(QStringLiteral("broken"));
@@ -246,7 +251,7 @@ void testBrokenMetadataIsIgnored(TestRunner& test)
 
 void testMissingIndexIsRebuilt(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     WaterfallSessionMetadata metadata;
 
@@ -274,7 +279,7 @@ void testMissingIndexIsRebuilt(TestRunner& test)
 
 void testRotationKeepsLatestSessions(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryWaterfallSessionStorage storage(
         BinaryWaterfallSessionStorage::Config{tempDir.path(), 2, false},

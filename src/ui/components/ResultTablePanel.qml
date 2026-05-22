@@ -8,7 +8,7 @@ Panel {
     contentMargins: 12
     implicitHeight: 184
 
-    readonly property real tableWeight: 740
+    readonly property real tableWeight: 960
 
     function statusColor(status) {
         return status === qsTr("Диагностика") ? Theme.statusWarn : Theme.statusGood
@@ -65,6 +65,8 @@ Panel {
                         HeaderCell { width: tableContent.width * 170 / root.tableWeight; title: qsTr("Частоты") }
                         HeaderCell { width: tableContent.width * 90 / root.tableWeight; title: qsTr("Качество") }
                         HeaderCell { width: tableContent.width * 110 / root.tableWeight; title: qsTr("Состояние") }
+                        HeaderCell { width: tableContent.width * 110 / root.tableWeight; title: qsTr("ППИ") }
+                        HeaderCell { width: tableContent.width * 110 / root.tableWeight; title: qsTr("ДИ") }
                     }
 
                     ListView {
@@ -121,6 +123,18 @@ Panel {
                                 textColor: root.statusColor(model.statusText)
                                 fillColor: rowFill
                                 bold: true
+                            }
+                            DataCell {
+                                width: resultList.width * 110 / root.tableWeight
+                                value: model.pulseRepetitionPeriodText
+                                textColor: rowText
+                                fillColor: rowFill
+                            }
+                            DataCell {
+                                width: resultList.width * 110 / root.tableWeight
+                                value: model.pulseWidthText
+                                textColor: rowText
+                                fillColor: rowFill
                             }
                         }
                     }

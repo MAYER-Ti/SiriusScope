@@ -122,6 +122,19 @@ QString qualityText(std::optional<double> quality)
     return QStringLiteral("%1%").arg(static_cast<int>(std::round(*quality * 100.0)));
 }
 
+QString formatDurationUs(std::optional<double> value)
+{
+    if (!value) {
+        return QStringLiteral("Н/Д");
+    }
+
+    if (*value >= 1000.0) {
+        return localizedDecimal(*value / 1000.0, 3, true) + QStringLiteral(" мс");
+    }
+
+    return localizedDecimal(*value, 3, true) + QStringLiteral(" мкс");
+}
+
 QString statusText(const core::ResultTableRow& row)
 {
     return row.diagnostics.empty()
@@ -174,6 +187,14 @@ QVariant ResultTableModel::data(const QModelIndex& index, int role) const
         return row.quality ? *row.quality : -1.0;
     case QualityTextRole:
         return qualityText(row.quality);
+    case PulseRepetitionPeriodUsRole:
+        return row.pulseRepetitionPeriodUs ? *row.pulseRepetitionPeriodUs : -1.0;
+    case PulseRepetitionPeriodTextRole:
+        return formatDurationUs(row.pulseRepetitionPeriodUs);
+    case PulseWidthUsRole:
+        return row.pulseWidthUs ? *row.pulseWidthUs : -1.0;
+    case PulseWidthTextRole:
+        return formatDurationUs(row.pulseWidthUs);
     case StatusTextRole:
         return statusText(row);
     case DiagnosticsTextRole:
@@ -198,6 +219,10 @@ QHash<int, QByteArray> ResultTableModel::roleNames() const
         {FrequenciesHzRole, QByteArrayLiteral("frequenciesHz")},
         {QualityRole, QByteArrayLiteral("quality")},
         {QualityTextRole, QByteArrayLiteral("qualityText")},
+        {PulseRepetitionPeriodUsRole, QByteArrayLiteral("pulseRepetitionPeriodUs")},
+        {PulseRepetitionPeriodTextRole, QByteArrayLiteral("pulseRepetitionPeriodText")},
+        {PulseWidthUsRole, QByteArrayLiteral("pulseWidthUs")},
+        {PulseWidthTextRole, QByteArrayLiteral("pulseWidthText")},
         {StatusTextRole, QByteArrayLiteral("statusText")},
         {DiagnosticsTextRole, QByteArrayLiteral("diagnosticsText")},
         {SampleIndexRole, QByteArrayLiteral("sampleIndex")},

@@ -12,6 +12,7 @@
 #include <functional>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,8 @@ core::ResultTableRow makeRow(std::uint64_t sampleIndex = 12,
         bandIndex,
         {3'000'000'000LL},
         0.84,
+        std::nullopt,
+        std::nullopt,
         {},
     };
 }
@@ -176,6 +179,108 @@ void testAppendValidBearingResult(TestRunner& test)
                  "controller exposes calculated bearing azimuth to the table");
     test.require(model.rows().front().antennaAzimuthDeg == 50.0,
                  "controller uses append context antenna azimuth");
+}
+
+void testAppendMapsSignalParametersByBand(TestRunner& test)
+{
+    ResultTableModel model;
+    FakeResultTableStorage storage;
+    RecordingDiagnosticsSink diagnostics;
+    ResultTableController controller(&model, &storage, &diagnostics);
+
+    app::ResultTableAppendContext context;
+    context.scanSessionId = 42;
+    context.antennaAzimuthDeg = 50.0;
+    context.signalParameters.push_back(processing::SignalParameters{
+        1,
+        2,
+        10'000.0,
+        100'000.0,
+        {3'000'000'000LL},
+    });
+
+    const auto result = controller.appendBearingResults(context, {makeBearingResult()});
+
+    test.require(result.success, "append with signal parameters is accepted");
+    test.require(controller.waitUntilIdle(std::chrono::milliseconds{1500}),
+                 "signal parameter append worker finishes");
+    waitUntil([&model] {
+        return model.count() == 1;
+    });
+
+    test.require(model.rows().front().pulseRepetitionPeriodUs
+                     && *model.rows().front().pulseRepetitionPeriodUs == 100'000.0,
+                 "controller maps PRI by band index");
+    test.require(model.rows().front().pulseWidthUs
+                     && *model.rows().front().pulseWidthUs == 10'000.0,
+                 "controller maps pulse width by band index");
+}
+
+void testAppendWithoutMatchingSignalParametersKeepsRow(TestRunner& test)
+{
+    ResultTableModel model;
+    FakeResultTableStorage storage;
+    RecordingDiagnosticsSink diagnostics;
+    ResultTableController controller(&model, &storage, &diagnostics);
+
+    app::ResultTableAppendContext context;
+    context.scanSessionId = 42;
+    context.antennaAzimuthDeg = 50.0;
+    context.signalParameters.push_back(processing::SignalParameters{
+        0,
+        2,
+        10'000.0,
+        100'000.0,
+        {3'000'000'000LL},
+    });
+
+    const auto result = controller.appendBearingResults(context, {makeBearingResult()});
+
+    test.require(result.success, "append without matching signal parameters is accepted");
+    test.require(controller.waitUntilIdle(std::chrono::milliseconds{1500}),
+                 "no-match signal parameter append worker finishes");
+    waitUntil([&model] {
+        return model.count() == 1;
+    });
+
+    test.require(!model.rows().front().pulseRepetitionPeriodUs,
+                 "missing band parameters leave PRI empty");
+    test.require(!model.rows().front().pulseWidthUs,
+                 "missing band parameters leave pulse width empty");
+}
+
+void testInvalidSignalParametersDoNotDropBearingRow(TestRunner& test)
+{
+    ResultTableModel model;
+    FakeResultTableStorage storage;
+    RecordingDiagnosticsSink diagnostics;
+    ResultTableController controller(&model, &storage, &diagnostics);
+
+    app::ResultTableAppendContext context;
+    context.scanSessionId = 42;
+    context.antennaAzimuthDeg = 50.0;
+    context.signalParameters.push_back(processing::SignalParameters{
+        1,
+        2,
+        100'000.0,
+        10'000.0,
+        {3'000'000'000LL},
+    });
+
+    const auto result = controller.appendBearingResults(context, {makeBearingResult()});
+
+    test.require(result.success, "invalid signal parameters do not reject append");
+    test.require(controller.waitUntilIdle(std::chrono::milliseconds{1500}),
+                 "invalid signal parameter append worker finishes");
+    waitUntil([&model] {
+        return model.count() == 1;
+    });
+
+    test.require(model.count() == 1, "bearing row is still appended");
+    test.require(!model.rows().front().pulseRepetitionPeriodUs,
+                 "invalid signal parameters leave PRI empty");
+    test.require(!model.rows().front().pulseWidthUs,
+                 "invalid signal parameters leave pulse width empty");
 }
 
 void testInvalidBearingResultRejected(TestRunner& test)
@@ -307,6 +412,9 @@ int main(int argc, char* argv[])
 
     testEmptyAppend(test);
     testAppendValidBearingResult(test);
+    testAppendMapsSignalParametersByBand(test);
+    testAppendWithoutMatchingSignalParametersKeepsRow(test);
+    testInvalidSignalParametersDoNotDropBearingRow(test);
     testInvalidBearingResultRejected(test);
     testStorageFailureDoesNotUpdateModel(test);
     testReloadLoadsRows(test);

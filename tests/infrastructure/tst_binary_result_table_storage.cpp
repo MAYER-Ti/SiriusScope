@@ -45,6 +45,7 @@ public:
     {
         std::lock_guard lock(mutex);
         events.push_back(event);
+        std::cerr << "DIAGNOSTIC: " << event.message << '\n';
     }
 
     bool contains(const std::string& text) const
@@ -62,11 +63,18 @@ public:
     std::vector<DiagnosticEvent> events;
 };
 
+QString tempDirTemplate()
+{
+    return QDir::current().filePath(QStringLiteral("tst_binary_result_table_storage-XXXXXX"));
+}
+
 siriusscope::core::ResultTableRow makeRow(
     std::uint64_t sampleIndex = 12,
     std::int64_t utcNs = 1'700'000'000'000'000'000LL,
     int bandIndex = 1,
-    std::optional<double> quality = 0.84)
+    std::optional<double> quality = 0.84,
+    std::optional<double> pulseRepetitionPeriodUs = 100'000.0,
+    std::optional<double> pulseWidthUs = 10'000.0)
 {
     return siriusscope::core::ResultTableRow{
         sampleIndex,
@@ -76,6 +84,8 @@ siriusscope::core::ResultTableRow makeRow(
         bandIndex,
         {3'000'000'000LL, 3'100'000'000LL},
         quality,
+        pulseRepetitionPeriodUs,
+        pulseWidthUs,
         {siriusscope::core::ValidationIssue{
             siriusscope::core::ValidationCode::InvalidQuality,
             "diagnostic text",
@@ -110,7 +120,7 @@ void writeUnsupportedVersionFile(const QString& dataRootPath, std::uint32_t form
 
 void testAppendCreatesFiles(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
 
@@ -130,7 +140,7 @@ void testAppendCreatesFiles(TestRunner& test)
 
 void testAppendReadAllRoundTrip(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
 
@@ -149,6 +159,11 @@ void testAppendReadAllRoundTrip(TestRunner& test)
     test.require(rows.front().frequenciesHz == row.frequenciesHz, "frequencies round-trip");
     test.require(rows.front().quality && *rows.front().quality == 0.84,
                  "quality value round-trips");
+    test.require(rows.front().pulseRepetitionPeriodUs
+                     && *rows.front().pulseRepetitionPeriodUs == 100'000.0,
+                 "pulse repetition period round-trips");
+    test.require(rows.front().pulseWidthUs && *rows.front().pulseWidthUs == 10'000.0,
+                 "pulse width round-trips");
     test.require(rows.front().diagnostics.size() == 1
                      && rows.front().diagnostics.front().message == "diagnostic text",
                  "diagnostics round-trip");
@@ -156,7 +171,7 @@ void testAppendReadAllRoundTrip(TestRunner& test)
 
 void testMultipleRowsSortedAndQualityNull(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
 
@@ -170,11 +185,34 @@ void testMultipleRowsSortedAndQualityNull(TestRunner& test)
     test.require(rows.size() == 2, "readAll returns both rows");
     test.require(rows.front().sampleIndex == 13, "readAll sorts by time");
     test.require(!rows.back().quality, "null quality round-trips");
+    test.require(rows.back().pulseRepetitionPeriodUs.has_value(),
+                 "signal parameters are preserved with null quality");
+}
+
+void testSignalParametersNullRoundTrip(TestRunner& test)
+{
+    QTemporaryDir tempDir(tempDirTemplate());
+    RecordingDiagnosticsSink diagnostics;
+    BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
+
+    const auto row = makeRow(15,
+                             1'700'000'020'000'000'000LL,
+                             1,
+                             0.5,
+                             std::nullopt,
+                             std::nullopt);
+    storage.append(row);
+    const auto rows = storage.readAll();
+
+    test.require(rows.size() == 1, "readAll returns row without signal parameters");
+    test.require(!rows.front().pulseRepetitionPeriodUs,
+                 "null pulse repetition period round-trips");
+    test.require(!rows.front().pulseWidthUs, "null pulse width round-trips");
 }
 
 void testV1FormatRejected(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     writeUnsupportedVersionFile(tempDir.path(), 1);
 
     RecordingDiagnosticsSink diagnostics;
@@ -187,9 +225,26 @@ void testV1FormatRejected(TestRunner& test)
                  "v1 result table storage is diagnosed as unsupported");
 }
 
+void testUnsupportedExistingFormatDoesNotBlockAppend(TestRunner& test)
+{
+    QTemporaryDir tempDir(tempDirTemplate());
+    writeUnsupportedVersionFile(tempDir.path(), 2);
+
+    RecordingDiagnosticsSink diagnostics;
+    BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
+
+    const auto appendResult = storage.append(makeRow());
+    const auto rows = storage.readAll();
+
+    test.require(appendResult.success, "unsupported existing format does not block append");
+    test.require(rows.size() == 1, "new row is readable after unsupported format recovery");
+    test.require(diagnostics.contains("unsupported result table binary format"),
+                 "unsupported existing format is diagnosed");
+}
+
 void testEmptyStorage(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
 
@@ -198,7 +253,7 @@ void testEmptyStorage(TestRunner& test)
 
 void testCorruptedFileDoesNotCrash(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     QDir().mkpath(resultTableDir(tempDir));
     QFile file(QDir(resultTableDir(tempDir)).filePath(QStringLiteral("result_table.bin")));
     test.require(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
@@ -216,7 +271,7 @@ void testCorruptedFileDoesNotCrash(TestRunner& test)
 
 void testUnsupportedVersionDiagnosed(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     writeUnsupportedVersionFile(tempDir.path());
 
     RecordingDiagnosticsSink diagnostics;
@@ -229,7 +284,7 @@ void testUnsupportedVersionDiagnosed(TestRunner& test)
 
 void testPartialRecordDoesNotCrash(TestRunner& test)
 {
-    QTemporaryDir tempDir;
+    QTemporaryDir tempDir(tempDirTemplate());
     RecordingDiagnosticsSink diagnostics;
     BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
     storage.append(makeRow());
@@ -255,7 +310,9 @@ int main(int argc, char* argv[])
     testAppendCreatesFiles(test);
     testAppendReadAllRoundTrip(test);
     testMultipleRowsSortedAndQualityNull(test);
+    testSignalParametersNullRoundTrip(test);
     testV1FormatRejected(test);
+    testUnsupportedExistingFormatDoesNotBlockAppend(test);
     testEmptyStorage(test);
     testCorruptedFileDoesNotCrash(test);
     testUnsupportedVersionDiagnosed(test);

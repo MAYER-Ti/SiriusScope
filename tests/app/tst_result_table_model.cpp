@@ -42,6 +42,8 @@ siriusscope::core::ResultTableRow makeRow(std::uint64_t sampleIndex = 12,
         bandIndex,
         {3'000'000'000LL, 3'100'000'000LL},
         0.84,
+        100'000.0,
+        10'000.0,
         {},
     };
 }
@@ -73,6 +75,10 @@ void testRoleNames(TestRunner& test)
         "frequenciesHz",
         "quality",
         "qualityText",
+        "pulseRepetitionPeriodUs",
+        "pulseRepetitionPeriodText",
+        "pulseWidthUs",
+        "pulseWidthText",
         "statusText",
         "diagnosticsText",
         "sampleIndex",
@@ -117,6 +123,18 @@ void testAppendAndData(TestRunner& test)
     test.require(dataAt(model, 0, ResultTableModel::QualityTextRole).toString()
                      == QStringLiteral("84%"),
                  "qualityText is formatted as percent");
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodUsRole).toDouble()
+                     == 100'000.0,
+                 "pulse repetition period role returns numeric microseconds");
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodTextRole).toString()
+                     == QStringLiteral("100 мс"),
+                 "pulse repetition period text is formatted");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthUsRole).toDouble()
+                     == 10'000.0,
+                 "pulse width role returns numeric microseconds");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("10 мс"),
+                 "pulse width text is formatted");
     test.require(dataAt(model, 0, ResultTableModel::StatusTextRole).toString()
                      == QStringLiteral("Готово"),
                  "statusText is ready without diagnostics");
@@ -164,6 +182,8 @@ void testQualityAndDiagnosticsText(TestRunner& test)
     ResultTableModel model;
     auto row = makeRow();
     row.quality = std::nullopt;
+    row.pulseRepetitionPeriodUs = std::nullopt;
+    row.pulseWidthUs = std::nullopt;
     row.diagnostics.push_back(siriusscope::core::ValidationIssue{
         siriusscope::core::ValidationCode::InvalidQuality,
         "quality estimate missing",
@@ -176,6 +196,17 @@ void testQualityAndDiagnosticsText(TestRunner& test)
     test.require(dataAt(model, 0, ResultTableModel::QualityTextRole).toString()
                      == QStringLiteral("Н/Д"),
                  "missing quality text is rendered");
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodUsRole).toDouble()
+                     == -1.0,
+                 "missing pulse repetition period returns -1");
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodTextRole).toString()
+                     == QStringLiteral("Н/Д"),
+                 "missing pulse repetition period text is rendered");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthUsRole).toDouble() == -1.0,
+                 "missing pulse width returns -1");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("Н/Д"),
+                 "missing pulse width text is rendered");
     test.require(dataAt(model, 0, ResultTableModel::StatusTextRole).toString()
                      == QStringLiteral("Диагностика"),
                  "diagnostics change status text");

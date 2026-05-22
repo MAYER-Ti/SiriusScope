@@ -47,6 +47,7 @@ private:
         bool publishDiagnostics) const;
     bool readBinHeader(QFile& file, bool publishDiagnostics) const;
     bool readIndexHeader(QFile& file, bool publishDiagnostics) const;
+    bool quarantineFile(const QString& path, const QString& reason) const;
 
     bool appendIndexRecord(QFile& indexFile,
                            const core::ResultTableRow& row,

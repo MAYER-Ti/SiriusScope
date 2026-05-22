@@ -3,7 +3,10 @@
 #include <QMetaObject>
 #include <QThread>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <optional>
 #include <utility>
 
 namespace siriusscope::app {
@@ -21,6 +24,11 @@ QString firstValidationMessage(const core::ValidationResult& validation)
     }
 
     return QStringLiteral("validation code %1").arg(static_cast<int>(issue.code));
+}
+
+bool validPositive(double value)
+{
+    return std::isfinite(value) && value > 0.0;
 }
 
 } // namespace
@@ -97,10 +105,46 @@ core::OperationResult ResultTableController::appendBearingResults(
     rows.reserve(results.size());
 
     for (const auto& result : results) {
+        const auto paramsIt =
+            std::find_if(context.signalParameters.begin(),
+                         context.signalParameters.end(),
+                         [&result](const processing::SignalParameters& parameters) {
+                             return parameters.bandIndex == result.bandIndex;
+                         });
+        std::optional<double> priUs;
+        std::optional<double> pulseWidthUs;
+        if (paramsIt != context.signalParameters.end()) {
+            if (paramsIt->pulseRepetitionPeriodUs
+                && validPositive(*paramsIt->pulseRepetitionPeriodUs)) {
+                priUs = paramsIt->pulseRepetitionPeriodUs;
+            }
+            if (validPositive(paramsIt->pulseWidthUs)) {
+                pulseWidthUs = paramsIt->pulseWidthUs;
+            }
+            if (priUs && pulseWidthUs && *pulseWidthUs >= *priUs) {
+                priUs.reset();
+                pulseWidthUs.reset();
+                publishWarning(QStringLiteral("Ignored invalid signal parameters for band %1")
+                                   .arg(result.bandIndex));
+            }
+        }
+
         auto created = core::ResultTableRow::fromBearingResult(
             result,
             context.antennaAzimuthDeg,
+            priUs,
+            pulseWidthUs,
             core::defaultRuntimeCapabilities());
+        if (!created && (priUs || pulseWidthUs)) {
+            publishWarning(QStringLiteral("Retrying result table row without signal parameters: %1")
+                               .arg(firstValidationMessage(created.validation())));
+            created = core::ResultTableRow::fromBearingResult(
+                result,
+                context.antennaAzimuthDeg,
+                std::nullopt,
+                std::nullopt,
+                core::defaultRuntimeCapabilities());
+        }
         if (!created) {
             publishWarning(QStringLiteral("Rejected invalid result table row: %1")
                                .arg(firstValidationMessage(created.validation())));

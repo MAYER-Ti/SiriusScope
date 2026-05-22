@@ -59,6 +59,32 @@ ValidationResult validateQuality(const std::optional<double>& quality)
     return result;
 }
 
+ValidationResult validateSignalParameters(std::optional<double> pulseRepetitionPeriodUs,
+                                          std::optional<double> pulseWidthUs)
+{
+    ValidationResult result;
+
+    if (pulseRepetitionPeriodUs
+        && (!isFinite(*pulseRepetitionPeriodUs) || *pulseRepetitionPeriodUs <= 0.0)) {
+        result.add(ValidationCode::InvalidTimeBase,
+                   "invalid signal parameter: pulse repetition period must be positive");
+    }
+
+    if (pulseWidthUs && (!isFinite(*pulseWidthUs) || *pulseWidthUs <= 0.0)) {
+        result.add(ValidationCode::InvalidTimeBase,
+                   "invalid signal parameter: pulse width must be positive");
+    }
+
+    if (pulseRepetitionPeriodUs && pulseWidthUs
+        && isFinite(*pulseRepetitionPeriodUs) && isFinite(*pulseWidthUs)
+        && *pulseWidthUs >= *pulseRepetitionPeriodUs) {
+        result.add(ValidationCode::InvalidTimeBase,
+                   "invalid signal parameter: pulse width must be less than repetition period");
+    }
+
+    return result;
+}
+
 } // namespace
 
 std::int64_t FrequencyRange::widthHz() const noexcept
@@ -337,6 +363,8 @@ ValidationResult BearingResult::validate(const RuntimeCapabilities& capabilities
 DomainResult<ResultTableRow> ResultTableRow::fromBearingResult(
     const BearingResult& result,
     double antennaAzimuthDeg,
+    std::optional<double> pulseRepetitionPeriodUs,
+    std::optional<double> pulseWidthUs,
     const RuntimeCapabilities& capabilities)
 {
     ResultTableRow row{
@@ -347,6 +375,8 @@ DomainResult<ResultTableRow> ResultTableRow::fromBearingResult(
         result.bandIndex,
         result.frequenciesHz,
         result.quality,
+        pulseRepetitionPeriodUs,
+        pulseWidthUs,
         result.diagnostics,
     };
 
@@ -367,6 +397,7 @@ ValidationResult ResultTableRow::validate(const RuntimeCapabilities& capabilitie
     result.merge(validateAzimuth(antennaAzimuthDeg));
     result.merge(validateFrequencies(frequenciesHz));
     result.merge(validateQuality(quality));
+    result.merge(validateSignalParameters(pulseRepetitionPeriodUs, pulseWidthUs));
 
     if (resultTimeUtcNs < 0) {
         result.add(ValidationCode::InvalidTimeBase, "row UTC time must be non-negative");

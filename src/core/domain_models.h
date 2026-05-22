@@ -322,6 +322,8 @@ struct ResultTableRow
     std::vector<std::int64_t> frequenciesHz;
     //! Необязательное нормализованное качество в диапазоне 0..1.
     std::optional<double> quality;
+    std::optional<double> pulseRepetitionPeriodUs;
+    std::optional<double> pulseWidthUs;
     //! Доменные диагностики, сохраняемые для пользовательского интерфейса и хранилища.
     std::vector<ValidationIssue> diagnostics;
 
@@ -336,6 +338,8 @@ struct ResultTableRow
     static DomainResult<ResultTableRow> fromBearingResult(
         const BearingResult& result,
         double antennaAzimuthDeg,
+        std::optional<double> pulseRepetitionPeriodUs = std::nullopt,
+        std::optional<double> pulseWidthUs = std::nullopt,
         const RuntimeCapabilities& capabilities = defaultRuntimeCapabilities());
 
     /*!

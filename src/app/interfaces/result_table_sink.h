@@ -2,6 +2,7 @@
 
 #include "core/domain_models.h"
 #include "core/operation_result.h"
+#include "processing/signal_parameter_estimator.h"
 
 #include <cstdint>
 #include <vector>
@@ -12,6 +13,7 @@ struct ResultTableAppendContext
 {
     std::uint64_t scanSessionId = 0;
     double antennaAzimuthDeg = 0.0;
+    std::vector<processing::SignalParameters> signalParameters;
 };
 
 class IResultTableSink

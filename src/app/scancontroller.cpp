@@ -703,6 +703,7 @@ void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
         ResultTableAppendContext context;
         context.scanSessionId = sessionId;
         context.antennaAzimuthDeg = m_activeSession->lastAzimuthDeg;
+        context.signalParameters = m_lastSignalParameters;
         const auto result = m_resultTableSink->appendBearingResults(context,
                                                                     m_lastBearingResults);
         if (!result) {

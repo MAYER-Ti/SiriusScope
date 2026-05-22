@@ -104,16 +104,27 @@ core::OperationResult BinaryResultTableStorage::append(const core::ResultTableRo
     }
 
     QFile binFile(binPath());
-    if (!binFile.open(QIODevice::ReadWrite)) {
+    const bool binExists = QFileInfo::exists(binPath());
+    if (!binFile.open(binExists ? QIODevice::ReadWrite
+                                : QIODevice::ReadWrite | QIODevice::Truncate)) {
         const auto message = QStringLiteral("Cannot open result_table.bin: %1")
                                  .arg(binFile.errorString());
         publishError(message);
         return core::OperationResult::failure(message.toStdString());
     }
     if (!ensureBinHeader(binFile)) {
-        const auto message = QStringLiteral("Cannot validate result_table.bin header");
-        publishError(message);
-        return core::OperationResult::failure(message.toStdString());
+        binFile.close();
+        if (!quarantineFile(binPath(), QStringLiteral("unsupported result table binary format"))) {
+            const auto message = QStringLiteral("Cannot validate result_table.bin header");
+            publishError(message);
+            return core::OperationResult::failure(message.toStdString());
+        }
+        if (!binFile.open(QIODevice::ReadWrite | QIODevice::Truncate)
+            || !ensureBinHeader(binFile)) {
+            const auto message = QStringLiteral("Cannot recreate result_table.bin");
+            publishError(message);
+            return core::OperationResult::failure(message.toStdString());
+        }
     }
     if (!binFile.seek(binFile.size())) {
         const auto message = QStringLiteral("Cannot seek result_table.bin for append: %1")
@@ -142,16 +153,27 @@ core::OperationResult BinaryResultTableStorage::append(const core::ResultTableRo
     binFile.flush();
 
     QFile indexFile(indexPath());
-    if (!indexFile.open(QIODevice::ReadWrite)) {
+    const bool indexExists = QFileInfo::exists(indexPath());
+    if (!indexFile.open(indexExists ? QIODevice::ReadWrite
+                                    : QIODevice::ReadWrite | QIODevice::Truncate)) {
         const auto message = QStringLiteral("Cannot open result_table.idx: %1")
                                  .arg(indexFile.errorString());
         publishError(message);
         return core::OperationResult::failure(message.toStdString());
     }
     if (!ensureIndexHeader(indexFile)) {
-        const auto message = QStringLiteral("Cannot validate result_table.idx header");
-        publishError(message);
-        return core::OperationResult::failure(message.toStdString());
+        indexFile.close();
+        if (!quarantineFile(indexPath(), QStringLiteral("unsupported result table index format"))) {
+            const auto message = QStringLiteral("Cannot validate result_table.idx header");
+            publishError(message);
+            return core::OperationResult::failure(message.toStdString());
+        }
+        if (!indexFile.open(QIODevice::ReadWrite | QIODevice::Truncate)
+            || !ensureIndexHeader(indexFile)) {
+            const auto message = QStringLiteral("Cannot recreate result_table.idx");
+            publishError(message);
+            return core::OperationResult::failure(message.toStdString());
+        }
     }
     if (!indexFile.seek(indexFile.size())
         || !appendIndexRecord(indexFile, row, fileOffset, recordByteSize)) {
@@ -396,6 +418,25 @@ bool BinaryResultTableStorage::readIndexHeader(QFile& file, bool publishDiagnost
     return readIndexHeaderValue(file, publishDiagnostics).has_value();
 }
 
+bool BinaryResultTableStorage::quarantineFile(const QString& path, const QString& reason) const
+{
+    if (!QFileInfo::exists(path)) {
+        return true;
+    }
+
+    const QString suffix =
+        QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMddHHmmsszzz"));
+    const QString quarantinedPath = QStringLiteral("%1.unsupported-%2").arg(path, suffix);
+    if (!QFile::rename(path, quarantinedPath)) {
+        publishError(QStringLiteral("Cannot quarantine %1").arg(path));
+        return false;
+    }
+
+    publishWarning(QStringLiteral("%1; moved %2 to %3")
+                       .arg(reason, path, quarantinedPath));
+    return true;
+}
+
 bool BinaryResultTableStorage::appendIndexRecord(QFile& indexFile,
                                                  const core::ResultTableRow& row,
                                                  quint64 fileOffset,
@@ -453,6 +494,10 @@ QByteArray BinaryResultTableStorage::serializeRow(const core::ResultTableRow& ro
     stream << static_cast<qint32>(row.bandIndex);
     stream << static_cast<qint32>(row.quality ? 1 : 0);
     stream << (row.quality ? *row.quality : 0.0);
+    stream << static_cast<qint32>(row.pulseRepetitionPeriodUs ? 1 : 0);
+    stream << (row.pulseRepetitionPeriodUs ? *row.pulseRepetitionPeriodUs : 0.0);
+    stream << static_cast<qint32>(row.pulseWidthUs ? 1 : 0);
+    stream << (row.pulseWidthUs ? *row.pulseWidthUs : 0.0);
 
     stream << static_cast<quint32>(row.frequenciesHz.size());
     for (const auto frequencyHz : row.frequenciesHz) {
@@ -484,6 +529,10 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
     qint32 bandIndex = 0;
     qint32 qualityState = 0;
     double qualityValue = 0.0;
+    qint32 pulseRepetitionPeriodState = 0;
+    double pulseRepetitionPeriodValue = 0.0;
+    qint32 pulseWidthState = 0;
+    double pulseWidthValue = 0.0;
     quint32 frequencyCount = 0;
 
     stream >> sampleIndex;
@@ -493,6 +542,10 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
     stream >> bandIndex;
     stream >> qualityState;
     stream >> qualityValue;
+    stream >> pulseRepetitionPeriodState;
+    stream >> pulseRepetitionPeriodValue;
+    stream >> pulseWidthState;
+    stream >> pulseWidthValue;
     stream >> frequencyCount;
     if (stream.status() != QDataStream::Ok || frequencyCount > 4096) {
         return std::nullopt;
@@ -546,6 +599,22 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
                            .arg(qualityState));
     }
 
+    std::optional<double> pulseRepetitionPeriodUs;
+    if (pulseRepetitionPeriodState == 1) {
+        pulseRepetitionPeriodUs = pulseRepetitionPeriodValue;
+    } else if (pulseRepetitionPeriodState != 0) {
+        publishWarning(QStringLiteral("Unknown pulse repetition period state %1")
+                           .arg(pulseRepetitionPeriodState));
+    }
+
+    std::optional<double> pulseWidthUs;
+    if (pulseWidthState == 1) {
+        pulseWidthUs = pulseWidthValue;
+    } else if (pulseWidthState != 0) {
+        publishWarning(QStringLiteral("Unknown pulse width state %1")
+                           .arg(pulseWidthState));
+    }
+
     return core::ResultTableRow{
         static_cast<std::uint64_t>(sampleIndex),
         static_cast<std::int64_t>(resultTimeUtcNs),
@@ -554,6 +623,8 @@ std::optional<core::ResultTableRow> BinaryResultTableStorage::deserializeRow(
         static_cast<int>(bandIndex),
         std::move(frequenciesHz),
         quality,
+        pulseRepetitionPeriodUs,
+        pulseWidthUs,
         std::move(diagnostics),
     };
 }
