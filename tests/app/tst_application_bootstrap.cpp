@@ -70,6 +70,8 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides result table controller");
     test.require(bootstrap.bearingFrameBus() != nullptr,
                  "bootstrap provides bearing frame bus");
+    test.require(bootstrap.signalSampleBus() != nullptr,
+                 "bootstrap provides signal sample bus");
     test.require(bootstrap.scanAcquisitionRecorder() != nullptr,
                  "bootstrap provides scan acquisition recorder");
     test.require(bootstrap.processingFlushControl() != nullptr,

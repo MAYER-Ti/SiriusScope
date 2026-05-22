@@ -4,6 +4,7 @@
 #include "app/interfaces/scan_acquisition_recorder.h"
 #include "app/interfaces/scan_recording_control.h"
 #include "app/scancontroller.h"
+#include "app/signalsamplebus.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -448,12 +449,36 @@ processing::BearingInputFrame makeBearingFrame(std::uint64_t sampleIndex)
     return frame;
 }
 
+core::SignalSample makeSignalSample(std::uint64_t sampleIndex)
+{
+    core::SignalSample sample;
+    sample.sampleIndex = sampleIndex;
+    sample.bandIndex = 0;
+    sample.frequencyOffsetHz = 1'000'000;
+    sample.absoluteFrequencyHz = 1'001'000'000LL;
+    sample.amplitude = 80;
+    sample.beamIndex = 0;
+    return sample;
+}
+
+const processing::SignalParameters* findSignalParameters(
+    const std::vector<processing::SignalParameters>& parameters,
+    int bandIndex)
+{
+    const auto found =
+        std::find_if(parameters.cbegin(), parameters.cend(), [bandIndex](const auto& item) {
+            return item.bandIndex == bandIndex;
+        });
+    return found == parameters.cend() ? nullptr : &*found;
+}
+
 struct ControllerFixture
 {
     std::vector<std::string> events;
     FakeAntennaControl control;
     FakeAzimuthSource azimuthSource;
     app::BearingFrameBus bus;
+    app::SignalSampleBus signalSampleBus;
     RecordingBearingService bearingService{&events};
     RecordingScanAcquisitionRecorder recorder{&events};
     FakeProcessingFlushControl flushControl{&events};
@@ -463,6 +488,7 @@ struct ControllerFixture
     app::ScanController controller{&control,
                                    &azimuthSource,
                                    &bus,
+                                   &signalSampleBus,
                                    &bearingService,
                                    &recorder,
                                    &flushControl,
@@ -750,6 +776,60 @@ void testAzimuthProgressCompletionAndFrames(TestRunner& test)
     test.require(!fixture.controller.scanActive(), "completed scan is no longer active");
 }
 
+void testSignalSamplesCollectedAndEstimatedOnCompletedScan(TestRunner& test)
+{
+    ControllerFixture fixture;
+    int parameterCount = -1;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::signalParametersCalculated,
+                     [&](qulonglong, int count) {
+                         parameterCount = count;
+                     });
+
+    fixture.controller.startScan(10.0, 60.0, 10.0);
+    fixture.azimuthSource.emitAzimuth(10.0);
+    const bool scanStarted = waitUntil([&fixture] {
+        return fixture.controller.scanStateText() == QStringLiteral("scanning");
+    });
+
+    if (scanStarted) {
+        fixture.signalSampleBus.publish({makeSignalSample(1),
+                                         makeSignalSample(2),
+                                         makeSignalSample(10),
+                                         makeSignalSample(11)});
+    }
+    const bool collected = waitUntil([&fixture] {
+        return fixture.controller.collectedSignalSampleCount() == 4;
+    });
+
+    fixture.azimuthSource.emitAzimuth(60.0);
+    const bool calculated = waitUntil([&] {
+        return parameterCount >= 1;
+    });
+
+    const auto& parameters = fixture.controller.lastSignalParameters();
+    const auto* band0 = findSignalParameters(parameters, 0);
+
+    test.require(scanStarted, "signal-parameter scan reaches scanning state");
+    test.require(collected, "signal samples are collected during scan");
+    test.require(calculated, "completed scan emits signalParametersCalculated");
+    test.require(fixture.controller.collectedSignalSampleCount() == 4,
+                 "completed scan keeps collected sample count until next scan");
+    test.require(band0 != nullptr, "signal parameter results contain band 0");
+    if (band0) {
+        test.require(band0->pulseCount >= 2, "signal parameter pulse count is calculated");
+        test.require(band0->pulseWidthUs > 0.0, "signal parameter pulse width is calculated");
+        test.require(band0->pulseRepetitionPeriodUs.has_value(),
+                     "signal parameter pulse repetition period is calculated");
+    }
+
+    fixture.controller.startScan(70.0, 100.0, 10.0);
+    test.require(fixture.controller.collectedSignalSampleCount() == 0,
+                 "starting the next scan clears collected signal samples");
+    test.require(fixture.controller.lastSignalParameters().empty(),
+                 "starting the next scan clears previous signal parameters");
+}
+
 void testReverseScanProgressAndCompletion(TestRunner& test)
 {
     ControllerFixture fixture;
@@ -959,6 +1039,7 @@ int main(int argc, char *argv[])
     testCompletionWaitsForAsyncFlushCallback(test);
     testStopScanClosesAcquisitionAndRecording(test);
     testAzimuthProgressCompletionAndFrames(test);
+    testSignalSamplesCollectedAndEstimatedOnCompletedScan(test);
     testReverseScanProgressAndCompletion(test);
     testRepeatScanClearsOldBearingResults(test);
     testScanLifecycleEventOrder(test);

@@ -2,6 +2,7 @@
 
 #include "bearingframebus.h"
 #include "frequencyviewportmodel.h"
+#include "signalsamplebus.h"
 #include "spectrumenvelopeworker.h"
 #include "waterfallringbuffer.h"
 #include "waterfallrowresampler.h"
@@ -88,6 +89,7 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                          infrastructure::IDiagnosticsSink* diagnosticsSink,
                                          WaterfallControllerConfig config,
                                          BearingFrameBus* bearingFrameBus,
+                                         SignalSampleBus* signalSampleBus,
                                          SpectrumEnvelopeWorker* spectrumEnvelopeWorker,
                                          QObject* parent)
     : QObject(parent)
@@ -95,6 +97,7 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
     , m_sampleSource(sampleSource)
     , m_diagnosticsSink(diagnosticsSink)
     , m_bearingFrameBus(bearingFrameBus)
+    , m_signalSampleBus(signalSampleBus)
     , m_spectrumEnvelopeWorker(spectrumEnvelopeWorker)
     , m_ringBuffer(new WaterfallRingBuffer(config.renderBinCount,
                                            config.visibleRowCount,
@@ -760,6 +763,10 @@ void WaterfallController::processingLoop()
         }
 
         try {
+            if (m_signalSampleBus) {
+                m_signalSampleBus->publish(processingBatch.samples);
+            }
+
             auto processingResult = processor.processBatch(processingBatch);
             publishProcessingDiagnostics(processingResult.diagnostics);
             if (m_bearingFrameBus) {

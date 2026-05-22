@@ -155,7 +155,9 @@ Operator selects sector in AntennaIndicator
     -> SampleProcessor prepares BearingInputFrame
     -> BearingFrameBus
     -> ScanAcquisitionSession stores BearingFrameObservation values with current antenna azimuth
+    -> SignalSampleBus / ScanController collects live SignalSample values for parameter estimation
     -> BearingService
+    -> SignalParameterEstimator
     -> BearingResult per BandItem
     -> AntennaIndicator model
     -> ResultTable model
@@ -205,6 +207,12 @@ calculation uses the scan acquisition session, not Waterfall pixels.
 Bearing results are displayed on `AntennaIndicator` using the color of the
 corresponding `BandItem` and are forwarded through application-level sinks for
 the final result table and archive storage.
+
+During the same active scan session, `ScanController` also collects live
+`SignalSample` values from the application-layer `SignalSampleBus`. After a
+successful scan completion, it runs `SignalParameterEstimator` and keeps the
+latest calculated signal parameters for later integration without changing the
+result table or UI flow.
 
 ## 6. Waterfall display flow
 

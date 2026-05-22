@@ -453,6 +453,22 @@ target_include_directories(tst_scan_acquisition_recorder
 
 add_test(NAME tst_scan_acquisition_recorder COMMAND tst_scan_acquisition_recorder)
 
+add_executable(tst_signal_sample_bus
+    app/tst_signal_sample_bus.cpp
+)
+
+target_link_libraries(tst_signal_sample_bus
+    PRIVATE
+        siriusscope_application
+)
+
+target_include_directories(tst_signal_sample_bus
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_signal_sample_bus COMMAND tst_signal_sample_bus)
+
 add_executable(tst_scan_controller
     app/tst_scan_controller.cpp
 )
@@ -603,6 +619,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_scan_acquisition_recorder PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_signal_sample_bus PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_scan_controller PROPERTIES

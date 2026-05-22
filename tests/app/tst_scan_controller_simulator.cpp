@@ -1,6 +1,7 @@
 #include "app/bearingframebus.h"
 #include "app/inmemoryscanacquisitionrecorder.h"
 #include "app/scancontroller.h"
+#include "app/signalsamplebus.h"
 #include "hardware/simulator/simulator_antenna_azimuth_source.h"
 #include "hardware/simulator/simulator_antenna_control.h"
 #include "hardware/simulator/simulator_antenna_state.h"
@@ -87,11 +88,13 @@ void testSimulatorPathCompletesSectorScan(TestRunner& test)
         },
         &diagnostics);
     app::BearingFrameBus bus;
+    app::SignalSampleBus signalSampleBus;
     processing::BearingService bearingService;
     app::InMemoryScanAcquisitionRecorder recorder;
     app::ScanController controller(&control,
                                    &source,
                                    &bus,
+                                   &signalSampleBus,
                                    &bearingService,
                                    &recorder,
                                    nullptr,
@@ -138,11 +141,13 @@ void testSimulatorPathCompletesReverseSectorScan(TestRunner& test)
         },
         &diagnostics);
     app::BearingFrameBus bus;
+    app::SignalSampleBus signalSampleBus;
     processing::BearingService bearingService;
     app::InMemoryScanAcquisitionRecorder recorder;
     app::ScanController controller(&control,
                                    &source,
                                    &bus,
+                                   &signalSampleBus,
                                    &bearingService,
                                    &recorder,
                                    nullptr,

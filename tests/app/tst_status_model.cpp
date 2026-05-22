@@ -151,6 +151,7 @@ void testInitialStatuses(TestRunner& test)
     app::ScanController scanController(nullptr,
                                        &azimuthSource,
                                        nullptr,
+                                       nullptr,
                                        &bearingService,
                                        nullptr,
                                        nullptr,
@@ -210,6 +211,7 @@ void testModeAndSourceStatuses(TestRunner& test)
     app::ScanController scanController(nullptr,
                                        &azimuthSource,
                                        nullptr,
+                                       nullptr,
                                        &bearingService,
                                        nullptr,
                                        nullptr,
@@ -263,6 +265,7 @@ void testDiagnosticRules(TestRunner& test)
     processing::BearingService bearingService;
     app::ScanController scanController(nullptr,
                                        &azimuthSource,
+                                       nullptr,
                                        nullptr,
                                        &bearingService,
                                        nullptr,
@@ -351,6 +354,7 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
     processing::BearingService bearingService;
     app::ScanController scanController(nullptr,
                                        &azimuthSource,
+                                       nullptr,
                                        nullptr,
                                        &bearingService,
                                        nullptr,

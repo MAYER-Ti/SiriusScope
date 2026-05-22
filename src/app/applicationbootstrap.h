@@ -17,6 +17,7 @@
 #include "resulttablecontroller.h"
 #include "resulttablemodel.h"
 #include "scancontroller.h"
+#include "signalsamplebus.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "spectrumenvelopecontroller.h"
@@ -76,6 +77,7 @@ public:
         return m_resultTableController.get();
     }
     BearingFrameBus* bearingFrameBus() noexcept { return m_bearingFrameBus.get(); }
+    SignalSampleBus* signalSampleBus() noexcept { return m_signalSampleBus.get(); }
     IScanAcquisitionRecorder* scanAcquisitionRecorder() noexcept
     {
         return m_scanAcquisitionRecorder.get();
@@ -142,6 +144,7 @@ private:
     std::unique_ptr<hardware::IBcoControl> m_bcoControl;
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
     std::unique_ptr<BearingFrameBus> m_bearingFrameBus;
+    std::unique_ptr<SignalSampleBus> m_signalSampleBus;
     std::unique_ptr<processing::BearingService> m_bearingService;
     std::unique_ptr<IScanAcquisitionRecorder> m_scanAcquisitionRecorder;
     std::unique_ptr<IScanRecordingControl> m_scanRecordingControl;

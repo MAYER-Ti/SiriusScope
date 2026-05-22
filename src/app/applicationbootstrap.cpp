@@ -83,6 +83,7 @@ ApplicationBootstrap::ApplicationBootstrap()
           m_antennaState.get(),
           m_diagnosticsService.get()))
     , m_bearingFrameBus(std::make_unique<BearingFrameBus>())
+    , m_signalSampleBus(std::make_unique<SignalSampleBus>())
     , m_bearingService(std::make_unique<processing::BearingService>())
     , m_scanAcquisitionRecorder(std::make_unique<InMemoryScanAcquisitionRecorder>())
     , m_resultTableStorage(std::make_unique<infrastructure::BinaryResultTableStorage>(
@@ -129,6 +130,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                                   m_diagnosticsService.get(),
                                                                   WaterfallControllerConfig{},
                                                                   m_bearingFrameBus.get(),
+                                                                  m_signalSampleBus.get(),
                                                                   m_spectrumEnvelopeWorker);
     m_recordingController = std::make_unique<RecordingController>(m_bcoControl.get(),
                                                                   &m_bandListModel,
@@ -143,6 +145,7 @@ ApplicationBootstrap::ApplicationBootstrap()
     m_scanController = std::make_unique<ScanController>(m_antennaControl.get(),
                                                         m_antennaAzimuthSource.get(),
                                                         m_bearingFrameBus.get(),
+                                                        m_signalSampleBus.get(),
                                                         m_bearingService.get(),
                                                         m_scanAcquisitionRecorder.get(),
                                                         m_waterfallController.get(),

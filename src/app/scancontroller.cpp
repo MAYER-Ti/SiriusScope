@@ -2,6 +2,7 @@
 
 #include "bearingframebus.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
+#include "signalsamplebus.h"
 
 #include <QMetaObject>
 #include <QStringList>
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <sstream>
 #include <utility>
@@ -20,6 +22,7 @@ namespace {
 
 constexpr double kMinScanSpeedDegPerSec = 1.0;
 constexpr double kMaxScanSpeedDegPerSec = 60.0;
+constexpr std::size_t kMaxCollectedSignalSamples = 2'000'000;
 
 bool isActiveState(ScanController::ScanState state)
 {
@@ -97,6 +100,7 @@ QString frequencyMHzText(const std::vector<std::int64_t>& frequenciesHz)
 ScanController::ScanController(hardware::IAntennaControl* antennaControl,
                                hardware::IAntennaAzimuthSource* azimuthSource,
                                BearingFrameBus* bearingFrameBus,
+                               SignalSampleBus* signalSampleBus,
                                processing::BearingService* bearingService,
                                IScanAcquisitionRecorder* scanAcquisitionRecorder,
                                IProcessingFlushControl* processingFlushControl,
@@ -108,6 +112,7 @@ ScanController::ScanController(hardware::IAntennaControl* antennaControl,
     , m_antennaControl(antennaControl)
     , m_azimuthSource(azimuthSource)
     , m_bearingFrameBus(bearingFrameBus)
+    , m_signalSampleBus(signalSampleBus)
     , m_bearingService(bearingService)
     , m_scanAcquisitionRecorder(scanAcquisitionRecorder)
     , m_processingFlushControl(processingFlushControl)
@@ -126,6 +131,17 @@ ScanController::ScanController(hardware::IAntennaControl* antennaControl,
             });
     }
 
+    if (m_signalSampleBus) {
+        m_signalSampleSubscriptionId = m_signalSampleBus->subscribe(
+            [this](std::vector<core::SignalSample> samples) mutable {
+                QMetaObject::invokeMethod(this,
+                                          [this, samples = std::move(samples)]() mutable {
+                                              onSignalSamples(std::move(samples));
+                                          },
+                                          Qt::QueuedConnection);
+            });
+    }
+
     startAzimuthSource();
 }
 
@@ -133,6 +149,9 @@ ScanController::~ScanController()
 {
     if (m_bearingFrameBus && m_bearingFrameSubscriptionId != 0) {
         m_bearingFrameBus->unsubscribe(m_bearingFrameSubscriptionId);
+    }
+    if (m_signalSampleBus && m_signalSampleSubscriptionId != 0) {
+        m_signalSampleBus->unsubscribe(m_signalSampleSubscriptionId);
     }
     if (m_azimuthSource) {
         m_azimuthSource->stop();
@@ -297,6 +316,8 @@ void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double
 
     storeSelectedSector(planned.value()->requestedSector);
     clearBearingResults();
+    m_scanSignalSamples.clear();
+    m_lastSignalParameters.clear();
 
     ScanSession session;
     session.id = m_nextSessionId++;
@@ -346,6 +367,7 @@ void ScanController::stopScan()
     closeActiveAcquisitionWithoutCalculation(sessionId);
     endScanRecording(sessionId);
 
+    m_scanSignalSamples.clear();
     m_activeSession.reset();
     setProgress(0.0);
     setState(ScanState::Cancelled);
@@ -663,6 +685,20 @@ void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
                              static_cast<int>(m_lastBearingResults.size()));
     emit bearingResultsCalculated(static_cast<qulonglong>(sessionId), m_targetBearings);
 
+    if (m_scanSignalSamples.empty()) {
+        m_lastSignalParameters.clear();
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "ScanController: no signal samples collected for signal parameter estimation");
+    } else {
+        m_lastSignalParameters = m_signalParameterEstimator.estimate(m_scanSignalSamples);
+        publish(infrastructure::DiagnosticSeverity::Info,
+                "ScanController: signal parameters calculated, bands="
+                    + std::to_string(m_lastSignalParameters.size())
+                    + ", samples=" + std::to_string(m_scanSignalSamples.size()));
+    }
+    emit signalParametersCalculated(static_cast<qulonglong>(sessionId),
+                                    static_cast<int>(m_lastSignalParameters.size()));
+
     if (m_resultTableSink) {
         ResultTableAppendContext context;
         context.scanSessionId = sessionId;
@@ -699,6 +735,7 @@ void ScanController::failScan(const QString& reason)
     closeActiveAcquisitionWithoutCalculation(sessionId);
     endScanRecording(sessionId);
 
+    m_scanSignalSamples.clear();
     m_activeSession.reset();
     setLastError(reason);
     setProgress(0.0);
@@ -789,6 +826,33 @@ void ScanController::onBearingFrames(std::vector<processing::BearingInputFrame> 
                     "ScanController: failed to append scan acquisition observation: "
                         + appendResult.message);
         }
+    }
+}
+
+void ScanController::onSignalSamples(std::vector<core::SignalSample> samples)
+{
+    if (!m_activeSession
+        || !(m_state == ScanState::Scanning || m_state == ScanState::Completing)
+        || samples.empty()) {
+        return;
+    }
+
+    m_scanSignalSamples.insert(m_scanSignalSamples.end(), samples.begin(), samples.end());
+    if (m_scanSignalSamples.size() <= kMaxCollectedSignalSamples) {
+        return;
+    }
+
+    const auto dropped = m_scanSignalSamples.size() - kMaxCollectedSignalSamples;
+    m_scanSignalSamples.erase(m_scanSignalSamples.begin(),
+                              m_scanSignalSamples.begin()
+                                  + static_cast<std::ptrdiff_t>(dropped));
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= m_nextSignalSampleOverflowDiagnostic) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "ScanController: signal sample buffer overflow, dropped "
+                    + std::to_string(dropped) + " oldest sample(s)");
+        m_nextSignalSampleOverflowDiagnostic = now + std::chrono::seconds{1};
     }
 }
 

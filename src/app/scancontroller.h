@@ -11,12 +11,14 @@
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "processing/bearing_service.h"
 #include "processing/sample_processor.h"
+#include "processing/signal_parameter_estimator.h"
 
 #include <QObject>
 #include <QString>
 #include <QVariantList>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -28,6 +30,7 @@ class IDiagnosticsSink;
 namespace siriusscope::app {
 
 class BearingFrameBus;
+class SignalSampleBus;
 
 class ScanController final : public QObject
 {
@@ -63,6 +66,7 @@ public:
     explicit ScanController(hardware::IAntennaControl* antennaControl,
                             hardware::IAntennaAzimuthSource* azimuthSource,
                             BearingFrameBus* bearingFrameBus,
+                            SignalSampleBus* signalSampleBus,
                             processing::BearingService* bearingService,
                             IScanAcquisitionRecorder* scanAcquisitionRecorder,
                             IProcessingFlushControl* processingFlushControl,
@@ -84,6 +88,14 @@ public:
     double scanSpeedDegPerSec() const noexcept { return m_antennaSpeedDegPerSec; }
     QVariantList targetBearings() const { return m_targetBearings; }
     QVariantList targetAzimuthsDeg() const { return m_targetAzimuthsDeg; }
+    const std::vector<processing::SignalParameters>& lastSignalParameters() const noexcept
+    {
+        return m_lastSignalParameters;
+    }
+    std::size_t collectedSignalSampleCount() const noexcept
+    {
+        return m_scanSignalSamples.size();
+    }
 
     Q_INVOKABLE void selectSector(double leftAngleDeg, double rightAngleDeg);
     Q_INVOKABLE void clearSector();
@@ -112,6 +124,7 @@ signals:
     void bearingResultsChanged();
     void bearingResultsReady(qulonglong sessionId, int resultCount);
     void bearingResultsCalculated(qulonglong sessionId, QVariantList results);
+    void signalParametersCalculated(qulonglong scanSessionId, int parameterCount);
 
 private:
     struct ScanSession
@@ -137,6 +150,7 @@ private:
     void finalizeCompletedScan(std::uint64_t sessionId);
     void failScan(const QString& reason);
     void onBearingFrames(std::vector<processing::BearingInputFrame> frames);
+    void onSignalSamples(std::vector<core::SignalSample> samples);
     void closeActiveAcquisitionWithoutCalculation(std::uint64_t sessionId);
     void endScanRecording(std::uint64_t sessionId);
     void clearBearingResults();
@@ -158,6 +172,7 @@ private:
     hardware::IAntennaControl* m_antennaControl = nullptr;
     hardware::IAntennaAzimuthSource* m_azimuthSource = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
+    SignalSampleBus* m_signalSampleBus = nullptr;
     processing::BearingService* m_bearingService = nullptr;
     IScanAcquisitionRecorder* m_scanAcquisitionRecorder = nullptr;
     IProcessingFlushControl* m_processingFlushControl = nullptr;
@@ -165,6 +180,7 @@ private:
     IResultTableSink* m_resultTableSink = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     int m_bearingFrameSubscriptionId = 0;
+    int m_signalSampleSubscriptionId = 0;
 
     double m_currentAzimuthDeg = 0.0;
     std::chrono::system_clock::time_point m_lastAzimuthTimestamp;
@@ -176,9 +192,13 @@ private:
     double m_antennaSpeedDegPerSec = 10.0;
     std::uint64_t m_nextSessionId = 1;
     std::vector<core::BearingResult> m_lastBearingResults;
+    std::vector<core::SignalSample> m_scanSignalSamples;
+    std::vector<processing::SignalParameters> m_lastSignalParameters;
+    processing::SignalParameterEstimator m_signalParameterEstimator;
     QVariantList m_targetBearings;
     QVariantList m_targetAzimuthsDeg;
     std::chrono::steady_clock::time_point m_nextAzimuthLatencyDiagnostic;
+    std::chrono::steady_clock::time_point m_nextSignalSampleOverflowDiagnostic;
 };
 
 } // namespace siriusscope::app

@@ -32,6 +32,7 @@ class WaterfallRingBuffer;
 namespace siriusscope::app {
 
 class BearingFrameBus;
+class SignalSampleBus;
 class SpectrumEnvelopeWorker;
 
 struct WaterfallControllerConfig
@@ -72,6 +73,7 @@ public:
                                  infrastructure::IDiagnosticsSink* diagnosticsSink,
                                  WaterfallControllerConfig config = {},
                                  BearingFrameBus* bearingFrameBus = nullptr,
+                                 SignalSampleBus* signalSampleBus = nullptr,
                                  SpectrumEnvelopeWorker* spectrumEnvelopeWorker = nullptr,
                                  QObject* parent = nullptr);
     ~WaterfallController() override;
@@ -186,6 +188,7 @@ private:
     hardware::IBcoSampleSource* m_sampleSource = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
+    SignalSampleBus* m_signalSampleBus = nullptr;
     SpectrumEnvelopeWorker* m_spectrumEnvelopeWorker = nullptr;
     WaterfallRingBuffer* m_ringBuffer = nullptr;
     IWaterfallSessionStorage* m_sessionStorage = nullptr;

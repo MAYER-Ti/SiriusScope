@@ -55,6 +55,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/scanacquisitionsession.cpp
     src/app/scancontroller.h
     src/app/scancontroller.cpp
+    src/app/signalsamplebus.h
+    src/app/signalsamplebus.cpp
     src/app/spectrumcontrollerstub.h
     src/app/spectrumcontrollerstub.cpp
     src/app/spectrumdecimator.h

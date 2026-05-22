@@ -353,6 +353,7 @@ void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
                                                      &diagnostics,
                                                      config,
                                                      nullptr,
+                                                     nullptr,
                                                      &envelopeWorker);
     controller.start();
     controller.startRecording();
