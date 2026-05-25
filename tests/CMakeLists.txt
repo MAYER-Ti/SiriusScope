@@ -437,6 +437,23 @@ target_include_directories(tst_result_table_controller
 
 add_test(NAME tst_result_table_controller COMMAND tst_result_table_controller)
 
+add_executable(tst_generator_pulse_result_table_pipeline
+    app/tst_generator_pulse_result_table_pipeline.cpp
+)
+
+target_link_libraries(tst_generator_pulse_result_table_pipeline
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_generator_pulse_result_table_pipeline
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_generator_pulse_result_table_pipeline COMMAND tst_generator_pulse_result_table_pipeline)
+
 add_executable(tst_scan_acquisition_recorder
     app/tst_scan_acquisition_recorder.cpp
 )
@@ -616,6 +633,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_result_table_controller PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_generator_pulse_result_table_pipeline PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_scan_acquisition_recorder PROPERTIES

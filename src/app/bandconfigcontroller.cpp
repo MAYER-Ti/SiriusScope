@@ -203,7 +203,7 @@ bool BandConfigController::applyGeneratorPulseSettings(int bandId,
 {
     if (m_editingLocked) {
         return rejectGeneratorPulseSettings(bandId,
-                                            QStringLiteral("Р—Р°РїРёСЃСЊ РІРєР»СЋС‡РµРЅР°"));
+                                            QStringLiteral("Запись включена"));
     }
     if (!m_bandListModel) {
         return rejectGeneratorPulseSettings(bandId,
