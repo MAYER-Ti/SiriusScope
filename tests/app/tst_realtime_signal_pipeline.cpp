@@ -1,4 +1,6 @@
+#include "app/bearingframebus.h"
 #include "app/realtimesignalpipeline.h"
+#include "app/signalsamplebus.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -57,6 +59,17 @@ core::SignalSample makeSample(const core::BandConfig& band,
     return *created.value();
 }
 
+processing::SampleBatch makeTwoBeamBatch(const core::BandConfig& band,
+                                         std::uint64_t sampleIndex = 1)
+{
+    processing::SampleBatch batch;
+    batch.samples = {
+        makeSample(band, sampleIndex, 0, 90),
+        makeSample(band, sampleIndex, 1, 40),
+    };
+    return batch;
+}
+
 bool hasErrorDiagnostic(const processing::SampleProcessingResult& result)
 {
     return std::any_of(result.diagnostics.cbegin(),
@@ -92,12 +105,7 @@ void testValidSamplesAreProcessed(TestRunner& test)
     const auto config = makeConfig({band});
     app::RealtimeSignalPipeline pipeline(app::RealtimeSignalPipelineConfig{config});
 
-    processing::SampleBatch batch;
-    batch.samples = {
-        makeSample(band, 1, 0, 90),
-        makeSample(band, 1, 1, 40),
-    };
-
+    auto batch = makeTwoBeamBatch(band);
     const auto result = pipeline.process(app::RealtimeSignalPipelineInput{std::move(batch)});
 
     test.require(result.inputSampleCount == 2, "valid batch reports input sample count");
@@ -109,6 +117,83 @@ void testValidSamplesAreProcessed(TestRunner& test)
                  "valid batch produces processing output frames");
     test.require(!hasErrorDiagnostic(result.processingResult),
                  "valid batch has no critical processing diagnostics");
+}
+
+void testPipelinePublishesRawSamples(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    app::SignalSampleBus signalSampleBus;
+    int receivedSampleCount = 0;
+    signalSampleBus.subscribe([&receivedSampleCount](std::vector<core::SignalSample> samples) {
+        receivedSampleCount += static_cast<int>(samples.size());
+    });
+
+    app::RealtimeSignalPipeline pipeline(
+        app::RealtimeSignalPipelineConfig{config, &signalSampleBus, nullptr});
+
+    auto batch = makeTwoBeamBatch(band);
+    const auto result = pipeline.process(app::RealtimeSignalPipelineInput{std::move(batch)});
+
+    test.require(result.inputSampleCount == 2, "raw sample publication preserves input count");
+    test.require(receivedSampleCount == 2, "pipeline publishes raw samples to SignalSampleBus");
+}
+
+void testEmptyBatchDoesNotPublishRawSamples(TestRunner& test)
+{
+    const auto config = makeConfig({makeBandConfig(0)});
+    app::SignalSampleBus signalSampleBus;
+    int receivedSampleCount = 0;
+    signalSampleBus.subscribe([&receivedSampleCount](std::vector<core::SignalSample> samples) {
+        receivedSampleCount += static_cast<int>(samples.size());
+    });
+
+    app::RealtimeSignalPipeline pipeline(
+        app::RealtimeSignalPipelineConfig{config, &signalSampleBus, nullptr});
+
+    const auto result = pipeline.process(app::RealtimeSignalPipelineInput{});
+
+    test.require(result.emptyBatchCount == 1, "empty batch is reported by pipeline");
+    test.require(receivedSampleCount == 0, "empty batch does not publish raw samples");
+}
+
+void testPipelinePublishesBearingFrames(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    app::BearingFrameBus bearingFrameBus;
+    int receivedBearingFrameCount = 0;
+    bearingFrameBus.subscribe(
+        [&receivedBearingFrameCount](std::vector<processing::BearingInputFrame> frames) {
+            receivedBearingFrameCount += static_cast<int>(frames.size());
+        });
+
+    app::RealtimeSignalPipeline pipeline(
+        app::RealtimeSignalPipelineConfig{config, nullptr, &bearingFrameBus});
+
+    auto batch = makeTwoBeamBatch(band);
+    const auto result = pipeline.process(app::RealtimeSignalPipelineInput{std::move(batch)});
+
+    test.require(!result.processingResult.bearingFrames.empty(),
+                 "two-beam batch produces bearing frames");
+    test.require(receivedBearingFrameCount > 0,
+                 "pipeline publishes bearing frames to BearingFrameBus");
+}
+
+void testDisablingBusesIsSafe(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    app::RealtimeSignalPipeline pipeline(
+        app::RealtimeSignalPipelineConfig{config, nullptr, nullptr});
+
+    auto batch = makeTwoBeamBatch(band);
+    const auto result = pipeline.process(app::RealtimeSignalPipelineInput{std::move(batch)});
+
+    test.require(result.inputSampleCount == 2, "pipeline reports input count with disabled buses");
+    test.require(!result.processingResult.waterfallFrame.rows.empty()
+                     || !result.processingResult.bearingFrames.empty(),
+                 "pipeline still returns processing output with disabled buses");
 }
 
 void testSetProcessingConfigChangesAcceptedBands(TestRunner& test)
@@ -155,6 +240,10 @@ int main()
 
     testEmptyBatchProducesEmptyProcessingResult(test);
     testValidSamplesAreProcessed(test);
+    testPipelinePublishesRawSamples(test);
+    testEmptyBatchDoesNotPublishRawSamples(test);
+    testPipelinePublishesBearingFrames(test);
+    testDisablingBusesIsSafe(test);
     testSetProcessingConfigChangesAcceptedBands(test);
 
     return test.result();

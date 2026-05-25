@@ -654,7 +654,11 @@ void WaterfallController::processingLoop()
         workerConfigRevision = m_configRevision;
     }
 
-    RealtimeSignalPipeline pipeline(RealtimeSignalPipelineConfig{config});
+    RealtimeSignalPipeline pipeline(RealtimeSignalPipelineConfig{
+        config,
+        m_signalSampleBus,
+        m_bearingFrameBus,
+    });
     std::vector<core::SignalSample> pendingSamples;
     std::size_t pendingEmptyBatches = 0;
     std::uint64_t workerFlushRequestId = 0;
@@ -764,10 +768,6 @@ void WaterfallController::processingLoop()
         }
 
         try {
-            if (m_signalSampleBus) {
-                m_signalSampleBus->publish(processingBatch.samples);
-            }
-
             auto pipelineResult = pipeline.process(RealtimeSignalPipelineInput{
                 std::move(processingBatch),
             });
@@ -777,9 +777,6 @@ void WaterfallController::processingLoop()
 
             auto& processingResult = pipelineResult.processingResult;
             publishProcessingDiagnostics(processingResult.diagnostics);
-            if (m_bearingFrameBus) {
-                m_bearingFrameBus->publish(processingResult.bearingFrames);
-            }
 
             if (processingResult.waterfallFrame.rows.empty()) {
                 completeFlush();

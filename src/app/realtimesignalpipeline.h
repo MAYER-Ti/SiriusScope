@@ -6,9 +6,14 @@
 
 namespace siriusscope::app {
 
+class BearingFrameBus;
+class SignalSampleBus;
+
 struct RealtimeSignalPipelineConfig
 {
     processing::SampleProcessingConfig processingConfig;
+    SignalSampleBus* signalSampleBus = nullptr;
+    BearingFrameBus* bearingFrameBus = nullptr;
 };
 
 struct RealtimeSignalPipelineInput
@@ -29,11 +34,15 @@ public:
     explicit RealtimeSignalPipeline(RealtimeSignalPipelineConfig config = {});
 
     void setProcessingConfig(processing::SampleProcessingConfig config);
+    void setSignalSampleBus(SignalSampleBus* bus) noexcept;
+    void setBearingFrameBus(BearingFrameBus* bus) noexcept;
     RealtimeSignalPipelineResult process(RealtimeSignalPipelineInput input);
 
 private:
     processing::SampleProcessingConfig m_processingConfig;
     processing::SampleProcessor m_processor;
+    SignalSampleBus* m_signalSampleBus = nullptr;
+    BearingFrameBus* m_bearingFrameBus = nullptr;
 };
 
 } // namespace siriusscope::app
