@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -85,9 +86,7 @@ const SimulatorPulseBandConfig* findPulseConfigForBand(
     return found == configs.end() ? nullptr : &(*found);
 }
 
-bool isInsidePulseWindow(std::uint64_t sampleIndex,
-                         std::uint64_t samplePeriodNs,
-                         const SimulatorPulseBandConfig& config)
+bool hasValidPulseTiming(const SimulatorPulseBandConfig& config)
 {
     if (!config.enabled || !std::isfinite(config.pulsePeriodUs)
         || !std::isfinite(config.pulseWidthUs) || config.pulsePeriodUs <= 0.0
@@ -97,14 +96,75 @@ bool isInsidePulseWindow(std::uint64_t sampleIndex,
 
     const long double periodNs = static_cast<long double>(config.pulsePeriodUs) * 1000.0L;
     const long double widthNs = static_cast<long double>(config.pulseWidthUs) * 1000.0L;
-    if (periodNs <= 0.0L || widthNs <= 0.0L || widthNs >= periodNs) {
+    return periodNs > 0.0L && widthNs > 0.0L && widthNs < periodNs;
+}
+
+long double pulsePhaseNs(std::uint64_t sampleIndex,
+                         std::uint64_t samplePeriodNs,
+                         const SimulatorPulseBandConfig& config)
+{
+    const long double periodNs = static_cast<long double>(config.pulsePeriodUs) * 1000.0L;
+    auto phaseNs = std::fmod(
+        static_cast<long double>(sampleIndex) * static_cast<long double>(samplePeriodNs),
+        periodNs);
+    if (phaseNs < 0.0L) {
+        phaseNs += periodNs;
+    }
+    return phaseNs;
+}
+
+bool isInsidePulseWindow(std::uint64_t sampleIndex,
+                         std::uint64_t samplePeriodNs,
+                         const SimulatorPulseBandConfig& config)
+{
+    if (!hasValidPulseTiming(config)) {
         return false;
     }
 
-    const long double phaseNs = std::fmod(
-        static_cast<long double>(sampleIndex) * static_cast<long double>(samplePeriodNs),
-        periodNs);
+    const long double widthNs = static_cast<long double>(config.pulseWidthUs) * 1000.0L;
+    const auto phaseNs = pulsePhaseNs(sampleIndex, samplePeriodNs, config);
     return phaseNs >= 0.0L && phaseNs < widthNs;
+}
+
+std::optional<std::uint64_t> nextPulseStartSampleIndex(
+    std::uint64_t currentSampleIndex,
+    std::uint64_t samplePeriodNs,
+    const std::vector<SimulatorPulseBandConfig>& pulseConfigs)
+{
+    std::optional<std::uint64_t> nearest;
+    const auto safeSamplePeriodNs = std::max<std::uint64_t>(1, samplePeriodNs);
+    const long double currentTimeNs =
+        static_cast<long double>(currentSampleIndex)
+        * static_cast<long double>(safeSamplePeriodNs);
+
+    for (const auto& config : pulseConfigs) {
+        if (!hasValidPulseTiming(config)) {
+            continue;
+        }
+        if (isInsidePulseWindow(currentSampleIndex, safeSamplePeriodNs, config)) {
+            return currentSampleIndex;
+        }
+
+        const long double periodNs = static_cast<long double>(config.pulsePeriodUs) * 1000.0L;
+        const auto phaseNs = pulsePhaseNs(currentSampleIndex, safeSamplePeriodNs, config);
+        const long double nextStartTimeNs = currentTimeNs + periodNs - phaseNs;
+        const long double candidateValue =
+            std::ceil(nextStartTimeNs / static_cast<long double>(safeSamplePeriodNs));
+        if (candidateValue > static_cast<long double>(std::numeric_limits<std::uint64_t>::max())) {
+            continue;
+        }
+
+        auto candidate = static_cast<std::uint64_t>(candidateValue);
+        if (candidate <= currentSampleIndex) {
+            candidate = currentSampleIndex + 1;
+        }
+
+        if (!nearest || candidate < *nearest) {
+            nearest = candidate;
+        }
+    }
+
+    return nearest;
 }
 
 double normalize360(double value)
@@ -197,6 +257,18 @@ std::int64_t sourceAbsoluteFrequency(const SimulatedRadioSource& source,
     return source.absoluteFrequencyHz
         + static_cast<std::int64_t>(
             std::llround(std::sin(phase) * static_cast<double>(source.driftSpanHz)));
+}
+
+std::uint64_t modelStepCount(std::uint64_t fromSampleIndex,
+                             std::uint64_t toSampleIndex,
+                             std::uint64_t sampleIndexStep)
+{
+    if (toSampleIndex <= fromSampleIndex) {
+        return 1;
+    }
+
+    const auto delta = toSampleIndex - fromSampleIndex;
+    return ((delta - 1) / std::max<std::uint64_t>(1, sampleIndexStep)) + 1;
 }
 
 } // namespace
@@ -339,71 +411,70 @@ BcoSampleBatch SimulatorBcoSampleSource::generateBatch()
     const double antennaAzimuthDeg =
         m_antennaState ? m_antennaState->currentAzimuthDeg() : 0.0;
 
-    std::size_t skippedSources = 0;
+    const auto samplePeriodNs = core::DomainConstraints::defaultSamplePeriodNs;
     std::size_t attempts = 0;
     while (batch.samples.size() < samplesPerBatch && attempts < maxAttempts) {
         ++attempts;
-        const auto& source =
-            scene.sources[static_cast<std::size_t>(signalStep % scene.sources.size())];
-        const auto absoluteFrequencyHz = sourceAbsoluteFrequency(source, signalStep);
-        const auto* config = findBandContainingFrequency(configs, absoluteFrequencyHz);
-        if (!config) {
-            ++signalStep;
-            ++skippedSources;
-            if (skippedSources >= scene.sources.size()) {
+        const auto sampleIndex = nextSampleIndex;
+        bool generatedAtSampleIndex = false;
+
+        for (const auto& source : scene.sources) {
+            if (batch.samples.size() >= samplesPerBatch) {
                 break;
             }
-            continue;
-        }
 
-        const auto* pulseConfig = findPulseConfigForBand(pulseConfigs, config->bandIndex);
-        if (!pulseConfig
-            || !isInsidePulseWindow(nextSampleIndex,
-                                    core::DomainConstraints::defaultSamplePeriodNs,
-                                    *pulseConfig)) {
-            ++signalStep;
-            nextSampleIndex += sampleIndexStep;
-            continue;
-        }
-
-        const auto offsetHz = absoluteFrequencyHz - config->centerFrequencyHz;
-        const auto sampleIndex = nextSampleIndex;
-        const auto amplitudes =
-            sourceBeamAmplitudes(source, antennaAzimuthDeg, minVisibleAmplitude);
-
-        std::vector<core::SignalSample> generatedSamples;
-        generatedSamples.reserve(kBeamCount);
-        for (int beamIndex = 0; beamIndex < static_cast<int>(kBeamCount); ++beamIndex) {
-            const auto amplitude = amplitudes[static_cast<std::size_t>(beamIndex)];
-            if (!amplitude) {
+            const auto absoluteFrequencyHz = sourceAbsoluteFrequency(source, signalStep);
+            const auto* config = findBandContainingFrequency(configs, absoluteFrequencyHz);
+            if (!config) {
                 continue;
             }
-            if (batch.samples.size() + generatedSamples.size() >= samplesPerBatch) {
-                break;
+
+            const auto* pulseConfig = findPulseConfigForBand(pulseConfigs, config->bandIndex);
+            if (!pulseConfig || !isInsidePulseWindow(sampleIndex, samplePeriodNs, *pulseConfig)) {
+                continue;
             }
 
-            const core::BeamSample beamSample{sampleIndex,
-                                              offsetHz,
-                                              *amplitude,
-                                              beamIndex};
-            const auto sample = core::SignalSample::create(beamSample, *config);
-            if (sample) {
-                generatedSamples.push_back(*sample.value());
+            const auto offsetHz = absoluteFrequencyHz - config->centerFrequencyHz;
+            const auto amplitudes =
+                sourceBeamAmplitudes(source, antennaAzimuthDeg, minVisibleAmplitude);
+
+            for (int beamIndex = 0; beamIndex < static_cast<int>(kBeamCount); ++beamIndex) {
+                if (batch.samples.size() >= samplesPerBatch) {
+                    break;
+                }
+
+                const auto amplitude = amplitudes[static_cast<std::size_t>(beamIndex)];
+                if (!amplitude) {
+                    continue;
+                }
+
+                const core::BeamSample beamSample{sampleIndex,
+                                                  offsetHz,
+                                                  *amplitude,
+                                                  beamIndex};
+                const auto sample = core::SignalSample::create(beamSample, *config);
+                if (sample) {
+                    batch.samples.push_back(*sample.value());
+                    generatedAtSampleIndex = true;
+                }
             }
         }
 
-        ++signalStep;
-        if (generatedSamples.empty()) {
-            ++skippedSources;
-            if (skippedSources >= scene.sources.size()) {
-                break;
-            }
+        if (generatedAtSampleIndex) {
+            nextSampleIndex += sampleIndexStep;
+            ++signalStep;
             continue;
         }
 
-        skippedSources = 0;
-        batch.samples.insert(batch.samples.end(), generatedSamples.begin(), generatedSamples.end());
-        nextSampleIndex += sampleIndexStep;
+        const auto nextPulseStart =
+            nextPulseStartSampleIndex(sampleIndex, samplePeriodNs, pulseConfigs);
+        if (nextPulseStart && *nextPulseStart > sampleIndex) {
+            signalStep += modelStepCount(sampleIndex, *nextPulseStart, sampleIndexStep);
+            nextSampleIndex = *nextPulseStart;
+        } else {
+            nextSampleIndex += sampleIndexStep;
+            ++signalStep;
+        }
     }
 
     {

@@ -46,6 +46,18 @@ SignalSample makeSample(std::uint64_t sampleIndex,
     return SignalSample{sampleIndex, bandIndex, 0, frequencyHz, amplitude, beamIndex};
 }
 
+void appendPulseSamples(std::vector<SignalSample>& samples,
+                        std::uint64_t firstSampleIndex,
+                        std::uint64_t lastSampleIndex,
+                        std::uint64_t stepSamples,
+                        int bandIndex = 0)
+{
+    for (auto sampleIndex = firstSampleIndex; sampleIndex <= lastSampleIndex;
+         sampleIndex += stepSamples) {
+        samples.push_back(makeSample(sampleIndex, bandIndex));
+    }
+}
+
 const SignalParameters* findParameters(const std::vector<SignalParameters>& estimates,
                                        int bandIndex)
 {
@@ -204,6 +216,69 @@ void testConfigIsNormalized(TestRunner& test)
                  "zero sample period is normalized to one nanosecond");
 }
 
+void testAdaptiveGroupingEstimatesSparseGeneratorPulses(TestRunner& test)
+{
+    SignalParameterEstimatorConfig config;
+    config.samplePeriodNs = DomainConstraints::defaultSamplePeriodNs;
+    config.maxIntraPulseGapSamples = 1;
+    config.groupingMode = PulseGroupingMode::AdaptiveGap;
+    SignalParameterEstimator estimator(config);
+
+    std::vector<SignalSample> samples;
+    appendPulseSamples(samples, 0, 31'245, 5);
+    appendPulseSamples(samples, 312'500, 343'745, 5);
+
+    const auto estimates = estimator.estimate(samples);
+    const auto* band0 = findParameters(estimates, 0);
+
+    test.require(band0 != nullptr, "adaptive sparse pulse estimate exists for band 0");
+    if (!band0) {
+        return;
+    }
+
+    test.require(band0->pulseCount == 2, "adaptive sparse samples are grouped into two pulses");
+    test.require(band0->pulseRepetitionPeriodUs
+                     && nearly(*band0->pulseRepetitionPeriodUs, 100'000.0, 100.0),
+                 "adaptive sparse PRI follows generator period");
+    test.require(nearly(band0->pulseWidthUs, 10'000.0, 100.0),
+                 "adaptive sparse PW follows generator width");
+}
+
+void testAdaptiveGroupingDoesNotMergeSeparatedPulses(TestRunner& test)
+{
+    SignalParameterEstimatorConfig config;
+    config.samplePeriodNs = DomainConstraints::defaultSamplePeriodNs;
+    config.groupingMode = PulseGroupingMode::AdaptiveGap;
+    SignalParameterEstimator estimator(config);
+
+    std::vector<SignalSample> samples;
+    appendPulseSamples(samples, 0, 1'000, 5);
+    appendPulseSamples(samples, 100'000, 101'000, 5);
+
+    const auto pulses = estimator.buildPulses(samples);
+
+    test.require(pulses.size() == 2,
+                 "adaptive grouping keeps separated sparse pulse windows distinct");
+}
+
+void testAdaptiveGroupingUsesExplicitInterPulseGap(TestRunner& test)
+{
+    SignalParameterEstimatorConfig config;
+    config.groupingMode = PulseGroupingMode::AdaptiveGap;
+    config.maxIntraPulseGapSamples = 1;
+    config.minInterPulseGapSamples = 10;
+    SignalParameterEstimator estimator(config);
+
+    const auto pulses =
+        estimator.buildPulses({makeSample(0), makeSample(9), makeSample(18), makeSample(28)});
+
+    test.require(pulses.size() == 2,
+                 "explicit inter-pulse gap splits only at configured boundary");
+    test.require(pulses.size() == 2 && pulses.front().firstSampleIndex == 0
+                     && pulses.front().lastSampleIndex == 18,
+                 "explicit inter-pulse gap keeps smaller sparse gaps in one pulse");
+}
+
 } // namespace
 
 int main()
@@ -220,6 +295,9 @@ int main()
     testRepresentativeFrequencyUsesPeakAmplitude(test);
     testFrequenciesSortedAndUnique(test);
     testConfigIsNormalized(test);
+    testAdaptiveGroupingEstimatesSparseGeneratorPulses(test);
+    testAdaptiveGroupingDoesNotMergeSeparatedPulses(test);
+    testAdaptiveGroupingUsesExplicitInterPulseGap(test);
 
     return test.result();
 }

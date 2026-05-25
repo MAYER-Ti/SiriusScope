@@ -1,5 +1,6 @@
 #include "hardware/simulator/simulator_bco_sample_source.h"
 #include "hardware/simulator/simulator_antenna_state.h"
+#include "processing/signal_parameter_estimator.h"
 
 #include <algorithm>
 #include <atomic>
@@ -8,6 +9,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <set>
@@ -68,12 +70,45 @@ bool waitForBatch(hardware::SimulatorBcoSampleSource& source,
     return condition.wait_for(lock, std::chrono::milliseconds(500), [&] { return received; });
 }
 
+bool waitForSamplesThroughIndex(hardware::SimulatorBcoSampleSource& source,
+                                std::vector<core::SignalSample>& collectedSamples,
+                                std::uint64_t targetSampleIndex,
+                                std::chrono::milliseconds timeout)
+{
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::uint64_t maxSampleIndex = 0;
+    bool reachedTarget = false;
+
+    const auto startResult = source.start([&](const hardware::BcoSampleBatch& batch) {
+        std::lock_guard lock(mutex);
+        collectedSamples.insert(collectedSamples.end(), batch.samples.begin(), batch.samples.end());
+        for (const auto& sample : batch.samples) {
+            maxSampleIndex = std::max(maxSampleIndex, sample.sampleIndex);
+        }
+        reachedTarget = maxSampleIndex >= targetSampleIndex;
+        condition.notify_one();
+    });
+
+    if (!startResult) {
+        return false;
+    }
+
+    std::unique_lock lock(mutex);
+    return condition.wait_for(lock, timeout, [&] { return reachedTarget; });
+}
+
 core::BandConfig makeBandConfig(int bandIndex,
                                 std::int64_t centerHz,
                                 std::int64_t widthHz = 500'000'000LL)
 {
     const auto created = core::BandConfig::create(bandIndex, centerHz, widthHz);
     return *created.value();
+}
+
+bool nearly(double actual, double expected, double tolerance)
+{
+    return std::abs(actual - expected) <= tolerance;
 }
 
 void testDefaultPulseConfigsExist(TestRunner& test)
@@ -94,6 +129,47 @@ void testDefaultPulseConfigsExist(TestRunner& test)
                      "default pulse period for band 0 is 100000 us");
         test.require(band0->pulseWidthUs == 10000.0,
                      "default pulse width for band 0 is 10000 us");
+    }
+}
+
+void testGeneratorProducesContiguousSamplesInsidePulseWindow(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state(45.0);
+    hardware::SimulatorBcoSampleSource source(
+        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(10), 1024, 0, 1},
+        &state);
+    source.setBandConfigs({makeBandConfig(0, 3'000'000'000LL)});
+    source.setPulseBandConfigs({hardware::SimulatorPulseBandConfig{0, true, 100000.0, 10000.0}});
+
+    hardware::BcoSampleBatch firstBatch;
+    std::atomic<int> callbackCount = 0;
+    const bool received = waitForBatch(source, firstBatch, callbackCount);
+    source.stop();
+
+    test.require(received, "contiguous pulse source produces a batch");
+    test.require(!firstBatch.samples.empty(), "contiguous pulse batch is not empty");
+
+    std::map<int, std::set<std::uint64_t>> sampleIndexesByBand;
+    for (const auto& sample : firstBatch.samples) {
+        const double phaseNs = std::fmod(
+            static_cast<double>(sample.sampleIndex)
+                * static_cast<double>(core::DomainConstraints::defaultSamplePeriodNs),
+            100000.0 * 1000.0);
+        test.require(phaseNs >= 0.0 && phaseNs < 10000.0 * 1000.0,
+                     "contiguous generator emits samples inside pulse width");
+        sampleIndexesByBand[sample.bandIndex].insert(sample.sampleIndex);
+    }
+
+    for (const auto& [bandIndex, sampleIndexes] : sampleIndexesByBand) {
+        test.require(sampleIndexes.size() >= 8,
+                     "contiguous generator emits several sampleIndex values per band");
+        auto previous = sampleIndexes.begin();
+        for (auto current = std::next(previous); current != sampleIndexes.end();
+             previous = current++) {
+            test.require(*current - *previous <= 2,
+                         "contiguous generator keeps early pulse gaps small");
+        }
+        test.require(bandIndex == 0, "contiguous generator uses the configured band");
     }
 }
 
@@ -180,6 +256,58 @@ void testInvalidPulseWidthProducesNoSamplesForBand(TestRunner& test)
         test.require(sample.bandIndex != 0,
                      "pulse width greater than or equal to period produces no samples for band");
     }
+}
+
+void testGeneratorAndEstimatorEstimatePulseSettings(TestRunner& test)
+{
+    constexpr std::uint64_t periodSamples = 312'500;
+    constexpr std::uint64_t widthSamples = 31'250;
+    constexpr std::uint64_t secondPulseLastSampleIndex = periodSamples + widthSamples - 1;
+
+    hardware::SimulatorAntennaState state(45.0);
+    hardware::SimulatorBcoSampleSource source(
+        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(1), 12'500, 0, 1},
+        &state);
+    source.setBandConfigs({makeBandConfig(0, 3'000'000'000LL)});
+    source.setPulseBandConfigs({hardware::SimulatorPulseBandConfig{0, true, 100000.0, 10000.0}});
+
+    std::vector<core::SignalSample> samples;
+    const bool collected = waitForSamplesThroughIndex(source,
+                                                      samples,
+                                                      secondPulseLastSampleIndex,
+                                                      std::chrono::milliseconds(2000));
+    source.stop();
+
+    test.require(collected, "generator produces two pulse windows within timeout");
+    test.require(!samples.empty(), "generator and estimator integration collected samples");
+
+    std::vector<core::SignalSample> firstTwoPulses;
+    for (const auto& sample : samples) {
+        if (sample.sampleIndex <= secondPulseLastSampleIndex) {
+            firstTwoPulses.push_back(sample);
+        }
+    }
+
+    processing::SignalParameterEstimatorConfig config;
+    config.samplePeriodNs = core::DomainConstraints::defaultSamplePeriodNs;
+    config.groupingMode = processing::PulseGroupingMode::AdaptiveGap;
+    const processing::SignalParameterEstimator estimator(config);
+    const auto estimates = estimator.estimate(firstTwoPulses);
+    const auto found = std::find_if(estimates.begin(), estimates.end(), [](const auto& item) {
+        return item.bandIndex == 0;
+    });
+
+    test.require(found != estimates.end(), "generator and estimator produce band 0 parameters");
+    if (found == estimates.end()) {
+        return;
+    }
+
+    test.require(found->pulseCount == 2, "generator and estimator see two pulse windows");
+    test.require(found->pulseRepetitionPeriodUs
+                     && nearly(*found->pulseRepetitionPeriodUs, 100'000.0, 1000.0),
+                 "generator and estimator PRI follows pulse settings");
+    test.require(nearly(found->pulseWidthUs, 10'000.0, 1000.0),
+                 "generator and estimator PW follows pulse settings");
 }
 
 std::map<int, int> firstTargetBeamAmplitudes(TestRunner& test,
@@ -403,7 +531,9 @@ int main()
     TestRunner test;
 
     testDefaultPulseConfigsExist(test);
+    testGeneratorProducesContiguousSamplesInsidePulseWindow(test);
     testPulseMaskRestrictsSamplesToActiveWindow(test);
+    testGeneratorAndEstimatorEstimatePulseSettings(test);
     testDisabledPulseBandProducesNoSamplesForBand(test);
     testInvalidPulseWidthProducesNoSamplesForBand(test);
     testStartProducesValidBatches(test);

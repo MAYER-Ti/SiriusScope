@@ -56,6 +56,85 @@ double samplesToMicroseconds(std::uint64_t sampleCount, std::uint64_t samplePeri
     return static_cast<double>(sampleCount) * static_cast<double>(samplePeriodNs) / 1000.0;
 }
 
+std::uint64_t normalizedThreshold(std::uint64_t threshold,
+                                  const SignalParameterEstimatorConfig& config)
+{
+    return std::max<std::uint64_t>(1,
+                                   std::max(threshold, config.maxIntraPulseGapSamples));
+}
+
+std::uint64_t adaptiveThreshold(std::vector<std::uint64_t> positiveGaps,
+                                const SignalParameterEstimatorConfig& config)
+{
+    if (config.groupingMode == PulseGroupingMode::GapThreshold) {
+        return normalizedThreshold(config.maxIntraPulseGapSamples, config);
+    }
+
+    if (config.minInterPulseGapSamples > 0) {
+        return normalizedThreshold(config.minInterPulseGapSamples - 1, config);
+    }
+
+    if (positiveGaps.size() < 2) {
+        return normalizedThreshold(config.maxIntraPulseGapSamples, config);
+    }
+
+    std::sort(positiveGaps.begin(), positiveGaps.end());
+
+    std::uint64_t bestJump = 0;
+    std::size_t lowerClusterEnd = 0;
+    for (std::size_t i = 1; i < positiveGaps.size(); ++i) {
+        const auto jump = positiveGaps[i] - positiveGaps[i - 1];
+        if (jump > bestJump) {
+            bestJump = jump;
+            lowerClusterEnd = i - 1;
+        }
+    }
+
+    if (bestJump == 0) {
+        return normalizedThreshold(config.maxIntraPulseGapSamples, config);
+    }
+
+    const auto lowerMax = positiveGaps[lowerClusterEnd];
+    const auto upperMin = positiveGaps[lowerClusterEnd + 1];
+    const bool clearSeparation =
+        bestJump > config.maxIntraPulseGapSamples || upperMin > lowerMax * 2;
+    if (!clearSeparation) {
+        return normalizedThreshold(config.maxIntraPulseGapSamples, config);
+    }
+
+    return normalizedThreshold(lowerMax, config);
+}
+
+std::uint64_t groupingThresholdForBand(const std::vector<core::SignalSample>& samples,
+                                       const SignalParameterEstimatorConfig& config)
+{
+    std::vector<std::uint64_t> positiveGaps;
+    positiveGaps.reserve(samples.size());
+
+    auto previousSampleIndex = samples.front().sampleIndex;
+    for (std::size_t i = 1; i < samples.size(); ++i) {
+        const auto currentSampleIndex = samples[i].sampleIndex;
+        if (currentSampleIndex > previousSampleIndex) {
+            positiveGaps.push_back(currentSampleIndex - previousSampleIndex);
+        }
+        previousSampleIndex = currentSampleIndex;
+    }
+
+    return adaptiveThreshold(std::move(positiveGaps), config);
+}
+
+bool shouldKeepPulse(const SignalPulse& pulse,
+                     const SignalParameterEstimatorConfig& config)
+{
+    if (pulse.sampleCount < config.minSamplesPerPulse
+        || pulse.lastSampleIndex < pulse.firstSampleIndex) {
+        return false;
+    }
+
+    const auto widthSamples = pulse.lastSampleIndex - pulse.firstSampleIndex + 1;
+    return config.maxPulseWidthSamples == 0 || widthSamples <= config.maxPulseWidthSamples;
+}
+
 } // namespace
 
 SignalParameterEstimator::SignalParameterEstimator(SignalParameterEstimatorConfig config)
@@ -86,14 +165,18 @@ std::vector<SignalPulse> SignalParameterEstimator::buildPulses(
             continue;
         }
 
+        const auto groupingThreshold = groupingThresholdForBand(bandSamples, m_config);
         auto currentPulse = makePulse(bandSamples.front());
         auto previousSampleIndex = bandSamples.front().sampleIndex;
         for (std::size_t i = 1; i < bandSamples.size(); ++i) {
             const auto& sample = bandSamples[i];
-            if (sample.sampleIndex - previousSampleIndex <= m_config.maxIntraPulseGapSamples) {
+            const auto gap = sample.sampleIndex > previousSampleIndex
+                ? sample.sampleIndex - previousSampleIndex
+                : 0;
+            if (gap == 0 || gap <= groupingThreshold) {
                 appendSample(currentPulse, sample);
             } else {
-                if (currentPulse.sampleCount >= m_config.minSamplesPerPulse) {
+                if (shouldKeepPulse(currentPulse, m_config)) {
                     pulses.push_back(currentPulse);
                 }
                 currentPulse = makePulse(sample);
@@ -101,7 +184,7 @@ std::vector<SignalPulse> SignalParameterEstimator::buildPulses(
             previousSampleIndex = sample.sampleIndex;
         }
 
-        if (currentPulse.sampleCount >= m_config.minSamplesPerPulse) {
+        if (shouldKeepPulse(currentPulse, m_config)) {
             pulses.push_back(currentPulse);
         }
     }
