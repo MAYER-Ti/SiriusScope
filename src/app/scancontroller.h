@@ -11,7 +11,7 @@
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "processing/bearing_service.h"
 #include "processing/sample_processor.h"
-#include "processing/signal_parameter_estimator.h"
+#include "processing/signal_parameter_accumulator.h"
 
 #include <QObject>
 #include <QString>
@@ -94,7 +94,7 @@ public:
     }
     std::size_t collectedSignalSampleCount() const noexcept
     {
-        return m_scanSignalSamples.size();
+        return m_collectedSignalSampleCount;
     }
 
     Q_INVOKABLE void selectSector(double leftAngleDeg, double rightAngleDeg);
@@ -192,13 +192,12 @@ private:
     double m_antennaSpeedDegPerSec = 10.0;
     std::uint64_t m_nextSessionId = 1;
     std::vector<core::BearingResult> m_lastBearingResults;
-    std::vector<core::SignalSample> m_scanSignalSamples;
+    processing::SignalParameterAccumulator m_signalParameterAccumulator;
+    std::size_t m_collectedSignalSampleCount = 0;
     std::vector<processing::SignalParameters> m_lastSignalParameters;
-    processing::SignalParameterEstimator m_signalParameterEstimator;
     QVariantList m_targetBearings;
     QVariantList m_targetAzimuthsDeg;
     std::chrono::steady_clock::time_point m_nextAzimuthLatencyDiagnostic;
-    std::chrono::steady_clock::time_point m_nextSignalSampleOverflowDiagnostic;
 };
 
 } // namespace siriusscope::app

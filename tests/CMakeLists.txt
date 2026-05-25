@@ -53,6 +53,17 @@ target_link_libraries(tst_signal_parameter_estimator
 
 add_test(NAME tst_signal_parameter_estimator COMMAND tst_signal_parameter_estimator)
 
+add_executable(tst_signal_parameter_accumulator
+    processing/tst_signal_parameter_accumulator.cpp
+)
+
+target_link_libraries(tst_signal_parameter_accumulator
+    PRIVATE
+        siriusscope_processing
+)
+
+add_test(NAME tst_signal_parameter_accumulator COMMAND tst_signal_parameter_accumulator)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )

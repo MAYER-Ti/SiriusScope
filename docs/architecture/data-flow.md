@@ -155,9 +155,9 @@ Operator selects sector in AntennaIndicator
     -> SampleProcessor prepares BearingInputFrame
     -> BearingFrameBus
     -> ScanAcquisitionSession stores BearingFrameObservation values with current antenna azimuth
-    -> SignalSampleBus / ScanController collects live SignalSample values for parameter estimation
+    -> SignalSampleBus / ScanController incrementally accumulates signal parameters
     -> BearingService
-    -> SignalParameterEstimator
+    -> SignalParameterAccumulator finalize
     -> BearingResult per BandItem
     -> AntennaIndicator model
     -> ResultTable model
@@ -208,11 +208,13 @@ Bearing results are displayed on `AntennaIndicator` using the color of the
 corresponding `BandItem` and are forwarded through application-level sinks for
 the final result table and archive storage.
 
-During the same active scan session, `ScanController` also collects live
-`SignalSample` values from the application-layer `SignalSampleBus`. After a
-successful scan completion, it runs `SignalParameterEstimator` and keeps the
-latest calculated signal parameters for later integration without changing the
-result table or UI flow.
+During the same active scan session, `ScanController` also receives live
+`SignalSample` values from the application-layer `SignalSampleBus` and passes
+them to `SignalParameterAccumulator`. The accumulator keeps only per-band pulse
+state, counters, and representative frequencies instead of retaining every raw
+sample. After successful scan completion, `ScanController` finalizes the
+accumulator and keeps the latest calculated signal parameters for the result
+table flow without adding a separate UI display.
 
 ## 6. Waterfall display flow
 

@@ -5,7 +5,7 @@
 #include "hardware/simulator/simulator_antenna_state.h"
 #include "hardware/simulator/simulator_bco_sample_source.h"
 #include "infrastructure/interfaces/result_table_storage.h"
-#include "processing/signal_parameter_estimator.h"
+#include "processing/signal_parameter_accumulator.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -204,28 +204,28 @@ void testGeneratorPulseParametersReachResultTableThroughSamples(TestRunner& test
         }
     }
 
-    processing::SignalParameterEstimatorConfig estimatorConfig;
-    estimatorConfig.samplePeriodNs = core::DomainConstraints::defaultSamplePeriodNs;
-    estimatorConfig.groupingMode = processing::PulseGroupingMode::AdaptiveGap;
-    const processing::SignalParameterEstimator estimator(estimatorConfig);
-    const auto estimates = estimator.estimate(firstTwoPulses);
+    processing::SignalParameterEstimatorConfig accumulatorConfig;
+    accumulatorConfig.samplePeriodNs = core::DomainConstraints::defaultSamplePeriodNs;
+    processing::SignalParameterAccumulator accumulator(accumulatorConfig);
+    accumulator.ingest(firstTwoPulses);
+    const auto estimates = accumulator.finalize();
     const auto parameters = std::find_if(estimates.begin(), estimates.end(), [](const auto& item) {
         return item.bandIndex == bandIndex;
     });
 
-    test.require(parameters != estimates.end(), "estimator produces band 0 signal parameters");
+    test.require(parameters != estimates.end(), "accumulator produces band 0 signal parameters");
     if (parameters == estimates.end()) {
         return;
     }
 
-    test.require(parameters->pulseCount >= 2, "estimator sees at least two pulse windows");
+    test.require(parameters->pulseCount >= 2, "accumulator sees at least two pulse windows");
     test.require(parameters->pulseRepetitionPeriodUs
                      && nearly(*parameters->pulseRepetitionPeriodUs,
                                expectedPriUs,
                                toleranceUs),
-                 "estimator calculates PRI from generated samples");
+                 "accumulator calculates PRI from generated samples");
     test.require(nearly(parameters->pulseWidthUs, expectedPwUs, toleranceUs),
-                 "estimator calculates PW from generated samples");
+                 "accumulator calculates PW from generated samples");
 
     app::ResultTableModel resultModel;
     FakeResultTableStorage storage;

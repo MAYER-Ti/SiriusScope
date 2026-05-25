@@ -108,6 +108,8 @@ set(SIRIUSSCOPE_PROCESSING_SOURCES
     src/processing/bearing_service.cpp
     src/processing/sample_processor.h
     src/processing/sample_processor.cpp
+    src/processing/signal_parameter_accumulator.h
+    src/processing/signal_parameter_accumulator.cpp
     src/processing/signal_parameter_estimator.h
     src/processing/signal_parameter_estimator.cpp
     src/processing/spectrum_envelope_processor.h

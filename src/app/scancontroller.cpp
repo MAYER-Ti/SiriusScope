@@ -22,7 +22,6 @@ namespace {
 
 constexpr double kMinScanSpeedDegPerSec = 1.0;
 constexpr double kMaxScanSpeedDegPerSec = 60.0;
-constexpr std::size_t kMaxCollectedSignalSamples = 2'000'000;
 
 bool isActiveState(ScanController::ScanState state)
 {
@@ -316,7 +315,8 @@ void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double
 
     storeSelectedSector(planned.value()->requestedSector);
     clearBearingResults();
-    m_scanSignalSamples.clear();
+    m_signalParameterAccumulator.reset();
+    m_collectedSignalSampleCount = 0;
     m_lastSignalParameters.clear();
 
     ScanSession session;
@@ -367,7 +367,8 @@ void ScanController::stopScan()
     closeActiveAcquisitionWithoutCalculation(sessionId);
     endScanRecording(sessionId);
 
-    m_scanSignalSamples.clear();
+    m_signalParameterAccumulator.reset();
+    m_collectedSignalSampleCount = 0;
     m_activeSession.reset();
     setProgress(0.0);
     setState(ScanState::Cancelled);
@@ -685,16 +686,19 @@ void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
                              static_cast<int>(m_lastBearingResults.size()));
     emit bearingResultsCalculated(static_cast<qulonglong>(sessionId), m_targetBearings);
 
-    if (m_scanSignalSamples.empty()) {
-        m_lastSignalParameters.clear();
+    m_lastSignalParameters = m_signalParameterAccumulator.finalize();
+    m_collectedSignalSampleCount = m_signalParameterAccumulator.acceptedSampleCount();
+    if (m_lastSignalParameters.empty()) {
         publish(infrastructure::DiagnosticSeverity::Warning,
-                "ScanController: no signal samples collected for signal parameter estimation");
+                "ScanController: no signal parameters calculated by streaming accumulator, "
+                "acceptedSamples="
+                    + std::to_string(m_collectedSignalSampleCount));
     } else {
-        m_lastSignalParameters = m_signalParameterEstimator.estimate(m_scanSignalSamples);
         publish(infrastructure::DiagnosticSeverity::Info,
                 "ScanController: signal parameters calculated, bands="
                     + std::to_string(m_lastSignalParameters.size())
-                    + ", samples=" + std::to_string(m_scanSignalSamples.size()));
+                    + ", acceptedSamples=" + std::to_string(m_collectedSignalSampleCount)
+                    + ", raw samples not retained");
     }
     emit signalParametersCalculated(static_cast<qulonglong>(sessionId),
                                     static_cast<int>(m_lastSignalParameters.size()));
@@ -736,7 +740,8 @@ void ScanController::failScan(const QString& reason)
     closeActiveAcquisitionWithoutCalculation(sessionId);
     endScanRecording(sessionId);
 
-    m_scanSignalSamples.clear();
+    m_signalParameterAccumulator.reset();
+    m_collectedSignalSampleCount = 0;
     m_activeSession.reset();
     setLastError(reason);
     setProgress(0.0);
@@ -838,23 +843,8 @@ void ScanController::onSignalSamples(std::vector<core::SignalSample> samples)
         return;
     }
 
-    m_scanSignalSamples.insert(m_scanSignalSamples.end(), samples.begin(), samples.end());
-    if (m_scanSignalSamples.size() <= kMaxCollectedSignalSamples) {
-        return;
-    }
-
-    const auto dropped = m_scanSignalSamples.size() - kMaxCollectedSignalSamples;
-    m_scanSignalSamples.erase(m_scanSignalSamples.begin(),
-                              m_scanSignalSamples.begin()
-                                  + static_cast<std::ptrdiff_t>(dropped));
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= m_nextSignalSampleOverflowDiagnostic) {
-        publish(infrastructure::DiagnosticSeverity::Warning,
-                "ScanController: signal sample buffer overflow, dropped "
-                    + std::to_string(dropped) + " oldest sample(s)");
-        m_nextSignalSampleOverflowDiagnostic = now + std::chrono::seconds{1};
-    }
+    m_signalParameterAccumulator.ingest(samples);
+    m_collectedSignalSampleCount = m_signalParameterAccumulator.acceptedSampleCount();
 }
 
 void ScanController::clearBearingResults()
