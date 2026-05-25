@@ -163,7 +163,7 @@ Item {
             generatorPulseWidthUs: band.generatorPulseWidthUs,
             globalMinHz: root.globalMinHz,
             globalMaxHz: root.globalMaxHz,
-            minAmplitude: 1,
+            minAmplitude: 0,
             maxAmplitude: root.amplitudeMax,
             readOnly: root.bandEditingLocked
         })

@@ -111,6 +111,22 @@ bool nearly(double actual, double expected, double tolerance)
     return std::abs(actual - expected) <= tolerance;
 }
 
+void testDefaultConfigAndBandWidths(TestRunner& test)
+{
+    const hardware::SimulatorBcoSampleSourceConfig config;
+    test.require(config.minVisibleAmplitude == 0,
+                 "default simulator min visible amplitude is zero");
+
+    hardware::SimulatorBcoSampleSource source;
+    const auto bandConfigs = source.bandConfigs();
+    test.require(static_cast<int>(bandConfigs.size()) == core::DomainConstraints::currentBandCount,
+                 "default simulator band configs exist for current bands");
+    for (const auto& bandConfig : bandConfigs) {
+        test.require(bandConfig.widthHz == 500'000'000LL,
+                     "default simulator band width is 500 MHz");
+    }
+}
+
 void testDefaultPulseConfigsExist(TestRunner& test)
 {
     hardware::SimulatorBcoSampleSource source;
@@ -130,6 +146,52 @@ void testDefaultPulseConfigsExist(TestRunner& test)
         test.require(band0->pulseWidthUs == 10000.0,
                      "default pulse width for band 0 is 10000 us");
     }
+}
+
+void testZeroVisibleAmplitudeKeepsWeakValidSamples(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state(143.0);
+    hardware::SimulatorBcoSampleSource source(
+        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(10), 8, 0, 1, 0},
+        &state);
+    source.setBandConfigs({makeBandConfig(0, 3'000'000'000LL)});
+
+    hardware::BcoSampleBatch firstBatch;
+    std::atomic<int> callbackCount = 0;
+    const bool received = waitForBatch(source, firstBatch, callbackCount);
+    source.stop();
+
+    test.require(received, "zero simulator threshold keeps weak valid samples");
+    test.require(!firstBatch.samples.empty(), "zero simulator threshold batch is not empty");
+
+    bool hasWeakValidSample = false;
+    for (const auto& sample : firstBatch.samples) {
+        test.require(sample.amplitude >= core::DomainConstraints::minAmplitude,
+                     "zero simulator threshold does not emit amplitude 0");
+        if (sample.amplitude <= 2) {
+            hasWeakValidSample = true;
+        }
+    }
+    test.require(hasWeakValidSample,
+                 "zero simulator threshold preserves weak amplitude samples");
+}
+
+void testPositiveVisibleAmplitudeFiltersWeakSamples(TestRunner& test)
+{
+    hardware::SimulatorAntennaState state(143.0);
+    hardware::SimulatorBcoSampleSource source(
+        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(10), 8, 0, 1, 30},
+        &state);
+    source.setBandConfigs({makeBandConfig(0, 3'000'000'000LL)});
+
+    hardware::BcoSampleBatch firstBatch;
+    std::atomic<int> callbackCount = 0;
+    const bool received = waitForBatch(source, firstBatch, callbackCount);
+    source.stop();
+
+    test.require(!received, "positive simulator threshold filters weak samples");
+    test.require(callbackCount.load() == 0,
+                 "positive simulator threshold produces no callback for weak samples");
 }
 
 void testGeneratorProducesContiguousSamplesInsidePulseWindow(TestRunner& test)
@@ -312,11 +374,18 @@ void testGeneratorAndEstimatorEstimatePulseSettings(TestRunner& test)
 
 std::map<int, int> firstTargetBeamAmplitudes(TestRunner& test,
                                              double antennaAzimuthDeg,
-                                             const std::string& context)
+                                             const std::string& context,
+                                             int minVisibleAmplitude = 4)
 {
     hardware::SimulatorAntennaState state(antennaAzimuthDeg);
     hardware::SimulatorBcoSampleSource source(
-        hardware::SimulatorBcoSampleSourceConfig{std::chrono::milliseconds(10), 10, 0, 1},
+        hardware::SimulatorBcoSampleSourceConfig{
+            std::chrono::milliseconds(10),
+            10,
+            0,
+            1,
+            minVisibleAmplitude,
+        },
         &state);
     source.setBandConfigs({makeBandConfig(0, 3'000'000'000LL)});
     hardware::BcoSampleBatch firstBatch;
@@ -530,7 +599,10 @@ int main()
 {
     TestRunner test;
 
+    testDefaultConfigAndBandWidths(test);
     testDefaultPulseConfigsExist(test);
+    testZeroVisibleAmplitudeKeepsWeakValidSamples(test);
+    testPositiveVisibleAmplitudeFiltersWeakSamples(test);
     testGeneratorProducesContiguousSamplesInsidePulseWindow(test);
     testPulseMaskRestrictsSamplesToActiveWindow(test);
     testGeneratorAndEstimatorEstimatePulseSettings(test);

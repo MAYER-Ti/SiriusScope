@@ -28,7 +28,7 @@ constexpr double kBeamHalfSeparationDeg = 30.0;
 
 constexpr std::array<std::int64_t, 5> kDefaultWidthsHz = {
     500'000'000LL,
-    410'000'000LL,
+    500'000'000LL,
     500'000'000LL,
     500'000'000LL,
     500'000'000LL,
@@ -214,10 +214,14 @@ std::optional<int> toVisibleBcoAmplitude(double value, int minVisibleAmplitude)
     }
 
     const int amplitude = static_cast<int>(std::lround(value));
-    const int threshold = std::clamp(minVisibleAmplitude,
-                                     core::DomainConstraints::minAmplitude,
-                                     core::DomainConstraints::maxAmplitude);
-    if (amplitude < threshold) {
+    if (amplitude < core::DomainConstraints::minAmplitude) {
+        return std::nullopt;
+    }
+
+    const int configuredThreshold = std::clamp(minVisibleAmplitude,
+                                               0,
+                                               core::DomainConstraints::maxAmplitude);
+    if (configuredThreshold > 0 && amplitude < configuredThreshold) {
         return std::nullopt;
     }
 

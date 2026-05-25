@@ -19,7 +19,7 @@ Window {
     property bool generatorSettingsVisible: AppState.mode === AppState.Test
     property real globalMinHz: 0
     property real globalMaxHz: 0
-    property real minAmplitude: 1
+    property real minAmplitude: 0
     property real maxAmplitude: 127
     property bool readOnly: false
 
@@ -639,7 +639,7 @@ Window {
         }
 
         if (threshold < minAmplitude || threshold > maxAmplitude) {
-            errorText.text = qsTr("Амплитудный фильтр должен быть в допустимом диапазоне.")
+            errorText.text = qsTr("Амплитудный порог должен быть в диапазоне 0..127.")
             return false
         }
 

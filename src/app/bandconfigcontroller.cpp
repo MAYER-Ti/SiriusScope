@@ -12,7 +12,7 @@ namespace siriusscope::app {
 
 namespace {
 
-constexpr double kMinThresholdAmplitude = 1.0;
+constexpr double kMinThresholdAmplitude = 0.0;
 constexpr double kMaxThresholdAmplitude = 127.0;
 
 } // namespace
@@ -58,7 +58,7 @@ bool BandConfigController::applyBandSettings(int bandId,
     }
     if (!isValidThreshold(thresholdAmplitude)) {
         return rejectApply(bandId,
-                           QStringLiteral("threshold amplitude must be in range 1..127"));
+                           QStringLiteral("threshold amplitude must be in range 0..127"));
     }
 
     const QString normalized = normalizedPolarization(polarization);

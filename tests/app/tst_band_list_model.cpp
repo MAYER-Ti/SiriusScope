@@ -45,8 +45,15 @@ void testDefaultBands(TestRunner& test)
             model.getByBandId(bandId).value(QStringLiteral("thresholdAmplitude")).toDouble();
         test.require(config != nullptr, "band config exists");
         test.require(config && config->validate().isValid(), "default band config is valid");
-        test.require(threshold >= 1.0 && threshold <= 127.0,
-                     "default threshold is in 1..127 range");
+        test.require(config && config->widthHz == 500'000'000LL,
+                     "default band width is 500 MHz");
+        test.require(threshold == 0.0, "default threshold disables additional amplitude filter");
+
+        const auto band = model.getByBandId(bandId);
+        test.require(band.value(QStringLiteral("generatorPulsePeriodUs")).toDouble() == 100000.0,
+                     "generator pulse period default is unchanged");
+        test.require(band.value(QStringLiteral("generatorPulseWidthUs")).toDouble() == 10000.0,
+                     "generator pulse width default is unchanged");
     }
 }
 

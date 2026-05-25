@@ -35,7 +35,7 @@ WaterfallControllerStub::WaterfallControllerStub(FrequencyViewportModel *viewpor
     , m_storage(std::make_unique<InMemoryWaterfallStorage>())
     , m_syntheticBands({
           SyntheticBandRange{3.0e9, 5.0e8},
-          SyntheticBandRange{5.795e9, 4.10e8},
+          SyntheticBandRange{5.795e9, 5.0e8},
           SyntheticBandRange{8.25e9, 5.0e8},
           SyntheticBandRange{9.55e9, 5.0e8},
           SyntheticBandRange{14.25e9, 5.0e8}

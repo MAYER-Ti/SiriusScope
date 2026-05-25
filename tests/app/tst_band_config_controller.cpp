@@ -234,10 +234,12 @@ void testThresholdPreview(TestRunner& test)
 
     const double originalCenter = model.getByBandId(3).value(QStringLiteral("centerHz")).toDouble();
     const bool ok = controller.setBandThresholdPreview(3, 70.0);
+    const bool zeroOk = controller.setBandThresholdPreview(3, 0.0);
 
     test.require(ok, "threshold preview is accepted");
+    test.require(zeroOk, "zero threshold preview is accepted");
     test.require(bco.applySingleCount == 0, "threshold preview does not call BCO");
-    test.require(model.getByBandId(3).value(QStringLiteral("thresholdAmplitude")).toDouble() == 70.0,
+    test.require(model.getByBandId(3).value(QStringLiteral("thresholdAmplitude")).toDouble() == 0.0,
                  "threshold preview updates threshold");
     test.require(model.getByBandId(3).value(QStringLiteral("centerHz")).toDouble() == originalCenter,
                  "threshold preview keeps center frequency");
@@ -258,8 +260,28 @@ void testThresholdRange(TestRunner& test)
                                                      0,
                                                      0,
                                                      QStringLiteral("horizontal"));
-        test.require(!ok, "threshold 0 is rejected");
-        test.require(bco.applySingleCount == 0, "threshold 0 is not sent to BCO");
+        test.require(ok, "threshold 0 is accepted");
+        test.require(bco.applySingleCount == 1, "threshold 0 is sent to BCO");
+        test.require(!bco.appliedConfigs.empty()
+                         && bco.appliedConfigs.back().centerFrequencyHz == 3'000'000'000LL,
+                     "threshold 0 apply still sends the band config");
+    }
+
+    {
+        BandListModel model;
+        RecordingBcoControl bco;
+        RecordingDiagnosticsSink diagnostics;
+        BandConfigController controller(&model, &bco, &diagnostics);
+
+        const bool ok = controller.applyBandSettings(0,
+                                                     3'000'000'000.0,
+                                                     500'000'000.0,
+                                                     -1.0,
+                                                     0,
+                                                     0,
+                                                     QStringLiteral("horizontal"));
+        test.require(!ok, "negative threshold is rejected");
+        test.require(bco.applySingleCount == 0, "negative threshold is not sent to BCO");
     }
 
     {

@@ -24,7 +24,7 @@ struct SimulatorBcoSampleSourceConfig
     std::uint64_t firstSampleIndex = 0;
     std::uint64_t sampleIndexStep = 1;
     // Values below this threshold are treated as no beam hit, not as BCO samples.
-    int minVisibleAmplitude = 4;
+    int minVisibleAmplitude = 0;
 };
 
 struct SimulatorPulseBandConfig
