@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace siriusscope::app {
 namespace {
@@ -122,9 +123,19 @@ QString qualityText(std::optional<double> quality)
     return QStringLiteral("%1%").arg(static_cast<int>(std::round(*quality * 100.0)));
 }
 
+bool isValidDurationUs(std::optional<double> value)
+{
+    return value && std::isfinite(*value) && *value > 0.0;
+}
+
+double durationRoleValue(std::optional<double> value)
+{
+    return isValidDurationUs(value) ? *value : -1.0;
+}
+
 QString formatDurationUs(std::optional<double> value)
 {
-    if (!value) {
+    if (!isValidDurationUs(value)) {
         return QStringLiteral("Н/Д");
     }
 
@@ -188,11 +199,11 @@ QVariant ResultTableModel::data(const QModelIndex& index, int role) const
     case QualityTextRole:
         return qualityText(row.quality);
     case PulseRepetitionPeriodUsRole:
-        return row.pulseRepetitionPeriodUs ? *row.pulseRepetitionPeriodUs : -1.0;
+        return durationRoleValue(row.pulseRepetitionPeriodUs);
     case PulseRepetitionPeriodTextRole:
         return formatDurationUs(row.pulseRepetitionPeriodUs);
     case PulseWidthUsRole:
-        return row.pulseWidthUs ? *row.pulseWidthUs : -1.0;
+        return durationRoleValue(row.pulseWidthUs);
     case PulseWidthTextRole:
         return formatDurationUs(row.pulseWidthUs);
     case StatusTextRole:

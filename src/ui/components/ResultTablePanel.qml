@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import SiriusScope 1.0
 
@@ -65,8 +66,16 @@ Panel {
                         HeaderCell { width: tableContent.width * 170 / root.tableWeight; title: qsTr("Частоты") }
                         HeaderCell { width: tableContent.width * 90 / root.tableWeight; title: qsTr("Качество") }
                         HeaderCell { width: tableContent.width * 110 / root.tableWeight; title: qsTr("Состояние") }
-                        HeaderCell { width: tableContent.width * 110 / root.tableWeight; title: qsTr("ППИ") }
-                        HeaderCell { width: tableContent.width * 110 / root.tableWeight; title: qsTr("ДИ") }
+                        HeaderCell {
+                            width: tableContent.width * 110 / root.tableWeight
+                            title: qsTr("ППИ")
+                            toolTip: qsTr("Период повторения импульсов (PRI)")
+                        }
+                        HeaderCell {
+                            width: tableContent.width * 110 / root.tableWeight
+                            title: qsTr("ДИ")
+                            toolTip: qsTr("Длительность импульса (PW)")
+                        }
                     }
 
                     ListView {
@@ -153,11 +162,20 @@ Panel {
 
     component HeaderCell: Rectangle {
         property string title: ""
+        property string toolTip: ""
 
         height: 32
         color: Theme.chipBackground
         border.color: Theme.divider
         border.width: 1
+
+        ToolTip.visible: toolTip.length > 0 && headerHover.hovered
+        ToolTip.text: toolTip
+        ToolTip.delay: 600
+
+        HoverHandler {
+            id: headerHover
+        }
 
         Text {
             anchors.fill: parent

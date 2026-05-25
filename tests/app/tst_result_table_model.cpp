@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -215,6 +216,118 @@ void testQualityAndDiagnosticsText(TestRunner& test)
                  "diagnosticsText includes message");
 }
 
+void testMissingPulseParametersText(TestRunner& test)
+{
+    ResultTableModel model;
+    auto row = makeRow();
+    row.pulseRepetitionPeriodUs = std::nullopt;
+    row.pulseWidthUs = std::nullopt;
+
+    model.appendRow(row);
+
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodUsRole).toDouble()
+                     == -1.0,
+                 "missing PRI numeric role returns -1");
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodTextRole).toString()
+                     == QStringLiteral("Н/Д"),
+                 "missing PRI text is N/D");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthUsRole).toDouble() == -1.0,
+                 "missing PW numeric role returns -1");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("Н/Д"),
+                 "missing PW text is N/D");
+}
+
+void testMicrosecondPulseParametersText(TestRunner& test)
+{
+    ResultTableModel model;
+    auto row = makeRow();
+    row.pulseRepetitionPeriodUs = 320.0;
+    row.pulseWidthUs = 640.0;
+
+    model.appendRow(row);
+
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodTextRole).toString()
+                     == QStringLiteral("320 мкс"),
+                 "PRI under one millisecond is formatted in microseconds");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("640 мкс"),
+                 "PW under one millisecond is formatted in microseconds");
+}
+
+void testMillisecondPulseParametersText(TestRunner& test)
+{
+    ResultTableModel model;
+    auto row = makeRow();
+    row.pulseRepetitionPeriodUs = 100'000.0;
+    row.pulseWidthUs = 10'000.0;
+
+    model.appendRow(row);
+
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodTextRole).toString()
+                     == QStringLiteral("100 мс"),
+                 "PRI at or above one millisecond is formatted in milliseconds");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("10 мс"),
+                 "PW at or above one millisecond is formatted in milliseconds");
+
+    auto fractionalRow = makeRow(13, 1'700'000'001'000'000'000LL, 1);
+    fractionalRow.pulseRepetitionPeriodUs = 100'000.125;
+    fractionalRow.pulseWidthUs = 1'000.0;
+    model.appendRow(fractionalRow);
+
+    test.require(dataAt(model, 0, ResultTableModel::PulseRepetitionPeriodTextRole).toString()
+                     == QStringLiteral("100 мс"),
+                 "fractional milliseconds trim insignificant zero decimals");
+    test.require(dataAt(model, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("1 мс"),
+                 "one millisecond is formatted in milliseconds");
+}
+
+void testInvalidPulseParametersText(TestRunner& test)
+{
+    ResultTableModel zeroAndNegativeModel;
+    auto zeroAndNegativeRow = makeRow();
+    zeroAndNegativeRow.pulseRepetitionPeriodUs = 0.0;
+    zeroAndNegativeRow.pulseWidthUs = -1.0;
+
+    zeroAndNegativeModel.appendRow(zeroAndNegativeRow);
+
+    test.require(dataAt(zeroAndNegativeModel, 0, ResultTableModel::PulseRepetitionPeriodUsRole)
+                     .toDouble()
+                     == -1.0,
+                 "zero PRI numeric role returns -1");
+    test.require(dataAt(zeroAndNegativeModel, 0, ResultTableModel::PulseRepetitionPeriodTextRole)
+                     .toString()
+                     == QStringLiteral("Н/Д"),
+                 "zero PRI text is N/D");
+    test.require(dataAt(zeroAndNegativeModel, 0, ResultTableModel::PulseWidthUsRole).toDouble()
+                     == -1.0,
+                 "negative PW numeric role returns -1");
+    test.require(dataAt(zeroAndNegativeModel, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("Н/Д"),
+                 "negative PW text is N/D");
+
+    ResultTableModel nanModel;
+    auto nanRow = makeRow();
+    nanRow.pulseRepetitionPeriodUs = std::numeric_limits<double>::quiet_NaN();
+    nanRow.pulseWidthUs = std::numeric_limits<double>::quiet_NaN();
+
+    nanModel.appendRow(nanRow);
+
+    test.require(dataAt(nanModel, 0, ResultTableModel::PulseRepetitionPeriodUsRole).toDouble()
+                     == -1.0,
+                 "NaN PRI numeric role returns -1");
+    test.require(dataAt(nanModel, 0, ResultTableModel::PulseRepetitionPeriodTextRole).toString()
+                     == QStringLiteral("Н/Д"),
+                 "NaN PRI text is N/D");
+    test.require(dataAt(nanModel, 0, ResultTableModel::PulseWidthUsRole).toDouble() == -1.0,
+                 "NaN PW numeric role returns -1");
+    test.require(dataAt(nanModel, 0, ResultTableModel::PulseWidthTextRole).toString()
+                     == QStringLiteral("Н/Д"),
+                 "NaN PW text is N/D");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -228,6 +341,10 @@ int main(int argc, char* argv[])
     testAppendInsertsNewRowsAtTop(test);
     testResetAndDeduplication(test);
     testQualityAndDiagnosticsText(test);
+    testMissingPulseParametersText(test);
+    testMicrosecondPulseParametersText(test);
+    testMillisecondPulseParametersText(test);
+    testInvalidPulseParametersText(test);
 
     return test.result();
 }

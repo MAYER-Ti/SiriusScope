@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -96,6 +97,23 @@ siriusscope::core::ResultTableRow makeRow(
 QString resultTableDir(const QTemporaryDir& tempDir)
 {
     return QDir(tempDir.path()).filePath(QStringLiteral("result_table"));
+}
+
+bool nearly(double left, double right, double epsilon = 1e-9)
+{
+    return std::fabs(left - right) <= epsilon;
+}
+
+const siriusscope::core::ResultTableRow* findRowBySampleIndex(
+    const std::vector<siriusscope::core::ResultTableRow>& rows,
+    std::uint64_t sampleIndex)
+{
+    for (const auto& row : rows) {
+        if (row.sampleIndex == sampleIndex) {
+            return &row;
+        }
+    }
+    return nullptr;
 }
 
 void writeUnsupportedVersionFile(const QString& dataRootPath, std::uint32_t formatVersion = 999)
@@ -210,6 +228,49 @@ void testSignalParametersNullRoundTrip(TestRunner& test)
     test.require(!rows.front().pulseWidthUs, "null pulse width round-trips");
 }
 
+void testSignalParametersPresentAndMissingRoundTrip(TestRunner& test)
+{
+    QTemporaryDir tempDir(tempDirTemplate());
+    RecordingDiagnosticsSink diagnostics;
+    BinaryResultTableStorage storage({tempDir.path(), false}, &diagnostics);
+
+    const auto withParameters = makeRow(21,
+                                        1'700'000'030'000'000'000LL,
+                                        1,
+                                        0.5,
+                                        100'000.0,
+                                        10'000.0);
+    const auto withoutParameters = makeRow(22,
+                                           1'700'000'031'000'000'000LL,
+                                           2,
+                                           0.5,
+                                           std::nullopt,
+                                           std::nullopt);
+
+    storage.append(withParameters);
+    storage.append(withoutParameters);
+    const auto rows = storage.readAll();
+
+    const auto* restoredWithParameters = findRowBySampleIndex(rows, withParameters.sampleIndex);
+    const auto* restoredWithoutParameters =
+        findRowBySampleIndex(rows, withoutParameters.sampleIndex);
+
+    test.require(rows.size() == 2, "readAll returns rows with and without signal parameters");
+    test.require(restoredWithParameters != nullptr, "row with signal parameters is restored");
+    test.require(restoredWithParameters && restoredWithParameters->pulseRepetitionPeriodUs
+                     && nearly(*restoredWithParameters->pulseRepetitionPeriodUs, 100'000.0),
+                 "PRI value is restored");
+    test.require(restoredWithParameters && restoredWithParameters->pulseWidthUs
+                     && nearly(*restoredWithParameters->pulseWidthUs, 10'000.0),
+                 "PW value is restored");
+    test.require(restoredWithoutParameters != nullptr,
+                 "row without signal parameters is restored");
+    test.require(restoredWithoutParameters && !restoredWithoutParameters->pulseRepetitionPeriodUs,
+                 "missing PRI stays nullopt");
+    test.require(restoredWithoutParameters && !restoredWithoutParameters->pulseWidthUs,
+                 "missing PW stays nullopt");
+}
+
 void testV1FormatRejected(TestRunner& test)
 {
     QTemporaryDir tempDir(tempDirTemplate());
@@ -311,6 +372,7 @@ int main(int argc, char* argv[])
     testAppendReadAllRoundTrip(test);
     testMultipleRowsSortedAndQualityNull(test);
     testSignalParametersNullRoundTrip(test);
+    testSignalParametersPresentAndMissingRoundTrip(test);
     testV1FormatRejected(test);
     testUnsupportedExistingFormatDoesNotBlockAppend(test);
     testEmptyStorage(test);
