@@ -269,6 +269,22 @@ target_include_directories(tst_waterfall_render_buffer_adapter
 
 add_test(NAME tst_waterfall_render_buffer_adapter COMMAND tst_waterfall_render_buffer_adapter)
 
+add_executable(tst_realtime_signal_pipeline
+    app/tst_realtime_signal_pipeline.cpp
+)
+
+target_link_libraries(tst_realtime_signal_pipeline
+    PRIVATE
+        siriusscope_application
+)
+
+target_include_directories(tst_realtime_signal_pipeline
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_realtime_signal_pipeline COMMAND tst_realtime_signal_pipeline)
+
 add_executable(tst_waterfall_controller
     app/tst_waterfall_controller.cpp
 )
@@ -614,6 +630,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_waterfall_render_buffer_adapter PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_realtime_signal_pipeline PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_waterfall_controller PROPERTIES

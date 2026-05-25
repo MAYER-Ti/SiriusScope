@@ -2,6 +2,7 @@
 
 #include "bearingframebus.h"
 #include "frequencyviewportmodel.h"
+#include "realtimesignalpipeline.h"
 #include "signalsamplebus.h"
 #include "spectrumenvelopeworker.h"
 #include "waterfallringbuffer.h"
@@ -653,7 +654,7 @@ void WaterfallController::processingLoop()
         workerConfigRevision = m_configRevision;
     }
 
-    processing::SampleProcessor processor(config);
+    RealtimeSignalPipeline pipeline(RealtimeSignalPipelineConfig{config});
     std::vector<core::SignalSample> pendingSamples;
     std::size_t pendingEmptyBatches = 0;
     std::uint64_t workerFlushRequestId = 0;
@@ -718,7 +719,7 @@ void WaterfallController::processingLoop()
         };
 
         if (configChanged) {
-            processor = processing::SampleProcessor(config);
+            pipeline.setProcessingConfig(config);
             pendingSamples.clear();
             pendingEmptyBatches = 0;
         }
@@ -767,7 +768,14 @@ void WaterfallController::processingLoop()
                 m_signalSampleBus->publish(processingBatch.samples);
             }
 
-            auto processingResult = processor.processBatch(processingBatch);
+            auto pipelineResult = pipeline.process(RealtimeSignalPipelineInput{
+                std::move(processingBatch),
+            });
+            if (pipelineResult.emptyBatchCount > 0) {
+                publish(infrastructure::DiagnosticSeverity::Info, "sample batch is empty");
+            }
+
+            auto& processingResult = pipelineResult.processingResult;
             publishProcessingDiagnostics(processingResult.diagnostics);
             if (m_bearingFrameBus) {
                 m_bearingFrameBus->publish(processingResult.bearingFrames);

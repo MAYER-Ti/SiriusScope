@@ -47,6 +47,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/nullresulttablesink.cpp
     src/app/recordingcontroller.h
     src/app/recordingcontroller.cpp
+    src/app/realtimesignalpipeline.h
+    src/app/realtimesignalpipeline.cpp
     src/app/resulttablecontroller.h
     src/app/resulttablecontroller.cpp
     src/app/resulttablemodel.h

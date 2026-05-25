@@ -1,5 +1,6 @@
 #include "app/bearingframebus.h"
 #include "app/frequencyviewportmodel.h"
+#include "app/signalsamplebus.h"
 #include "app/spectrumenvelopecontroller.h"
 #include "app/spectrumenvelopeworker.h"
 #include "app/waterfallcontroller.h"
@@ -317,6 +318,55 @@ void testProcessingPublishesBearingFrames(TestRunner& test)
     });
 
     test.require(published, "WaterfallController publishes bearing frames to bus");
+}
+
+void testProcessingPublishesSignalSamples(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    app::SignalSampleBus signalSampleBus;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 128;
+    config.visibleRowCount = 16;
+    config.sourceFlushIntervalMs = 20;
+
+    std::mutex mutex;
+    std::vector<core::SignalSample> receivedSamples;
+    signalSampleBus.subscribe([&](std::vector<core::SignalSample> samples) {
+        std::lock_guard lock(mutex);
+        receivedSamples = std::move(samples);
+    });
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config,
+                                                     nullptr,
+                                                     &signalSampleBus);
+    controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
+
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
+                                               makeSample(bands, 1, 0, 1, 40)}});
+
+    const bool published = waitUntil([&] {
+        std::lock_guard lock(mutex);
+        return receivedSamples.size() == 2;
+    });
+
+    test.require(published, "WaterfallController publishes raw signal samples to bus");
+    {
+        std::lock_guard lock(mutex);
+        test.require(receivedSamples.size() == 2 && receivedSamples[0].sampleIndex == 1
+                         && receivedSamples[1].sampleIndex == 1,
+                     "SignalSampleBus receives the original sample payload");
+    }
 }
 
 void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
@@ -637,6 +687,7 @@ int main(int argc, char *argv[])
     testInactiveSessionIgnoresRenderableRows(test);
     testInputBatchUpdatesModel(test);
     testProcessingPublishesBearingFrames(test);
+    testProcessingPublishesSignalSamples(test);
     testInputBatchUpdatesSpectrumEnvelope(test);
     testFlushProcessingDrainsQueuedBatches(test);
     testFlushProcessingAsyncDrainsQueuedBatches(test);
