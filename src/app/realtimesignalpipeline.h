@@ -8,6 +8,10 @@
 #include <cstddef>
 #include <optional>
 
+namespace siriusscope::infrastructure {
+class IDiagnosticsSink;
+}
+
 namespace siriusscope::app {
 
 class BearingFrameBus;
@@ -21,6 +25,7 @@ struct RealtimeSignalPipelineConfig
     double sourceMinHz = 300e6;
     double sourceMaxHz = 18e9;
     int renderBinCount = 1024;
+    infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr;
 };
 
 struct RealtimeSignalPipelineInput
@@ -48,13 +53,18 @@ public:
     void setWaterfallRenderContext(double sourceMinHz,
                                    double sourceMaxHz,
                                    int renderBinCount) noexcept;
+    void setDiagnosticsSink(infrastructure::IDiagnosticsSink* sink) noexcept;
     RealtimeSignalPipelineResult process(RealtimeSignalPipelineInput input);
 
 private:
+    void publishProcessingDiagnostics(
+        const std::vector<processing::ProcessingDiagnostic>& diagnostics) const;
+
     processing::SampleProcessingConfig m_processingConfig;
     processing::SampleProcessor m_processor;
     SignalSampleBus* m_signalSampleBus = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
+    infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     double m_sourceMinHz = 300e6;
     double m_sourceMaxHz = 18e9;
     int m_renderBinCount = 1024;

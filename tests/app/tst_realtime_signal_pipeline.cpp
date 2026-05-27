@@ -1,6 +1,7 @@
 #include "app/bearingframebus.h"
 #include "app/realtimesignalpipeline.h"
 #include "app/signalsamplebus.h"
+#include "infrastructure/interfaces/diagnostics_sink.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -29,6 +30,17 @@ public:
 
 private:
     int m_failed = 0;
+};
+
+class CapturingDiagnosticsSink final : public infrastructure::IDiagnosticsSink
+{
+public:
+    void publish(const infrastructure::DiagnosticEvent& event) override
+    {
+        events.push_back(event);
+    }
+
+    std::vector<infrastructure::DiagnosticEvent> events;
 };
 
 core::BandConfig makeBandConfig(int bandIndex)
@@ -78,6 +90,14 @@ bool hasErrorDiagnostic(const processing::SampleProcessingResult& result)
                            return diagnostic.severity
                                == processing::ProcessingDiagnosticSeverity::Error;
                        });
+}
+
+bool hasPipelineProcessingDiagnostic(const CapturingDiagnosticsSink& sink)
+{
+    return std::any_of(sink.events.cbegin(), sink.events.cend(), [](const auto& event) {
+        return event.subsystem == "RealtimeSignalPipeline"
+            && event.message.find("processingCode=") != std::string::npos;
+    });
 }
 
 void testEmptyBatchProducesEmptyProcessingResult(TestRunner& test)
@@ -289,6 +309,47 @@ void testDisablingBusesIsSafe(TestRunner& test)
                  "pipeline still returns processing output with disabled buses");
 }
 
+void testDiagnosticsSinkCanBeNull(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    app::RealtimeSignalPipeline pipeline(app::RealtimeSignalPipelineConfig{config});
+
+    auto batch = makeTwoBeamBatch(band);
+    const auto result = pipeline.process(app::RealtimeSignalPipelineInput{std::move(batch)});
+
+    test.require(result.inputSampleCount == 2,
+                 "pipeline reports input count without diagnostics sink");
+    test.require(!result.processingResult.waterfallFrame.rows.empty()
+                     || !result.processingResult.bearingFrames.empty(),
+                 "pipeline returns processing output without diagnostics sink");
+}
+
+void testProcessingDiagnosticsArePublished(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    CapturingDiagnosticsSink diagnostics;
+    auto pipelineConfig = app::RealtimeSignalPipelineConfig{config};
+    pipelineConfig.diagnosticsSink = &diagnostics;
+    app::RealtimeSignalPipeline pipeline(pipelineConfig);
+
+    auto invalid = makeSample(band, 1, 0, 90);
+    invalid.amplitude = 0;
+    processing::SampleBatch batch;
+    batch.samples = {invalid};
+
+    const auto result = pipeline.process(app::RealtimeSignalPipelineInput{std::move(batch)});
+
+    test.require(result.processingResult.hasDiagnostic(
+                     processing::ProcessingErrorCode::InvalidSampleRejected),
+                 "invalid sample produces processing diagnostic");
+    test.require(!diagnostics.events.empty(),
+                 "pipeline publishes processing diagnostics to sink");
+    test.require(hasPipelineProcessingDiagnostic(diagnostics),
+                 "published diagnostic identifies RealtimeSignalPipeline and processing code");
+}
+
 void testSetProcessingConfigChangesAcceptedBands(TestRunner& test)
 {
     const auto firstBand = makeBandConfig(0);
@@ -340,6 +401,8 @@ int main()
     testEmptyBatchDoesNotPublishRawSamples(test);
     testPipelinePublishesBearingFrames(test);
     testDisablingBusesIsSafe(test);
+    testDiagnosticsSinkCanBeNull(test);
+    testProcessingDiagnosticsArePublished(test);
     testSetProcessingConfigChangesAcceptedBands(test);
 
     return test.result();

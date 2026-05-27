@@ -177,10 +177,6 @@ private:
     qint64 oldestViewportTop(const WaterfallSessionMetadata& metadata) const;
     qint64 newestViewportTop(const WaterfallSessionMetadata& metadata) const;
     void publish(infrastructure::DiagnosticSeverity severity, const std::string& message) const;
-    void publishProcessingDiagnostics(
-        const std::vector<processing::ProcessingDiagnostic>& diagnostics) const;
-    std::string processingDiagnosticMessage(
-        const processing::ProcessingDiagnostic& diagnostic) const;
     void completeAsyncFlushesUpTo(std::uint64_t requestId);
     void completeAsyncFlush(std::uint64_t requestId, core::OperationResult result);
 

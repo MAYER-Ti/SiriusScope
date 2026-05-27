@@ -50,37 +50,6 @@ QString sessionLabel(const WaterfallSessionMetadata& metadata)
     return start.toString(QStringLiteral("dd.MM HH:mm:ss"));
 }
 
-std::string severityName(processing::ProcessingDiagnosticSeverity severity)
-{
-    switch (severity) {
-    case processing::ProcessingDiagnosticSeverity::Info:
-        return "info";
-    case processing::ProcessingDiagnosticSeverity::Warning:
-        return "warning";
-    case processing::ProcessingDiagnosticSeverity::Error:
-        return "error";
-    }
-    return "unknown";
-}
-
-infrastructure::DiagnosticSeverity mapSeverity(processing::ProcessingDiagnosticSeverity severity)
-{
-    switch (severity) {
-    case processing::ProcessingDiagnosticSeverity::Info:
-        return infrastructure::DiagnosticSeverity::Info;
-    case processing::ProcessingDiagnosticSeverity::Warning:
-        return infrastructure::DiagnosticSeverity::Warning;
-    case processing::ProcessingDiagnosticSeverity::Error:
-        return infrastructure::DiagnosticSeverity::Error;
-    }
-    return infrastructure::DiagnosticSeverity::Warning;
-}
-
-std::string domainIssueName(core::ValidationCode code)
-{
-    return std::to_string(static_cast<int>(code));
-}
-
 } // namespace
 
 WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
@@ -661,6 +630,7 @@ void WaterfallController::processingLoop()
         m_sourceMinHz,
         m_sourceMaxHz,
         m_controllerConfig.renderBinCount,
+        m_diagnosticsSink,
     });
     std::vector<core::SignalSample> pendingSamples;
     std::size_t pendingEmptyBatches = 0;
@@ -781,9 +751,6 @@ void WaterfallController::processingLoop()
             if (pipelineResult.emptyBatchCount > 0) {
                 publish(infrastructure::DiagnosticSeverity::Info, "sample batch is empty");
             }
-
-            auto& processingResult = pipelineResult.processingResult;
-            publishProcessingDiagnostics(processingResult.diagnostics);
 
             if (!pipelineResult.renderResult) {
                 completeFlush();
@@ -1121,48 +1088,6 @@ void WaterfallController::publish(infrastructure::DiagnosticSeverity severity,
         message,
         std::chrono::system_clock::now(),
     });
-}
-
-void WaterfallController::publishProcessingDiagnostics(
-    const std::vector<processing::ProcessingDiagnostic>& diagnostics) const
-{
-    for (const auto& diagnostic : diagnostics) {
-        publish(mapSeverity(diagnostic.severity), processingDiagnosticMessage(diagnostic));
-    }
-}
-
-std::string WaterfallController::processingDiagnosticMessage(
-    const processing::ProcessingDiagnostic& diagnostic) const
-{
-    std::ostringstream message;
-    message << diagnostic.message
-            << " [processingCode=" << static_cast<int>(diagnostic.code)
-            << ", severity=" << severityName(diagnostic.severity);
-
-    if (diagnostic.sampleIndex) {
-        message << ", sampleIndex=" << *diagnostic.sampleIndex;
-    }
-    if (diagnostic.bandIndex) {
-        message << ", bandIndex=" << *diagnostic.bandIndex;
-    }
-    if (diagnostic.beamIndex) {
-        message << ", beamIndex=" << *diagnostic.beamIndex;
-    }
-    if (diagnostic.frequencyHz) {
-        message << ", frequencyHz=" << *diagnostic.frequencyHz;
-    }
-    if (!diagnostic.domainIssues.empty()) {
-        message << ", domainIssues=";
-        for (std::size_t i = 0; i < diagnostic.domainIssues.size(); ++i) {
-            if (i > 0) {
-                message << '|';
-            }
-            message << domainIssueName(diagnostic.domainIssues[i].code);
-        }
-    }
-
-    message << ']';
-    return message.str();
 }
 
 } // namespace siriusscope::app
