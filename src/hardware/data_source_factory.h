@@ -6,6 +6,10 @@
 
 #include <memory>
 
+namespace siriusscope::infrastructure {
+class IDiagnosticsSink;
+}
+
 namespace siriusscope::hardware {
 
 class DataSourceFactory
@@ -17,6 +21,10 @@ public:
 
     static std::unique_ptr<IBcoStreamSource> createRealBcoStreamSourceStub(
         const HardwareProfile& profile);
+
+    static std::unique_ptr<IBcoStreamSource> createHighLoadSimulatorBcoStreamSource(
+        const HardwareProfile& profile,
+        infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr);
 };
 
 } // namespace siriusscope::hardware

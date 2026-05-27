@@ -75,6 +75,17 @@ target_link_libraries(tst_simulator_bco_sample_source
 
 add_test(NAME tst_simulator_bco_sample_source COMMAND tst_simulator_bco_sample_source)
 
+add_executable(tst_high_load_simulator_bco_stream_source
+    hardware/tst_high_load_simulator_bco_stream_source.cpp
+)
+
+target_link_libraries(tst_high_load_simulator_bco_stream_source
+    PRIVATE
+        siriusscope_hardware
+)
+
+add_test(NAME tst_high_load_simulator_bco_stream_source COMMAND tst_high_load_simulator_bco_stream_source)
+
 add_executable(tst_legacy_bco_sample_source_adapter
     hardware/tst_legacy_bco_sample_source_adapter.cpp
 )
