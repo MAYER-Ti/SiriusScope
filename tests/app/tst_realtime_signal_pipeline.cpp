@@ -95,6 +95,7 @@ void testEmptyBatchProducesEmptyProcessingResult(TestRunner& test)
                  "empty batch has no waterfall rows");
     test.require(result.processingResult.bearingFrames.empty(),
                  "empty batch has no bearing frames");
+    test.require(!result.renderResult, "empty batch has no render result");
     test.require(result.processingResult.diagnostics.empty(),
                  "pipeline keeps empty batch processing result empty");
 }
@@ -117,6 +118,98 @@ void testValidSamplesAreProcessed(TestRunner& test)
                  "valid batch produces processing output frames");
     test.require(!hasErrorDiagnostic(result.processingResult),
                  "valid batch has no critical processing diagnostics");
+}
+
+void testValidBatchCreatesRenderResult(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    app::RealtimeSignalPipeline pipeline(app::RealtimeSignalPipelineConfig{
+        config,
+        nullptr,
+        nullptr,
+        300e6,
+        18e9,
+        64,
+    });
+
+    auto batch = makeTwoBeamBatch(band);
+    const auto result = pipeline.process(app::RealtimeSignalPipelineInput{
+        std::move(batch),
+        123456789,
+    });
+
+    test.require(result.renderResult.has_value(), "valid batch creates render result");
+    test.require(result.renderResult && result.renderResult->row.utcMs == 123456789,
+                 "render result preserves input UTC time");
+    test.require(result.renderResult && result.renderResult->row.bins.size() == 64,
+                 "render result uses configured bin count");
+}
+
+void testRenderContextChangesBinCount(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    app::RealtimeSignalPipeline pipeline(app::RealtimeSignalPipelineConfig{
+        config,
+        nullptr,
+        nullptr,
+        300e6,
+        18e9,
+        16,
+    });
+
+    auto firstBatch = makeTwoBeamBatch(band, 1);
+    const auto firstResult = pipeline.process(app::RealtimeSignalPipelineInput{
+        std::move(firstBatch),
+        1,
+    });
+
+    pipeline.setWaterfallRenderContext(300e6, 18e9, 32);
+
+    auto secondBatch = makeTwoBeamBatch(band, 2);
+    const auto secondResult = pipeline.process(app::RealtimeSignalPipelineInput{
+        std::move(secondBatch),
+        2,
+    });
+
+    test.require(firstResult.renderResult && firstResult.renderResult->row.bins.size() == 16,
+                 "initial render context controls bin count");
+    test.require(secondResult.renderResult && secondResult.renderResult->row.bins.size() == 32,
+                 "updated render context controls bin count");
+}
+
+void testInvalidRenderBinCountIsSafe(TestRunner& test)
+{
+    const auto band = makeBandConfig(0);
+    const auto config = makeConfig({band});
+    app::RealtimeSignalPipeline pipeline(app::RealtimeSignalPipelineConfig{
+        config,
+        nullptr,
+        nullptr,
+        300e6,
+        18e9,
+        0,
+    });
+
+    auto firstBatch = makeTwoBeamBatch(band, 1);
+    const auto firstResult = pipeline.process(app::RealtimeSignalPipelineInput{
+        std::move(firstBatch),
+        1,
+    });
+
+    pipeline.setWaterfallRenderContext(300e6, 18e9, 0);
+
+    auto secondBatch = makeTwoBeamBatch(band, 2);
+    const auto secondResult = pipeline.process(app::RealtimeSignalPipelineInput{
+        std::move(secondBatch),
+        2,
+    });
+
+    test.require(firstResult.renderResult && firstResult.renderResult->row.bins.size() >= 1,
+                 "invalid constructor bin count is normalized");
+    test.require(secondResult.renderResult && secondResult.renderResult->row.bins.size() >= 1,
+                 "invalid setter bin count is normalized");
 }
 
 void testPipelinePublishesRawSamples(TestRunner& test)
@@ -240,6 +333,9 @@ int main()
 
     testEmptyBatchProducesEmptyProcessingResult(test);
     testValidSamplesAreProcessed(test);
+    testValidBatchCreatesRenderResult(test);
+    testRenderContextChangesBinCount(test);
+    testInvalidRenderBinCountIsSafe(test);
     testPipelinePublishesRawSamples(test);
     testEmptyBatchDoesNotPublishRawSamples(test);
     testPipelinePublishesBearingFrames(test);

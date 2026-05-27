@@ -658,6 +658,9 @@ void WaterfallController::processingLoop()
         config,
         m_signalSampleBus,
         m_bearingFrameBus,
+        m_sourceMinHz,
+        m_sourceMaxHz,
+        m_controllerConfig.renderBinCount,
     });
     std::vector<core::SignalSample> pendingSamples;
     std::size_t pendingEmptyBatches = 0;
@@ -768,8 +771,12 @@ void WaterfallController::processingLoop()
         }
 
         try {
+            pipeline.setWaterfallRenderContext(m_sourceMinHz,
+                                               m_sourceMaxHz,
+                                               m_controllerConfig.renderBinCount);
             auto pipelineResult = pipeline.process(RealtimeSignalPipelineInput{
                 std::move(processingBatch),
+                QDateTime::currentMSecsSinceEpoch(),
             });
             if (pipelineResult.emptyBatchCount > 0) {
                 publish(infrastructure::DiagnosticSeverity::Info, "sample batch is empty");
@@ -778,20 +785,14 @@ void WaterfallController::processingLoop()
             auto& processingResult = pipelineResult.processingResult;
             publishProcessingDiagnostics(processingResult.diagnostics);
 
-            if (processingResult.waterfallFrame.rows.empty()) {
+            if (!pipelineResult.renderResult) {
                 completeFlush();
                 continue;
             }
 
-            auto renderResult = WaterfallRenderBufferAdapter::adaptFrame(
-                processingResult.waterfallFrame,
-                QDateTime::currentMSecsSinceEpoch(),
-                m_sourceMinHz,
-                m_sourceMaxHz,
-                m_controllerConfig.renderBinCount);
-
             QMetaObject::invokeMethod(this,
-                                      [this, result = std::move(renderResult)]() mutable {
+                                      [this,
+                                       result = std::move(*pipelineResult.renderResult)]() mutable {
                                           appendRenderRow(std::move(result));
                                       },
                                       Qt::QueuedConnection);

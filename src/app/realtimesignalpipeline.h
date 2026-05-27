@@ -1,8 +1,12 @@
 #pragma once
 
 #include "processing/sample_processor.h"
+#include "waterfallrenderbufferadapter.h"
+
+#include <QtGlobal>
 
 #include <cstddef>
+#include <optional>
 
 namespace siriusscope::app {
 
@@ -14,16 +18,21 @@ struct RealtimeSignalPipelineConfig
     processing::SampleProcessingConfig processingConfig;
     SignalSampleBus* signalSampleBus = nullptr;
     BearingFrameBus* bearingFrameBus = nullptr;
+    double sourceMinHz = 300e6;
+    double sourceMaxHz = 18e9;
+    int renderBinCount = 1024;
 };
 
 struct RealtimeSignalPipelineInput
 {
     processing::SampleBatch batch;
+    qint64 utcMs = 0;
 };
 
 struct RealtimeSignalPipelineResult
 {
     processing::SampleProcessingResult processingResult;
+    std::optional<WaterfallRenderBufferAdapterResult> renderResult;
     std::size_t inputSampleCount = 0;
     std::size_t emptyBatchCount = 0;
 };
@@ -36,6 +45,9 @@ public:
     void setProcessingConfig(processing::SampleProcessingConfig config);
     void setSignalSampleBus(SignalSampleBus* bus) noexcept;
     void setBearingFrameBus(BearingFrameBus* bus) noexcept;
+    void setWaterfallRenderContext(double sourceMinHz,
+                                   double sourceMaxHz,
+                                   int renderBinCount) noexcept;
     RealtimeSignalPipelineResult process(RealtimeSignalPipelineInput input);
 
 private:
@@ -43,6 +55,9 @@ private:
     processing::SampleProcessor m_processor;
     SignalSampleBus* m_signalSampleBus = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
+    double m_sourceMinHz = 300e6;
+    double m_sourceMaxHz = 18e9;
+    int m_renderBinCount = 1024;
 };
 
 } // namespace siriusscope::app

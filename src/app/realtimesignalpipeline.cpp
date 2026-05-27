@@ -3,6 +3,7 @@
 #include "app/bearingframebus.h"
 #include "app/signalsamplebus.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace siriusscope::app {
@@ -12,6 +13,9 @@ RealtimeSignalPipeline::RealtimeSignalPipeline(RealtimeSignalPipelineConfig conf
     , m_processor(m_processingConfig)
     , m_signalSampleBus(config.signalSampleBus)
     , m_bearingFrameBus(config.bearingFrameBus)
+    , m_sourceMinHz(config.sourceMinHz)
+    , m_sourceMaxHz(config.sourceMaxHz)
+    , m_renderBinCount(std::max(1, config.renderBinCount))
 {
 }
 
@@ -29,6 +33,15 @@ void RealtimeSignalPipeline::setSignalSampleBus(SignalSampleBus* bus) noexcept
 void RealtimeSignalPipeline::setBearingFrameBus(BearingFrameBus* bus) noexcept
 {
     m_bearingFrameBus = bus;
+}
+
+void RealtimeSignalPipeline::setWaterfallRenderContext(double sourceMinHz,
+                                                       double sourceMaxHz,
+                                                       int renderBinCount) noexcept
+{
+    m_sourceMinHz = sourceMinHz;
+    m_sourceMaxHz = sourceMaxHz;
+    m_renderBinCount = std::max(1, renderBinCount);
 }
 
 RealtimeSignalPipelineResult RealtimeSignalPipeline::process(RealtimeSignalPipelineInput input)
@@ -49,6 +62,15 @@ RealtimeSignalPipelineResult RealtimeSignalPipeline::process(RealtimeSignalPipel
 
     if (m_bearingFrameBus && !result.processingResult.bearingFrames.empty()) {
         m_bearingFrameBus->publish(result.processingResult.bearingFrames);
+    }
+
+    if (!result.processingResult.waterfallFrame.rows.empty()) {
+        result.renderResult = WaterfallRenderBufferAdapter::adaptFrame(
+            result.processingResult.waterfallFrame,
+            input.utcMs,
+            m_sourceMinHz,
+            m_sourceMaxHz,
+            m_renderBinCount);
     }
 
     return result;
