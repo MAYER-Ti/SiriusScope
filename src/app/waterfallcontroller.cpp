@@ -927,12 +927,31 @@ void WaterfallController::appendRenderRow(WaterfallRenderBufferAdapterResult res
     result.row.sessionId = m_activeSessionId;
     m_sessionStorage->appendRow(m_activeSessionId, result.row);
 
-    if (m_timelineViewport.liveMode()) {
+    const bool isLive = m_timelineViewport.liveMode();
+    if (isLive && m_ringBuffer) {
+        m_timelineViewport.jumpToLive(result.row.utcMs);
+
+        const int rowBinCount = static_cast<int>(result.row.bins.size());
+        if (!result.row.bins.isEmpty() && rowBinCount == m_ringBuffer->nbins()) {
+            m_ringBuffer->pushLine(result.row.bins.constData(),
+                                   rowBinCount,
+                                   ++m_generationId);
+            ++m_timeTicksVersion;
+            emit timeTicksChanged();
+
+            notifyPresentationChanged(previousLiveMode, previousUtcText, true);
+            return;
+        }
+
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "waterfall live row rejected: bin count mismatch");
+        updateRenderBuffer();
+    } else if (isLive) {
         m_timelineViewport.jumpToLive(result.row.utcMs);
         updateRenderBuffer();
     }
 
-    notifyPresentationChanged(previousLiveMode, previousUtcText, m_timelineViewport.liveMode());
+    notifyPresentationChanged(previousLiveMode, previousUtcText, isLive);
 }
 
 bool WaterfallController::selectLatestSession()

@@ -13,6 +13,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <functional>
@@ -94,6 +95,85 @@ public:
 
     mutable std::mutex m_mutex;
     std::vector<infrastructure::DiagnosticEvent> events;
+};
+
+class CountingWaterfallSessionStorage final : public IWaterfallSessionStorage
+{
+public:
+    QVector<WaterfallSessionMetadata> listSessions() const override
+    {
+        return m_delegate.listSessions();
+    }
+
+    std::optional<WaterfallSessionMetadata> session(const WaterfallSessionId& id) const override
+    {
+        return m_delegate.session(id);
+    }
+
+    std::optional<WaterfallSessionMetadata> latestSession() const override
+    {
+        return m_delegate.latestSession();
+    }
+
+    std::optional<WaterfallSessionMetadata> previousSession(
+        const WaterfallSessionId& id) const override
+    {
+        return m_delegate.previousSession(id);
+    }
+
+    std::optional<WaterfallSessionMetadata> nextSession(
+        const WaterfallSessionId& id) const override
+    {
+        return m_delegate.nextSession(id);
+    }
+
+    WaterfallSessionMetadata startSession(WaterfallSessionMetadata metadata) override
+    {
+        startSessionCount.fetch_add(1, std::memory_order_relaxed);
+        return m_delegate.startSession(std::move(metadata));
+    }
+
+    bool closeSession(const WaterfallSessionId& id, qint64 endUtcMs) override
+    {
+        closeSessionCount.fetch_add(1, std::memory_order_relaxed);
+        return m_delegate.closeSession(id, endUtcMs);
+    }
+
+    void appendRow(const WaterfallSessionId& id, const WaterfallRow& row) override
+    {
+        appendRowCount.fetch_add(1, std::memory_order_relaxed);
+        m_delegate.appendRow(id, row);
+    }
+
+    QVector<WaterfallRow> loadRows(const WaterfallSessionId& id,
+                                   qint64 fromUtcMs,
+                                   qint64 toUtcMs,
+                                   int maxRows) const override
+    {
+        loadRowsCount.fetch_add(1, std::memory_order_relaxed);
+        return m_delegate.loadRows(id, fromUtcMs, toUtcMs, maxRows);
+    }
+
+    int rowCount(const WaterfallSessionId& id) const override
+    {
+        return m_delegate.rowCount(id);
+    }
+
+    void resetCounts()
+    {
+        appendRowCount.store(0, std::memory_order_relaxed);
+        loadRowsCount.store(0, std::memory_order_relaxed);
+        startSessionCount.store(0, std::memory_order_relaxed);
+        closeSessionCount.store(0, std::memory_order_relaxed);
+    }
+
+    mutable std::atomic<int> appendRowCount{0};
+    mutable std::atomic<int> loadRowsCount{0};
+    mutable std::atomic<int> startSessionCount{0};
+    mutable std::atomic<int> closeSessionCount{0};
+
+private:
+    InMemoryWaterfallSessionStorage m_delegate;
 };
 
 std::vector<core::BandConfig> makeBandConfigs()
@@ -276,6 +356,67 @@ void testInputBatchUpdatesModel(TestRunner& test)
     test.require(copiedLine && hasSignal, "controller updates ring buffer with non-zero samples");
     test.require(controller.sessionActive(), "startRecording enables the active session state");
     test.require(!storage.listSessions().isEmpty(), "startRecording creates an in-memory session");
+}
+
+void testLiveAppendBypassesHistoryReload(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeSampleSource source;
+    RecordingDiagnosticsSink diagnostics;
+    CountingWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+    siriusscope::app::WaterfallControllerConfig config;
+    config.renderBinCount = 128;
+    config.visibleRowCount = 16;
+    config.sourceFlushIntervalMs = 20;
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics,
+                                                     config);
+    controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
+
+    const bool initialHistoryLoadFinished = waitUntil([&controller] {
+        return !controller.historyLoading();
+    });
+    test.require(initialHistoryLoadFinished, "initial recording history load finishes");
+    test.require(storage.startSessionCount.load(std::memory_order_relaxed) == 1,
+                 "startRecording creates one counted session");
+
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const std::uint64_t initialWriteIndex = buffer ? buffer->writeIndex() : 0;
+    storage.resetCounts();
+
+    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
+                                               makeSample(bands, 1, 0, 1, 40)}});
+
+    const bool liveRowReady = waitUntil([&storage, buffer, initialWriteIndex] {
+        return storage.appendRowCount.load(std::memory_order_relaxed) == 1
+            && buffer
+            && buffer->writeIndex() >= initialWriteIndex + 1;
+    });
+    processEventsFor(120);
+
+    QVector<WaterfallBeamBin> copied(buffer ? buffer->nbins() : 0);
+    const bool copiedLine =
+        buffer && buffer->copyLine(0, copied.data(), static_cast<int>(copied.size()));
+    const bool hasSignal = std::any_of(copied.cbegin(), copied.cend(), [](const auto& bin) {
+        return bin.left > 0 || bin.right > 0;
+    });
+
+    test.require(liveRowReady, "live append pushes a row into the ring buffer");
+    test.require(storage.appendRowCount.load(std::memory_order_relaxed) == 1,
+                 "live append still writes one row to storage");
+    test.require(storage.loadRowsCount.load(std::memory_order_relaxed) == 0,
+                 "live append does not reload rows through storage history");
+    test.require(buffer && buffer->writeIndex() == initialWriteIndex + 1,
+                 "live append advances the ring buffer exactly once");
+    test.require(copiedLine && hasSignal,
+                 "live append writes non-zero signal data into the top buffer row");
 }
 
 void testProcessingPublishesBearingFrames(TestRunner& test)
@@ -686,6 +827,7 @@ int main(int argc, char *argv[])
     testControllerStartsWithRecordingDisabled(test);
     testInactiveSessionIgnoresRenderableRows(test);
     testInputBatchUpdatesModel(test);
+    testLiveAppendBypassesHistoryReload(test);
     testProcessingPublishesBearingFrames(test);
     testProcessingPublishesSignalSamples(test);
     testInputBatchUpdatesSpectrumEnvelope(test);
