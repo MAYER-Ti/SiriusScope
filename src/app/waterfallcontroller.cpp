@@ -2,6 +2,7 @@
 
 #include "bearingframebus.h"
 #include "frequencyviewportmodel.h"
+#include "hardware/interfaces/bco_sample_source.h"
 #include "realtimesignalpipeline.h"
 #include "signalsamplebus.h"
 #include "spectrumenvelopeworker.h"
@@ -53,7 +54,7 @@ QString sessionLabel(const WaterfallSessionMetadata& metadata)
 } // namespace
 
 WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
-                                         hardware::IBcoSampleSource* sampleSource,
+                                         hardware::IBcoStreamSource* streamSource,
                                          std::vector<core::BandConfig> bandConfigs,
                                          IWaterfallSessionStorage* sessionStorage,
                                          infrastructure::IDiagnosticsSink* diagnosticsSink,
@@ -64,7 +65,7 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                          QObject* parent)
     : QObject(parent)
     , m_viewportModel(viewportModel)
-    , m_sampleSource(sampleSource)
+    , m_streamSource(streamSource)
     , m_diagnosticsSink(diagnosticsSink)
     , m_bearingFrameBus(bearingFrameBus)
     , m_signalSampleBus(signalSampleBus)
@@ -180,43 +181,44 @@ void WaterfallController::startWorkers()
 core::OperationResult WaterfallController::startLiveSource()
 {
     startWorkers();
-    if (!m_sampleSource) {
+    if (!m_streamSource) {
         publish(infrastructure::DiagnosticSeverity::Warning,
-                "Waterfall sample source is not configured");
-        return core::OperationResult::failure("waterfall sample source is not configured");
+                "Waterfall stream source is not configured");
+        return core::OperationResult::failure("waterfall stream source is not configured");
     }
 
     if (m_sourceStarted) {
         return core::OperationResult::ok();
     }
 
-    const auto started = m_sampleSource->start([this](const hardware::BcoSampleBatch& batch) {
-        enqueueSampleBatch(batch);
+    const auto started = m_streamSource->start([this](
+                                                   hardware::IBcoStreamSource::SampleBlockPtr block) {
+        enqueueSampleBlock(std::move(block));
     });
     if (!started) {
         publish(infrastructure::DiagnosticSeverity::Error,
-                "Waterfall sample source start failed: " + started.message);
+                "Waterfall stream source start failed: " + started.message);
         return started;
     }
 
     m_sourceStarted = true;
     emit sourceActiveChanged();
-    publish(infrastructure::DiagnosticSeverity::Info, "BCO sample source started");
+    publish(infrastructure::DiagnosticSeverity::Info, "BCO stream source started");
     return core::OperationResult::ok();
 }
 
 core::OperationResult WaterfallController::stopLiveSource()
 {
-    if (m_sampleSource && m_sourceStarted) {
-        const auto stopped = m_sampleSource->stop();
+    if (m_streamSource && m_sourceStarted) {
+        const auto stopped = m_streamSource->stop();
         m_sourceStarted = false;
         emit sourceActiveChanged();
         if (!stopped) {
             publish(infrastructure::DiagnosticSeverity::Error,
-                    "Waterfall sample source stop failed: " + stopped.message);
+                    "Waterfall stream source stop failed: " + stopped.message);
             return stopped;
         }
-        publish(infrastructure::DiagnosticSeverity::Info, "BCO sample source stopped");
+        publish(infrastructure::DiagnosticSeverity::Info, "BCO stream source stopped");
     }
     return core::OperationResult::ok();
 }
@@ -241,7 +243,7 @@ void WaterfallController::stopWorkers()
         std::lock_guard lock(m_workerMutex);
         m_workerRunning = false;
         m_stopRequested = false;
-        m_queuedBatches.clear();
+        m_queuedBlocks.clear();
     }
 }
 
@@ -254,7 +256,7 @@ void WaterfallController::setAcceptingLiveSamples(bool accepting)
 void WaterfallController::clearQueuedBatches()
 {
     std::lock_guard lock(m_workerMutex);
-    m_queuedBatches.clear();
+    m_queuedBlocks.clear();
     m_droppedBatchCount = 0;
     m_droppedSampleCount = 0;
 }
@@ -582,8 +584,12 @@ void WaterfallController::commitViewport()
     updateRenderBuffer();
 }
 
-void WaterfallController::enqueueSampleBatch(const hardware::BcoSampleBatch& batch)
+void WaterfallController::enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block)
 {
+    if (!block) {
+        return;
+    }
+
     {
         std::lock_guard lock(m_workerMutex);
         if (!m_acceptingLiveSamples) {
@@ -591,22 +597,27 @@ void WaterfallController::enqueueSampleBatch(const hardware::BcoSampleBatch& bat
         }
 
         if (m_controllerConfig.maxQueuedBatches > 0
-            && m_queuedBatches.size() >= m_controllerConfig.maxQueuedBatches) {
-            const auto& dropped = m_queuedBatches.front();
+            && m_queuedBlocks.size() >= m_controllerConfig.maxQueuedBatches) {
+            const auto& dropped = m_queuedBlocks.front();
             ++m_droppedBatchCount;
-            m_droppedSampleCount += dropped.samples.size();
-            m_queuedBatches.pop_front();
+            if (dropped) {
+                m_droppedSampleCount += dropped->samples.size();
+            }
+            m_queuedBlocks.pop_front();
         }
 
-        m_queuedBatches.push_back(batch);
+        m_queuedBlocks.push_back(block);
     }
 
     m_workerCondition.notify_all();
 
-    if (m_spectrumEnvelopeWorker) {
+    if (m_spectrumEnvelopeWorker && !block->samples.empty()) {
+        hardware::BcoSampleBatch spectrumBatch;
+        spectrumBatch.samples = block->samples;
+
         auto* worker = m_spectrumEnvelopeWorker;
         QMetaObject::invokeMethod(worker,
-                                  [worker, batch]() mutable {
+                                  [worker, batch = std::move(spectrumBatch)]() mutable {
                                       worker->ingestBatch(std::move(batch));
                                   },
                                   Qt::QueuedConnection);
@@ -639,7 +650,7 @@ void WaterfallController::processingLoop()
         + std::chrono::milliseconds(std::max(1, m_controllerConfig.sourceFlushIntervalMs));
 
     for (;;) {
-        std::deque<hardware::BcoSampleBatch> batches;
+        std::deque<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
         std::size_t droppedBatches = 0;
         std::size_t droppedSamples = 0;
         bool configChanged = false;
@@ -652,7 +663,7 @@ void WaterfallController::processingLoop()
                                          nextFlush,
                                          [this, workerConfigRevision, &workerFlushRequestId] {
                                              return m_stopRequested
-                                                 || !m_queuedBatches.empty()
+                                                 || !m_queuedBlocks.empty()
                                                  || m_configRevision != workerConfigRevision
                                                  || m_flushRequestId > workerFlushRequestId;
                                          });
@@ -663,7 +674,7 @@ void WaterfallController::processingLoop()
 
             flushRequested = m_flushRequestId > workerFlushRequestId;
             flushRequestId = m_flushRequestId;
-            batches.swap(m_queuedBatches);
+            blocks.swap(m_queuedBlocks);
             droppedBatches = m_droppedBatchCount;
             droppedSamples = m_droppedSampleCount;
             m_droppedBatchCount = 0;
@@ -704,20 +715,20 @@ void WaterfallController::processingLoop()
         if (droppedBatches > 0) {
             std::ostringstream message;
             message << "dropped " << droppedBatches
-                    << " queued BCO sample batches containing "
+                    << " queued BCO sample blocks containing "
                     << droppedSamples << " samples";
             publish(infrastructure::DiagnosticSeverity::Warning, message.str());
         }
 
-        for (auto& batch : batches) {
-            if (batch.samples.empty()) {
+        for (const auto& block : blocks) {
+            if (!block || block->samples.empty()) {
                 ++pendingEmptyBatches;
                 continue;
             }
 
             pendingSamples.insert(pendingSamples.end(),
-                                  batch.samples.begin(),
-                                  batch.samples.end());
+                                  block->samples.begin(),
+                                  block->samples.end());
         }
 
         const auto now = std::chrono::steady_clock::now();

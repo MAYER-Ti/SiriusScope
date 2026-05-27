@@ -9,6 +9,7 @@
 #include "app/waterfallstorage.h"
 #include "core/domain_models.h"
 #include "hardware/interfaces/bco_control.h"
+#include "hardware/interfaces/bco_stream_source.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -44,10 +45,15 @@ private:
     int m_failed = 0;
 };
 
-class FakeSampleSource final : public hardware::IBcoSampleSource
+class FakeBcoStreamSource final : public hardware::IBcoStreamSource
 {
 public:
-    core::OperationResult start(SampleBatchCallback callback) override
+    core::OperationResult configure(const hardware::BcoStreamConfig&) override
+    {
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult start(SampleBlockCallback callback) override
     {
         m_callback = std::move(callback);
         m_running = true;
@@ -60,8 +66,13 @@ public:
         return core::OperationResult::ok();
     }
 
+    hardware::BcoSourceMetrics metrics() const override
+    {
+        return {};
+    }
+
 private:
-    SampleBatchCallback m_callback;
+    SampleBlockCallback m_callback;
     bool m_running = false;
 };
 
@@ -143,7 +154,7 @@ void testInitialStatuses(TestRunner& test)
     AppState::instance().setMode(AppState::Mode::Test);
 
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;
@@ -203,7 +214,7 @@ void testModeAndSourceStatuses(TestRunner& test)
     AppState::instance().setMode(AppState::Mode::Test);
 
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;
@@ -258,7 +269,7 @@ void testDiagnosticRules(TestRunner& test)
     AppState::instance().setMode(AppState::Mode::Test);
 
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;
@@ -347,7 +358,7 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
     AppState::instance().setMode(AppState::Mode::Test);
 
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     InMemoryWaterfallSessionStorage storage;
     app::DiagnosticsService diagnostics;
     FakeAzimuthSource azimuthSource;

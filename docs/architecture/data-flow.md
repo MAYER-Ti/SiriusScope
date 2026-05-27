@@ -406,7 +406,7 @@ The simulator flow allows SiriusScope to be developed and tested without real ha
 
 ```text
 Simulator source
-    -> same BCO sample source interface
+    -> same BCO sample stream interface
     -> same antenna azimuth source interface
     -> same BCO/antenna control interfaces
     -> Application / Processing / UI

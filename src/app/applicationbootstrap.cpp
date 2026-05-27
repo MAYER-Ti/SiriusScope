@@ -1,6 +1,7 @@
 #include "applicationbootstrap.h"
 
 #include "appstate.h"
+#include "hardware/adapters/legacy_bco_sample_source_adapter.h"
 #include "infrastructure/storage/binary_result_table_storage.h"
 #include "infrastructure/storage/binary_waterfall_session_storage.h"
 #include "qmlsingletons.h"
@@ -116,6 +117,10 @@ ApplicationBootstrap::ApplicationBootstrap()
 
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
     m_bcoSampleSource->setPulseBandConfigs(simulatorPulseConfigsFromBands(m_bandListModel));
+    m_bcoStreamSource =
+        std::make_unique<hardware::LegacyBcoSampleSourceAdapter>(m_bcoSampleSource.get());
+    configureBcoStreamSource();
+
     QMetaObject::invokeMethod(m_spectrumEnvelopeWorker,
                               [worker = m_spectrumEnvelopeWorker,
                                minHz = m_viewportModel.viewMinHz(),
@@ -124,7 +129,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                               },
                               Qt::QueuedConnection);
     m_waterfallController = std::make_unique<WaterfallController>(&m_viewportModel,
-                                                                  m_bcoSampleSource.get(),
+                                                                  m_bcoStreamSource.get(),
                                                                   m_bandListModel.bandConfigs(),
                                                                   m_waterfallSessionStorage.get(),
                                                                   m_diagnosticsService.get(),
@@ -182,6 +187,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                          if (m_waterfallController) {
                              m_waterfallController->setBandConfigs(m_bandListModel.bandConfigs());
                          }
+                         configureBcoStreamSource();
                      });
     QObject::connect(&m_bandConfigController,
                      &BandConfigController::generatorPulseSettingsApplied,
@@ -222,6 +228,32 @@ ApplicationBootstrap::~ApplicationBootstrap()
     }
 
     m_spectrumEnvelopeWorker = nullptr;
+}
+
+void ApplicationBootstrap::configureBcoStreamSource()
+{
+    if (!m_bcoStreamSource) {
+        return;
+    }
+
+    hardware::BcoStreamConfig config;
+    config.bandConfigs = m_bandListModel.bandConfigs();
+    config.timeBase = core::TimeBase{
+        0,
+        0,
+        core::DomainConstraints::defaultSamplePeriodNs,
+    };
+    config.sessionId = 0;
+
+    const auto configured = m_bcoStreamSource->configure(config);
+    if (!configured && m_diagnosticsService) {
+        m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
+            infrastructure::DiagnosticSeverity::Error,
+            "Application",
+            "BCO stream source configure failed: " + configured.message,
+            std::chrono::system_clock::now(),
+        });
+    }
 }
 
 void ApplicationBootstrap::registerQmlSingletons()

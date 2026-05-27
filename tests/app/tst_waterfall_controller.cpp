@@ -6,6 +6,7 @@
 #include "app/waterfallcontroller.h"
 #include "app/waterfallringbuffer.h"
 #include "core/domain_models.h"
+#include "hardware/interfaces/bco_stream_source.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -18,6 +19,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -44,10 +46,15 @@ private:
     int m_failed = 0;
 };
 
-class FakeSampleSource final : public hardware::IBcoSampleSource
+class FakeBcoStreamSource final : public hardware::IBcoStreamSource
 {
 public:
-    core::OperationResult start(SampleBatchCallback callback) override
+    core::OperationResult configure(const hardware::BcoStreamConfig&) override
+    {
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult start(SampleBlockCallback callback) override
     {
         m_callback = std::move(callback);
         m_running = true;
@@ -58,22 +65,31 @@ public:
     core::OperationResult stop() override
     {
         m_running = false;
+        ++m_stopCount;
         return core::OperationResult::ok();
     }
 
-    void emitBatch(const hardware::BcoSampleBatch& batch)
+    hardware::BcoSourceMetrics metrics() const override
+    {
+        return {};
+    }
+
+    void emitBlock(SampleBlockPtr block)
     {
         if (m_running && m_callback) {
-            m_callback(batch);
+            m_callback(std::move(block));
         }
     }
 
     int startCount() const noexcept { return m_startCount; }
+    int stopCount() const noexcept { return m_stopCount; }
+    bool running() const noexcept { return m_running; }
 
 private:
-    SampleBatchCallback m_callback;
+    SampleBlockCallback m_callback;
     bool m_running = false;
     int m_startCount = 0;
+    int m_stopCount = 0;
 };
 
 class RecordingDiagnosticsSink final : public infrastructure::IDiagnosticsSink
@@ -203,6 +219,14 @@ core::SignalSample makeSample(const std::vector<core::BandConfig>& bands,
     return *created.value();
 }
 
+hardware::IBcoStreamSource::SampleBlockPtr makeBlock(std::vector<core::SignalSample> samples)
+{
+    auto block = std::make_shared<hardware::BcoSampleBlock>();
+    block->samples = std::move(samples);
+    block->stats.sampleCount = static_cast<std::uint64_t>(block->samples.size());
+    return block;
+}
+
 bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500)
 {
     QElapsedTimer timer;
@@ -218,7 +242,7 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500)
     return predicate();
 }
 
-bool emitRenderableRow(FakeSampleSource& source,
+bool emitRenderableRow(FakeBcoStreamSource& source,
                        WaterfallRingBuffer* buffer,
                        const std::vector<core::BandConfig>& bands,
                        std::uint64_t sampleIndex)
@@ -228,8 +252,8 @@ bool emitRenderableRow(FakeSampleSource& source,
     }
 
     const std::uint64_t targetWriteIndex = buffer->writeIndex() + 1;
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, sampleIndex, 0, 0, 90),
-                                               makeSample(bands, sampleIndex, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, sampleIndex, 0, 0, 90),
+                                makeSample(bands, sampleIndex, 0, 1, 40)}));
 
     return waitUntil([buffer, targetWriteIndex] {
         return buffer->writeIndex() >= targetWriteIndex;
@@ -256,10 +280,78 @@ double maxEnvelopeSample(const app::SpectrumEnvelopeController& controller)
     return maxValue;
 }
 
+void testStartLiveSourceStartsStreamSource(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics);
+
+    const auto result = controller.startLiveSource();
+
+    test.require(result.success, "startLiveSource succeeds with stream source");
+    test.require(source.startCount() == 1, "startLiveSource starts stream source once");
+    test.require(source.running(), "stream source is running after startLiveSource");
+    test.require(controller.sourceActive(), "controller reports active stream source");
+}
+
+void testStopLiveSourceStopsStreamSource(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     &source,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics);
+
+    const auto startResult = controller.startLiveSource();
+    const auto stopResult = controller.stopLiveSource();
+
+    test.require(startResult.success, "startLiveSource succeeds before stop test");
+    test.require(stopResult.success, "stopLiveSource succeeds with stream source");
+    test.require(source.stopCount() == 1, "stopLiveSource stops stream source once");
+    test.require(!source.running(), "stream source is not running after stopLiveSource");
+    test.require(!controller.sourceActive(), "controller reports inactive stream source");
+}
+
+void testNullStreamSourceReturnsFailure(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    const auto bands = makeBandConfigs();
+
+    siriusscope::app::WaterfallController controller(&viewport,
+                                                     nullptr,
+                                                     bands,
+                                                     &storage,
+                                                     &diagnostics);
+
+    const auto result = controller.startLiveSource();
+
+    test.require(!result, "startLiveSource fails without stream source");
+    test.require(result.message == "waterfall stream source is not configured",
+                 "startLiveSource reports missing stream source");
+    test.require(diagnostics.contains("Waterfall stream source is not configured"),
+                 "missing stream source is published as diagnostic");
+}
+
 void testControllerStartsWithRecordingDisabled(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -284,7 +376,7 @@ void testControllerStartsWithRecordingDisabled(TestRunner& test)
 void testInactiveSessionIgnoresRenderableRows(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -305,8 +397,8 @@ void testInactiveSessionIgnoresRenderableRows(TestRunner& test)
     auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
     const std::uint64_t initialWriteIndex = buffer ? buffer->writeIndex() : 0;
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
-                                               makeSample(bands, 1, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
+                                makeSample(bands, 1, 0, 1, 40)}));
     processEventsFor(120);
 
     test.require(buffer != nullptr, "controller exposes a waterfall ring buffer");
@@ -319,7 +411,7 @@ void testInactiveSessionIgnoresRenderableRows(TestRunner& test)
 void testInputBatchUpdatesModel(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -338,8 +430,8 @@ void testInputBatchUpdatesModel(TestRunner& test)
     controller.startLiveSource();
     controller.startRecording();
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
-                                               makeSample(bands, 1, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
+                                makeSample(bands, 1, 0, 1, 40)}));
 
     auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
     const bool updated = waitUntil([buffer] {
@@ -361,7 +453,7 @@ void testInputBatchUpdatesModel(TestRunner& test)
 void testLiveAppendBypassesHistoryReload(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     CountingWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -391,8 +483,8 @@ void testLiveAppendBypassesHistoryReload(TestRunner& test)
     const std::uint64_t initialWriteIndex = buffer ? buffer->writeIndex() : 0;
     storage.resetCounts();
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
-                                               makeSample(bands, 1, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
+                                makeSample(bands, 1, 0, 1, 40)}));
 
     const bool liveRowReady = waitUntil([&storage, buffer, initialWriteIndex] {
         return storage.appendRowCount.load(std::memory_order_relaxed) == 1
@@ -422,7 +514,7 @@ void testLiveAppendBypassesHistoryReload(TestRunner& test)
 void testProcessingPublishesBearingFrames(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     app::BearingFrameBus bearingFrameBus;
@@ -450,8 +542,8 @@ void testProcessingPublishesBearingFrames(TestRunner& test)
     controller.startRecording();
     controller.startLiveSource();
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
-                                               makeSample(bands, 1, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
+                                makeSample(bands, 1, 0, 1, 40)}));
 
     const bool published = waitUntil([&] {
         std::lock_guard lock(mutex);
@@ -464,7 +556,7 @@ void testProcessingPublishesBearingFrames(TestRunner& test)
 void testProcessingPublishesSignalSamples(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     app::SignalSampleBus signalSampleBus;
@@ -493,8 +585,8 @@ void testProcessingPublishesSignalSamples(TestRunner& test)
     controller.startRecording();
     controller.startLiveSource();
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
-                                               makeSample(bands, 1, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
+                                makeSample(bands, 1, 0, 1, 40)}));
 
     const bool published = waitUntil([&] {
         std::lock_guard lock(mutex);
@@ -513,7 +605,7 @@ void testProcessingPublishesSignalSamples(TestRunner& test)
 void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -550,8 +642,8 @@ void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
     controller.startRecording();
     controller.startLiveSource();
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 1, 0, 0, 90),
-                                               makeSample(bands, 1, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
+                                makeSample(bands, 1, 0, 1, 40)}));
 
     const bool updated = waitUntil([&envelope] {
         return maxEnvelopeSample(envelope) == 90.0;
@@ -564,7 +656,7 @@ void testInputBatchUpdatesSpectrumEnvelope(TestRunner& test)
 void testFlushProcessingDrainsQueuedBatches(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     app::BearingFrameBus bearingFrameBus;
@@ -592,8 +684,8 @@ void testFlushProcessingDrainsQueuedBatches(TestRunner& test)
     controller.startRecording();
     controller.startLiveSource();
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 10, 0, 0, 90),
-                                               makeSample(bands, 10, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 10, 0, 0, 90),
+                                makeSample(bands, 10, 0, 1, 40)}));
     const auto flushResult = controller.flushProcessing(std::chrono::milliseconds{1500});
 
     const bool published = waitUntil([&] {
@@ -608,7 +700,7 @@ void testFlushProcessingDrainsQueuedBatches(TestRunner& test)
 void testFlushProcessingAsyncDrainsQueuedBatches(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     app::BearingFrameBus bearingFrameBus;
@@ -636,8 +728,8 @@ void testFlushProcessingAsyncDrainsQueuedBatches(TestRunner& test)
     controller.startRecording();
     controller.startLiveSource();
 
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 10, 0, 0, 90),
-                                               makeSample(bands, 10, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 10, 0, 0, 90),
+                                makeSample(bands, 10, 0, 1, 40)}));
 
     bool callbackCalled = false;
     core::OperationResult callbackResult;
@@ -659,7 +751,7 @@ void testFlushProcessingAsyncDrainsQueuedBatches(TestRunner& test)
 void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -694,7 +786,7 @@ void testScrollHistoryNoopDoesNotRebuildEmptyHistory(TestRunner& test)
 void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -752,7 +844,7 @@ void testScrollHistoryRebuildsOnlyWhenWindowChanges(TestRunner& test)
 void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -771,7 +863,7 @@ void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
     controller.startRecording();
     controller.startLiveSource();
 
-    source.emitBatch(hardware::BcoSampleBatch{});
+    source.emitBlock(makeBlock({}));
 
     const bool diagnosed = waitUntil([&diagnostics] {
         return diagnostics.contains("sample batch is empty");
@@ -783,7 +875,7 @@ void testEmptyBatchDoesNotCrashAndReportsDiagnostic(TestRunner& test)
 void testStopRecordingFreezesWaterfallFlow(TestRunner& test)
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     const auto bands = makeBandConfigs();
@@ -807,8 +899,8 @@ void testStopRecordingFreezesWaterfallFlow(TestRunner& test)
     const std::uint64_t beforeStopWriteIndex = buffer ? buffer->writeIndex() : 0;
 
     controller.stopRecording();
-    source.emitBatch(hardware::BcoSampleBatch{{makeSample(bands, 2, 0, 0, 90),
-                                               makeSample(bands, 2, 0, 1, 40)}});
+    source.emitBlock(makeBlock({makeSample(bands, 2, 0, 0, 90),
+                                makeSample(bands, 2, 0, 1, 40)}));
     processEventsFor(120);
 
     test.require(firstRowReady, "active recording accepts a render row before stop");
@@ -824,6 +916,9 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
     TestRunner test;
 
+    testStartLiveSourceStartsStreamSource(test);
+    testStopLiveSourceStopsStreamSource(test);
+    testNullStreamSourceReturnsFailure(test);
     testControllerStartsWithRecordingDisabled(test);
     testInactiveSessionIgnoresRenderableRows(test);
     testInputBatchUpdatesModel(test);

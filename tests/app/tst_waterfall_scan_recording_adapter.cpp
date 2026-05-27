@@ -1,6 +1,7 @@
 #include "app/frequencyviewportmodel.h"
 #include "app/waterfallcontroller.h"
 #include "app/waterfallscanrecordingadapter.h"
+#include "hardware/interfaces/bco_stream_source.h"
 
 #include <QCoreApplication>
 
@@ -32,10 +33,15 @@ private:
     int m_failed = 0;
 };
 
-class FakeSampleSource final : public hardware::IBcoSampleSource
+class FakeBcoStreamSource final : public hardware::IBcoStreamSource
 {
 public:
-    core::OperationResult start(SampleBatchCallback callback) override
+    core::OperationResult configure(const hardware::BcoStreamConfig&) override
+    {
+        return core::OperationResult::ok();
+    }
+
+    core::OperationResult start(SampleBlockCallback callback) override
     {
         m_callback = std::move(callback);
         return core::OperationResult::ok();
@@ -47,8 +53,13 @@ public:
         return core::OperationResult::ok();
     }
 
+    hardware::BcoSourceMetrics metrics() const override
+    {
+        return {};
+    }
+
 private:
-    SampleBatchCallback m_callback;
+    SampleBlockCallback m_callback;
 };
 
 std::vector<core::BandConfig> makeBandConfigs()
@@ -68,7 +79,7 @@ std::vector<core::BandConfig> makeBandConfigs()
 struct Fixture
 {
     FrequencyViewportModel viewport;
-    FakeSampleSource source;
+    FakeBcoStreamSource source;
     infrastructure::NullDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     app::WaterfallController controller{&viewport,

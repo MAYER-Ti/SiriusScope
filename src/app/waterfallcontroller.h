@@ -2,7 +2,7 @@
 
 #include "app/interfaces/processing_flush_control.h"
 #include "core/domain_models.h"
-#include "hardware/interfaces/bco_sample_source.h"
+#include "hardware/interfaces/bco_stream_source.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "processing/sample_processor.h"
 #include "waterfallrenderbufferadapter.h"
@@ -67,7 +67,7 @@ class WaterfallController final : public QObject, public IProcessingFlushControl
 
 public:
     explicit WaterfallController(FrequencyViewportModel* viewportModel,
-                                 hardware::IBcoSampleSource* sampleSource,
+                                 hardware::IBcoStreamSource* streamSource,
                                  std::vector<core::BandConfig> bandConfigs,
                                  IWaterfallSessionStorage* sessionStorage,
                                  infrastructure::IDiagnosticsSink* diagnosticsSink,
@@ -150,7 +150,7 @@ private:
         QVector<WaterfallRowSlot> rowSlots;
     };
 
-    void enqueueSampleBatch(const hardware::BcoSampleBatch& batch);
+    void enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block);
     void processingLoop();
     void startHistoryWorker();
     void stopHistoryWorker();
@@ -181,7 +181,7 @@ private:
     void completeAsyncFlush(std::uint64_t requestId, core::OperationResult result);
 
     FrequencyViewportModel* m_viewportModel = nullptr;
-    hardware::IBcoSampleSource* m_sampleSource = nullptr;
+    hardware::IBcoStreamSource* m_streamSource = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     BearingFrameBus* m_bearingFrameBus = nullptr;
     SignalSampleBus* m_signalSampleBus = nullptr;
@@ -208,7 +208,7 @@ private:
     mutable std::mutex m_workerMutex;
     std::condition_variable m_workerCondition;
     std::thread m_worker;
-    std::deque<hardware::BcoSampleBatch> m_queuedBatches;
+    std::deque<hardware::IBcoStreamSource::SampleBlockPtr> m_queuedBlocks;
     processing::SampleProcessingConfig m_processingConfig;
     std::size_t m_configRevision = 0;
     std::size_t m_droppedBatchCount = 0;
