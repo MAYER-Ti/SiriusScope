@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hardware/interfaces/bco_sample_source.h"
+#include "hardware/simulator/simulator_pulse_config.h"
 #include "hardware/simulator/simulator_radio_scene.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 
@@ -25,14 +26,6 @@ struct SimulatorBcoSampleSourceConfig
     std::uint64_t sampleIndexStep = 1;
     // Values below this threshold are treated as no beam hit, not as BCO samples.
     int minVisibleAmplitude = 0;
-};
-
-struct SimulatorPulseBandConfig
-{
-    int bandIndex = 0;
-    bool enabled = true;
-    double pulsePeriodUs = 100000.0;
-    double pulseWidthUs = 10000.0;
 };
 
 class SimulatorBcoSampleSource final : public IBcoSampleSource

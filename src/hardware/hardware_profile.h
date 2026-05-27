@@ -1,9 +1,11 @@
 #pragma once
 
 #include "hardware/interfaces/bco_stream_source.h"
+#include "hardware/simulator/simulator_pulse_config.h"
 
 #include <chrono>
 #include <cstddef>
+#include <vector>
 
 namespace siriusscope::hardware {
 
@@ -33,6 +35,8 @@ struct SimulatorBcoLoadConfig
     double burstMultiplier = 1.0;
     std::chrono::milliseconds burstDuration{0};
     std::chrono::milliseconds calmDuration{0};
+
+    std::vector<SimulatorPulseBandConfig> pulseBandConfigs;
 };
 
 struct HardwareProfile

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,8 @@ SimulatorBcoLoadConfig makeSimulatorBcoLoadConfig(SimulatorLoadProfile profile)
 
 SimulatorBcoLoadConfig normalizeLoadConfig(SimulatorBcoLoadConfig config)
 {
+    auto requestedPulseConfigs = std::move(config.pulseBandConfigs);
+
     if (config.profile == SimulatorLoadProfile::UiDemo) {
         const auto requestedSamplesPerSecond = config.samplesPerSecond;
         const auto requestedBatchPeriod = config.batchPeriod;
@@ -70,6 +73,7 @@ SimulatorBcoLoadConfig normalizeLoadConfig(SimulatorBcoLoadConfig config)
     if (!std::isfinite(config.burstMultiplier) || config.burstMultiplier < 1.0) {
         config.burstMultiplier = 1.0;
     }
+    config.pulseBandConfigs = std::move(requestedPulseConfigs);
 
     return config;
 }
@@ -113,6 +117,233 @@ std::uint64_t packetCountFor(std::size_t sampleCount)
         static_cast<std::uint64_t>(sampleCount) / kSamplesPerPacket);
 }
 
+std::uint64_t saturatedAdd(std::uint64_t value, std::uint64_t increment)
+{
+    if (increment > std::numeric_limits<std::uint64_t>::max() - value) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+
+    return value + increment;
+}
+
+const SimulatorPulseBandConfig* pulseConfigForBand(
+    const std::vector<SimulatorPulseBandConfig>& configs,
+    int bandIndex)
+{
+    const auto found = std::find_if(configs.begin(), configs.end(), [bandIndex](const auto& item) {
+        return item.bandIndex == bandIndex;
+    });
+    return found == configs.end() ? nullptr : &(*found);
+}
+
+bool hasValidPulseTiming(const SimulatorPulseBandConfig& config)
+{
+    if (!config.enabled || !std::isfinite(config.pulsePeriodUs)
+        || !std::isfinite(config.pulseWidthUs) || config.pulsePeriodUs <= 0.0
+        || config.pulseWidthUs <= 0.0 || config.pulseWidthUs >= config.pulsePeriodUs) {
+        return false;
+    }
+
+    const long double periodNs = static_cast<long double>(config.pulsePeriodUs) * 1000.0L;
+    const long double widthNs = static_cast<long double>(config.pulseWidthUs) * 1000.0L;
+    return periodNs > 0.0L && widthNs > 0.0L && widthNs < periodNs;
+}
+
+bool isInsidePulse(std::uint64_t sampleIndex,
+                   std::uint64_t firstSampleIndex,
+                   std::uint64_t samplePeriodNs,
+                   const SimulatorPulseBandConfig& config)
+{
+    if (!hasValidPulseTiming(config)) {
+        return false;
+    }
+
+    const auto safeSamplePeriodNs = std::max<std::uint64_t>(1, samplePeriodNs);
+    const auto relativeSampleIndex =
+        sampleIndex >= firstSampleIndex ? sampleIndex - firstSampleIndex : 0;
+    const long double relativeNs =
+        static_cast<long double>(relativeSampleIndex)
+        * static_cast<long double>(safeSamplePeriodNs);
+    const long double periodNs = static_cast<long double>(config.pulsePeriodUs) * 1000.0L;
+    const long double widthNs = static_cast<long double>(config.pulseWidthUs) * 1000.0L;
+
+    auto phaseNs = std::fmod(relativeNs, periodNs);
+    if (phaseNs < 0.0L) {
+        phaseNs += periodNs;
+    }
+
+    return phaseNs >= 0.0L && phaseNs < widthNs;
+}
+
+std::uint64_t nextPulseStartSampleIndex(std::uint64_t sampleIndex,
+                                        std::uint64_t firstSampleIndex,
+                                        std::uint64_t samplePeriodNs,
+                                        const SimulatorPulseBandConfig& config)
+{
+    if (!hasValidPulseTiming(config)) {
+        return saturatedAdd(sampleIndex, 1);
+    }
+    if (isInsidePulse(sampleIndex, firstSampleIndex, samplePeriodNs, config)) {
+        return sampleIndex;
+    }
+
+    const auto safeSamplePeriodNs = std::max<std::uint64_t>(1, samplePeriodNs);
+    const auto relativeSampleIndex =
+        sampleIndex >= firstSampleIndex ? sampleIndex - firstSampleIndex : 0;
+    const long double relativeNs =
+        static_cast<long double>(relativeSampleIndex)
+        * static_cast<long double>(safeSamplePeriodNs);
+    const long double periodNs = static_cast<long double>(config.pulsePeriodUs) * 1000.0L;
+
+    auto phaseNs = std::fmod(relativeNs, periodNs);
+    if (phaseNs < 0.0L) {
+        phaseNs += periodNs;
+    }
+
+    const long double nextRelativeNs = relativeNs + periodNs - phaseNs;
+    const long double candidateValue =
+        std::ceil(nextRelativeNs / static_cast<long double>(safeSamplePeriodNs));
+    const auto maxRelativeSampleIndex =
+        std::numeric_limits<std::uint64_t>::max() - firstSampleIndex;
+    if (candidateValue > static_cast<long double>(maxRelativeSampleIndex)) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+
+    auto candidate =
+        saturatedAdd(firstSampleIndex, static_cast<std::uint64_t>(candidateValue));
+    if (candidate <= sampleIndex) {
+        candidate = saturatedAdd(sampleIndex, 1);
+    }
+
+    return candidate;
+}
+
+bool enabledBandsContain(const std::vector<core::BandConfig>& bands, int bandIndex)
+{
+    return std::any_of(bands.begin(), bands.end(), [bandIndex](const auto& band) {
+        return band.bandIndex == bandIndex;
+    });
+}
+
+std::uint64_t alignToBandSlot(std::uint64_t sampleIndex,
+                              std::uint64_t batchStartSampleIndex,
+                              std::size_t bandSlot,
+                              std::size_t bandCount)
+{
+    if (bandCount == 0 || sampleIndex < batchStartSampleIndex) {
+        return sampleIndex;
+    }
+
+    const auto relativeSampleIndex = sampleIndex - batchStartSampleIndex;
+    const auto remainder =
+        relativeSampleIndex % static_cast<std::uint64_t>(bandCount);
+    const auto target = static_cast<std::uint64_t>(bandSlot);
+    const auto delta =
+        target >= remainder
+            ? target - remainder
+            : static_cast<std::uint64_t>(bandCount) - remainder + target;
+
+    return saturatedAdd(sampleIndex, delta);
+}
+
+void keepNearest(std::optional<std::uint64_t>& nearest, std::uint64_t candidate)
+{
+    if (!nearest || candidate < *nearest) {
+        nearest = candidate;
+    }
+}
+
+std::optional<std::uint64_t> nextGeneratablePulseSampleIndex(
+    std::uint64_t sampleIndex,
+    std::uint64_t batchStartSampleIndex,
+    std::uint64_t batchEndSampleIndex,
+    std::uint64_t timeBaseFirstSampleIndex,
+    std::uint64_t samplePeriodNs,
+    const std::vector<core::BandConfig>& enabledBands,
+    const std::vector<SimulatorPulseBandConfig>& pulseConfigs)
+{
+    std::optional<std::uint64_t> nearest;
+    const auto bandCount = enabledBands.size();
+
+    for (std::size_t bandSlot = 0; bandSlot < bandCount; ++bandSlot) {
+        const auto& band = enabledBands[bandSlot];
+        auto candidate = alignToBandSlot(sampleIndex,
+                                         batchStartSampleIndex,
+                                         bandSlot,
+                                         bandCount);
+        if (candidate >= batchEndSampleIndex) {
+            continue;
+        }
+
+        const auto* pulseConfig = pulseConfigForBand(pulseConfigs, band.bandIndex);
+        if (!pulseConfig) {
+            keepNearest(nearest, candidate);
+            continue;
+        }
+        if (!pulseConfig->enabled) {
+            continue;
+        }
+        if (!hasValidPulseTiming(*pulseConfig)) {
+            keepNearest(nearest, candidate);
+            continue;
+        }
+
+        while (candidate < batchEndSampleIndex) {
+            if (isInsidePulse(candidate,
+                              timeBaseFirstSampleIndex,
+                              samplePeriodNs,
+                              *pulseConfig)) {
+                keepNearest(nearest, candidate);
+                break;
+            }
+
+            const auto nextPulseStart = nextPulseStartSampleIndex(candidate,
+                                                                  timeBaseFirstSampleIndex,
+                                                                  samplePeriodNs,
+                                                                  *pulseConfig);
+            if (nextPulseStart <= candidate) {
+                candidate = saturatedAdd(candidate, static_cast<std::uint64_t>(bandCount));
+            } else {
+                candidate = alignToBandSlot(nextPulseStart,
+                                            batchStartSampleIndex,
+                                            bandSlot,
+                                            bandCount);
+            }
+        }
+    }
+
+    return nearest;
+}
+
+void appendGeneratedSample(BcoSampleBlock& block,
+                           const core::BandConfig& band,
+                           std::uint64_t sampleIndex,
+                           std::uint64_t sequenceIndex)
+{
+    const auto maxOffsetHz = std::max<std::int64_t>(0, band.widthHz / 2);
+    const auto binOffset = static_cast<std::int64_t>(sequenceIndex % kFrequencyBinCount);
+    const auto offsetStepHz =
+        maxOffsetHz == 0
+            ? 0
+            : std::max<std::int64_t>(
+                1,
+                (maxOffsetHz * 2) / static_cast<std::int64_t>(kFrequencyBinCount));
+    auto frequencyOffsetHz = -maxOffsetHz + binOffset * offsetStepHz;
+    frequencyOffsetHz = std::clamp(frequencyOffsetHz, -maxOffsetHz, maxOffsetHz);
+
+    const core::BeamSample beamSample{
+        sampleIndex,
+        frequencyOffsetHz,
+        20 + static_cast<int>(sequenceIndex % 100),
+        static_cast<int>(sequenceIndex % core::DomainConstraints::currentBeamCount),
+    };
+
+    const auto sample = core::SignalSample::create(beamSample, band);
+    if (sample) {
+        block.samples.push_back(*sample.value());
+    }
+}
+
 } // namespace
 
 HighLoadSimulatorBcoStreamSource::HighLoadSimulatorBcoStreamSource(
@@ -142,6 +373,32 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
         publish(infrastructure::DiagnosticSeverity::Error,
                 "high-load BCO simulator configuration rejected: no enabled bands");
         return core::OperationResult::failure("BCO stream config must contain enabled bands");
+    }
+
+    if (!m_loadConfig.pulseBandConfigs.empty()) {
+        for (const auto& pulseConfig : m_loadConfig.pulseBandConfigs) {
+            if (!enabledBandsContain(enabledBands, pulseConfig.bandIndex)) {
+                publish(infrastructure::DiagnosticSeverity::Warning,
+                        "high-load BCO simulator pulse config references unknown or disabled bandIndex "
+                            + std::to_string(pulseConfig.bandIndex));
+            }
+            if (pulseConfig.enabled && !hasValidPulseTiming(pulseConfig)) {
+                publish(infrastructure::DiagnosticSeverity::Warning,
+                        "high-load BCO simulator pulse config has invalid PRI/PW for bandIndex "
+                            + std::to_string(pulseConfig.bandIndex));
+            }
+        }
+
+        const bool allEnabledBandsDisabledByPulseConfig =
+            std::all_of(enabledBands.begin(), enabledBands.end(), [this](const auto& band) {
+                const auto* pulseConfig =
+                    pulseConfigForBand(m_loadConfig.pulseBandConfigs, band.bandIndex);
+                return pulseConfig && !pulseConfig->enabled;
+            });
+        if (allEnabledBandsDisabledByPulseConfig) {
+            publish(infrastructure::DiagnosticSeverity::Warning,
+                    "high-load BCO simulator pulse configs disable all enabled bands");
+        }
     }
 
     std::lock_guard lock(m_mutex);
@@ -270,47 +527,67 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     std::size_t sampleCount)
 {
     std::vector<core::BandConfig> enabledBands;
-    std::uint64_t firstSampleIndex = 0;
+    std::uint64_t batchStartSampleIndex = 0;
+    std::uint64_t timeBaseFirstSampleIndex = 0;
+    std::uint64_t samplePeriodNs = 1;
 
     {
         std::lock_guard lock(m_mutex);
         enabledBands = enabledBandsFrom(m_streamConfig);
-        firstSampleIndex = m_nextSampleIndex;
+        batchStartSampleIndex = m_nextSampleIndex;
+        timeBaseFirstSampleIndex = m_streamConfig.timeBase.firstSampleIndex;
+        samplePeriodNs = std::max<std::uint64_t>(1, m_streamConfig.timeBase.samplePeriodNs);
     }
+
+    const auto sampleSlotsInBatch =
+        sampleCount > static_cast<std::size_t>(std::numeric_limits<std::uint64_t>::max())
+            ? std::numeric_limits<std::uint64_t>::max()
+            : static_cast<std::uint64_t>(sampleCount);
+    const auto batchEndSampleIndex =
+        saturatedAdd(batchStartSampleIndex, sampleSlotsInBatch);
 
     auto block = std::make_shared<BcoSampleBlock>();
     block->samples.reserve(sampleCount);
 
-    // TODO: Add per-band PRI/PW pulse model in the next high-load simulator substage.
-    for (std::size_t i = 0; i < sampleCount && !enabledBands.empty(); ++i) {
-        const auto& band = enabledBands[i % enabledBands.size()];
-        const auto maxOffsetHz = std::max<std::int64_t>(0, band.widthHz / 2);
-        const auto binOffset = static_cast<std::int64_t>(i % kFrequencyBinCount);
-        const auto offsetStepHz =
-            maxOffsetHz == 0
-                ? 0
-                : std::max<std::int64_t>(
-                    1,
-                    (maxOffsetHz * 2) / static_cast<std::int64_t>(kFrequencyBinCount));
-        auto frequencyOffsetHz = -maxOffsetHz + binOffset * offsetStepHz;
-        frequencyOffsetHz = std::clamp(frequencyOffsetHz, -maxOffsetHz, maxOffsetHz);
+    if (!enabledBands.empty() && sampleSlotsInBatch > 0) {
+        if (m_loadConfig.pulseBandConfigs.empty()) {
+            for (std::uint64_t i = 0; i < sampleSlotsInBatch; ++i) {
+                const auto& band =
+                    enabledBands[static_cast<std::size_t>(i % enabledBands.size())];
+                appendGeneratedSample(*block,
+                                      band,
+                                      saturatedAdd(batchStartSampleIndex, i),
+                                      i);
+            }
+        } else {
+            auto sampleIndex = batchStartSampleIndex;
+            while (sampleIndex < batchEndSampleIndex) {
+                const auto nextSampleIndex = nextGeneratablePulseSampleIndex(
+                    sampleIndex,
+                    batchStartSampleIndex,
+                    batchEndSampleIndex,
+                    timeBaseFirstSampleIndex,
+                    samplePeriodNs,
+                    enabledBands,
+                    m_loadConfig.pulseBandConfigs);
+                if (!nextSampleIndex) {
+                    break;
+                }
 
-        const core::BeamSample beamSample{
-            firstSampleIndex + static_cast<std::uint64_t>(i),
-            frequencyOffsetHz,
-            20 + static_cast<int>(i % 100),
-            static_cast<int>(i % core::DomainConstraints::currentBeamCount),
-        };
-
-        const auto sample = core::SignalSample::create(beamSample, band);
-        if (sample) {
-            block->samples.push_back(*sample.value());
+                sampleIndex = *nextSampleIndex;
+                const auto sequenceIndex = sampleIndex - batchStartSampleIndex;
+                const auto& band =
+                    enabledBands[static_cast<std::size_t>(sequenceIndex
+                                                          % enabledBands.size())];
+                appendGeneratedSample(*block, band, sampleIndex, sequenceIndex);
+                sampleIndex = saturatedAdd(sampleIndex, 1);
+            }
         }
     }
 
     {
         std::lock_guard lock(m_mutex);
-        m_nextSampleIndex += static_cast<std::uint64_t>(block->samples.size());
+        m_nextSampleIndex = batchEndSampleIndex;
     }
 
     const auto actualSampleCount = block->samples.size();
@@ -323,6 +600,9 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     if (!block->samples.empty()) {
         block->stats.firstSampleIndex = block->samples.front().sampleIndex;
         block->stats.lastSampleIndex = block->samples.back().sampleIndex;
+    } else {
+        block->stats.firstSampleIndex = batchStartSampleIndex;
+        block->stats.lastSampleIndex = batchStartSampleIndex;
     }
 
     return block;
