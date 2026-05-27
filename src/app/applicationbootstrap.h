@@ -27,6 +27,8 @@
 #include "waterfallscanrecordingadapter.h"
 #include "waterfallstorage.h"
 
+#include "hardware/data_source_factory.h"
+#include "hardware/hardware_profile.h"
 #include "hardware/interfaces/antenna_azimuth_source.h"
 #include "hardware/interfaces/antenna_control.h"
 #include "hardware/interfaces/bco_sample_source.h"
@@ -127,6 +129,9 @@ public:
     }
 
 private:
+    hardware::BcoStreamConfig makeBcoStreamConfig() const;
+    hardware::HardwareProfile makeDefaultHardwareProfile() const;
+    void createBcoStreamSource();
     void configureBcoStreamSource();
 
     FrequencyViewportModel m_viewportModel;
@@ -143,6 +148,7 @@ private:
     std::unique_ptr<IWaterfallSessionStorage> m_waterfallSessionStorage;
     std::unique_ptr<hardware::SimulatorAntennaState> m_antennaState;
     std::unique_ptr<hardware::SimulatorBcoSampleSource> m_bcoSampleSource;
+    hardware::HardwareProfile m_hardwareProfile;
     std::unique_ptr<hardware::IBcoStreamSource> m_bcoStreamSource;
     std::unique_ptr<hardware::SimulatorAntennaAzimuthSource> m_antennaAzimuthSource;
     std::unique_ptr<hardware::IBcoControl> m_bcoControl;

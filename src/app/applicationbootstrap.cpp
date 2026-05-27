@@ -1,7 +1,6 @@
 #include "applicationbootstrap.h"
 
 #include "appstate.h"
-#include "hardware/adapters/legacy_bco_sample_source_adapter.h"
 #include "infrastructure/storage/binary_result_table_storage.h"
 #include "infrastructure/storage/binary_waterfall_session_storage.h"
 #include "qmlsingletons.h"
@@ -117,8 +116,7 @@ ApplicationBootstrap::ApplicationBootstrap()
 
     m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
     m_bcoSampleSource->setPulseBandConfigs(simulatorPulseConfigsFromBands(m_bandListModel));
-    m_bcoStreamSource =
-        std::make_unique<hardware::LegacyBcoSampleSourceAdapter>(m_bcoSampleSource.get());
+    createBcoStreamSource();
     configureBcoStreamSource();
 
     QMetaObject::invokeMethod(m_spectrumEnvelopeWorker,
@@ -193,10 +191,12 @@ ApplicationBootstrap::ApplicationBootstrap()
                      &BandConfigController::generatorPulseSettingsApplied,
                      &m_bandConfigController,
                      [this](int) {
+                         const auto pulseConfigs =
+                             simulatorPulseConfigsFromBands(m_bandListModel);
                          if (m_bcoSampleSource) {
-                             m_bcoSampleSource->setPulseBandConfigs(
-                                 simulatorPulseConfigsFromBands(m_bandListModel));
+                             m_bcoSampleSource->setPulseBandConfigs(pulseConfigs);
                          }
+                         m_hardwareProfile.simulatorLoadConfig.pulseBandConfigs = pulseConfigs;
                      });
     QObject::connect(&m_viewportModel,
                      &FrequencyViewportModel::viewportChanged,
@@ -230,12 +230,8 @@ ApplicationBootstrap::~ApplicationBootstrap()
     m_spectrumEnvelopeWorker = nullptr;
 }
 
-void ApplicationBootstrap::configureBcoStreamSource()
+hardware::BcoStreamConfig ApplicationBootstrap::makeBcoStreamConfig() const
 {
-    if (!m_bcoStreamSource) {
-        return;
-    }
-
     hardware::BcoStreamConfig config;
     config.bandConfigs = m_bandListModel.bandConfigs();
     config.timeBase = core::TimeBase{
@@ -244,8 +240,53 @@ void ApplicationBootstrap::configureBcoStreamSource()
         core::DomainConstraints::defaultSamplePeriodNs,
     };
     config.sessionId = 0;
+    return config;
+}
 
-    const auto configured = m_bcoStreamSource->configure(config);
+hardware::HardwareProfile ApplicationBootstrap::makeDefaultHardwareProfile() const
+{
+    hardware::HardwareProfile profile;
+    profile.dataSourceMode = hardware::DataSourceMode::Simulator;
+    profile.bcoStreamConfig = makeBcoStreamConfig();
+    profile.simulatorLoadConfig.profile = hardware::SimulatorLoadProfile::UiDemo;
+    profile.simulatorLoadConfig.samplesPerSecond = 1'280;
+    profile.simulatorLoadConfig.batchPeriod = std::chrono::milliseconds{100};
+    profile.simulatorLoadConfig.pulseBandConfigs =
+        simulatorPulseConfigsFromBands(m_bandListModel);
+    return profile;
+}
+
+void ApplicationBootstrap::createBcoStreamSource()
+{
+    m_hardwareProfile = makeDefaultHardwareProfile();
+
+    m_bcoStreamSource =
+        hardware::DataSourceFactory::createBcoStreamSourceFromLegacySimulator(
+            m_hardwareProfile,
+            m_bcoSampleSource.get());
+
+    if (!m_bcoStreamSource && m_diagnosticsService) {
+        m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
+            infrastructure::DiagnosticSeverity::Error,
+            "Application",
+            "BCO stream source creation failed",
+            std::chrono::system_clock::now(),
+        });
+    }
+}
+
+void ApplicationBootstrap::configureBcoStreamSource()
+{
+    if (!m_bcoStreamSource) {
+        return;
+    }
+
+    m_hardwareProfile.bcoStreamConfig = makeBcoStreamConfig();
+    m_hardwareProfile.simulatorLoadConfig.pulseBandConfigs =
+        simulatorPulseConfigsFromBands(m_bandListModel);
+
+    const auto configured =
+        m_bcoStreamSource->configure(m_hardwareProfile.bcoStreamConfig);
     if (!configured && m_diagnosticsService) {
         m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
             infrastructure::DiagnosticSeverity::Error,
