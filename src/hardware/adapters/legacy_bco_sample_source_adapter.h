@@ -28,6 +28,7 @@ private:
     BcoStreamConfig m_config;
     BcoSourceMetrics m_metrics;
     std::chrono::steady_clock::time_point m_firstBatchAt{};
+    bool m_configured = false;
 };
 
 } // namespace siriusscope::hardware

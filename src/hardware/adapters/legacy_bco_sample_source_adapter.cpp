@@ -14,16 +14,25 @@ core::OperationResult LegacyBcoSampleSourceAdapter::configure(const BcoStreamCon
 {
     std::lock_guard lock(m_mutex);
     m_config = config;
+    m_metrics = {};
+    m_firstBatchAt = {};
+    m_configured = true;
     return core::OperationResult::ok();
 }
 
 core::OperationResult LegacyBcoSampleSourceAdapter::start(SampleBlockCallback callback)
 {
     if (!m_legacySource) {
-        return core::OperationResult::failure("legacy BCO sample source is not set");
+        return core::OperationResult::failure("legacy BCO sample source is not configured");
     }
     if (!callback) {
-        return core::OperationResult::failure("sample block callback must not be empty");
+        return core::OperationResult::failure("BCO stream callback is not configured");
+    }
+    {
+        std::lock_guard lock(m_mutex);
+        if (!m_configured) {
+            return core::OperationResult::failure("BCO stream source is not configured");
+        }
     }
 
     return m_legacySource->start([this, callback = std::move(callback)](
@@ -35,7 +44,7 @@ core::OperationResult LegacyBcoSampleSourceAdapter::start(SampleBlockCallback ca
 core::OperationResult LegacyBcoSampleSourceAdapter::stop()
 {
     if (!m_legacySource) {
-        return core::OperationResult::failure("legacy BCO sample source is not set");
+        return core::OperationResult::ok();
     }
 
     return m_legacySource->stop();
@@ -53,6 +62,7 @@ void LegacyBcoSampleSourceAdapter::handleLegacyBatch(const BcoSampleBatch& batch
     auto block = std::make_shared<BcoSampleBlock>();
     block->samples = batch.samples;
     block->stats.sampleCount = static_cast<std::uint64_t>(block->samples.size());
+    block->stats.packetCount = block->samples.empty() ? 0U : 1U;
     block->stats.producedAt = std::chrono::steady_clock::now();
 
     if (!block->samples.empty()) {
@@ -66,9 +76,11 @@ void LegacyBcoSampleSourceAdapter::handleLegacyBatch(const BcoSampleBatch& batch
         block->stats.lastSampleIndex = minmax.second->sampleIndex;
     }
 
-    const auto callbackStartedAt = std::chrono::steady_clock::now();
     updateProducedMetrics(block->stats);
-    callback(std::const_pointer_cast<const BcoSampleBlock>(block));
+    SampleBlockPtr constBlock = std::move(block);
+
+    const auto callbackStartedAt = std::chrono::steady_clock::now();
+    callback(std::move(constBlock));
     const auto callbackDuration = std::chrono::steady_clock::now() - callbackStartedAt;
 
     updateCallbackDuration(callbackDuration);
@@ -94,7 +106,7 @@ void LegacyBcoSampleSourceAdapter::updateProducedMetrics(const BcoBatchStats& st
             static_cast<double>(m_metrics.producedSamples) / elapsedSeconds;
         m_metrics.equivalentMegabytesPerSecond =
             m_metrics.producedSamplesPerSecond * static_cast<double>(sizeof(core::SignalSample))
-            / 1'000'000.0;
+            / (1024.0 * 1024.0);
     }
 }
 
