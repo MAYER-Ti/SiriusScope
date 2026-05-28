@@ -27,7 +27,10 @@ bool isBcoSubsystem(const QString& subsystem)
 {
     return subsystem == QStringLiteral("SimulatorBcoSampleSource")
         || subsystem == QStringLiteral("HighLoadSimulatorBcoStreamSource")
-        || subsystem == QStringLiteral("WaterfallProcessing");
+        || subsystem == QStringLiteral("WaterfallProcessing")
+        || subsystem == QStringLiteral("DataIngestPipeline")
+        || subsystem == QStringLiteral("ProcessingEngine")
+        || subsystem == QStringLiteral("PipelineDiagnostics");
 }
 
 bool isBcoControlSubsystem(const QString& subsystem)

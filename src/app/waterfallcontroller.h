@@ -4,7 +4,7 @@
 #include "core/domain_models.h"
 #include "hardware/interfaces/bco_stream_source.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
-#include "processing/sample_processor.h"
+#include "pipeline/data_ingest_pipeline.h"
 #include "waterfallrenderbufferadapter.h"
 #include "waterfallstorage.h"
 #include "waterfalltimeline.h"
@@ -14,10 +14,8 @@
 #include <QTimer>
 #include <QVariantList>
 
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -75,6 +73,7 @@ public:
                                  BearingFrameBus* bearingFrameBus = nullptr,
                                  SignalSampleBus* signalSampleBus = nullptr,
                                  SpectrumEnvelopeWorker* spectrumEnvelopeWorker = nullptr,
+                                 pipeline::DataIngestPipeline* dataIngestPipeline = nullptr,
                                  QObject* parent = nullptr);
     ~WaterfallController() override;
 
@@ -151,14 +150,11 @@ private:
     };
 
     void enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block);
-    void processingLoop();
     void startHistoryWorker();
     void stopHistoryWorker();
     void historyWorkerLoop();
     HistoryLoadResult loadHistoryRows(const HistoryLoadRequest& request);
     void applyHistoryLoadResult(HistoryLoadResult result);
-    processing::SampleProcessingConfig makeProcessingConfig(
-        const std::vector<core::BandConfig>& bandConfigs) const;
     void scheduleRetune(double minHz, double maxHz);
     void reloadHistoryFromStorage();
     void setHistoryLoading(bool loading);
@@ -177,15 +173,11 @@ private:
     qint64 oldestViewportTop(const WaterfallSessionMetadata& metadata) const;
     qint64 newestViewportTop(const WaterfallSessionMetadata& metadata) const;
     void publish(infrastructure::DiagnosticSeverity severity, const std::string& message) const;
-    void completeAsyncFlushesUpTo(std::uint64_t requestId);
-    void completeAsyncFlush(std::uint64_t requestId, core::OperationResult result);
 
     FrequencyViewportModel* m_viewportModel = nullptr;
     hardware::IBcoStreamSource* m_streamSource = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
-    BearingFrameBus* m_bearingFrameBus = nullptr;
-    SignalSampleBus* m_signalSampleBus = nullptr;
-    SpectrumEnvelopeWorker* m_spectrumEnvelopeWorker = nullptr;
+    pipeline::DataIngestPipeline* m_dataIngestPipeline = nullptr;
     WaterfallRingBuffer* m_ringBuffer = nullptr;
     IWaterfallSessionStorage* m_sessionStorage = nullptr;
     std::unique_ptr<InMemoryWaterfallSessionStorage> m_ownedSessionStorage;
@@ -204,22 +196,7 @@ private:
     bool m_sourceStarted = false;
     bool m_sessionActive = false;
     bool m_acceptingLiveSamples = false;
-
-    mutable std::mutex m_workerMutex;
-    std::condition_variable m_workerCondition;
-    std::thread m_worker;
-    std::deque<hardware::IBcoStreamSource::SampleBlockPtr> m_queuedBlocks;
-    processing::SampleProcessingConfig m_processingConfig;
-    std::size_t m_configRevision = 0;
-    std::size_t m_droppedBatchCount = 0;
-    std::size_t m_droppedSampleCount = 0;
-    std::uint64_t m_flushRequestId = 0;
-    std::uint64_t m_completedFlushRequestId = 0;
-    bool m_workerRunning = false;
-    bool m_stopRequested = false;
-
-    mutable std::mutex m_asyncFlushMutex;
-    std::vector<std::pair<std::uint64_t, FlushCallback>> m_asyncFlushRequests;
+    std::vector<core::BandConfig> m_bandConfigs;
 
     mutable std::mutex m_historyMutex;
     std::condition_variable m_historyCondition;

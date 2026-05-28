@@ -40,6 +40,7 @@
 #include "infrastructure/interfaces/result_table_storage.h"
 #include "infrastructure/interfaces/waterfall_storage.h"
 #include "infrastructure/logging/diagnostic_log_writer.h"
+#include "pipeline/data_ingest_pipeline.h"
 
 #include <memory>
 
@@ -78,6 +79,10 @@ public:
     }
     BearingFrameBus* bearingFrameBus() noexcept { return m_bearingFrameBus.get(); }
     SignalSampleBus* signalSampleBus() noexcept { return m_signalSampleBus.get(); }
+    pipeline::DataIngestPipeline* dataIngestPipeline() noexcept
+    {
+        return m_dataIngestPipeline.get();
+    }
     IScanAcquisitionRecorder* scanAcquisitionRecorder() noexcept
     {
         return m_scanAcquisitionRecorder.get();
@@ -151,6 +156,7 @@ private:
     std::unique_ptr<hardware::IAntennaControl> m_antennaControl;
     std::unique_ptr<BearingFrameBus> m_bearingFrameBus;
     std::unique_ptr<SignalSampleBus> m_signalSampleBus;
+    std::unique_ptr<pipeline::DataIngestPipeline> m_dataIngestPipeline;
     std::unique_ptr<processing::BearingService> m_bearingService;
     std::unique_ptr<IScanAcquisitionRecorder> m_scanAcquisitionRecorder;
     std::unique_ptr<IScanRecordingControl> m_scanRecordingControl;

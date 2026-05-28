@@ -110,6 +110,22 @@ waterfall snapshots, not the owner of raw stream aggregation.
 `ScanController` should publish scan-session state and consume scan summaries /
 `BearingResult` values, not raw sample blocks.
 
+## 5.1 Current Data Plane Scaffold
+
+The first high-load data plane scaffold lives under `src/pipeline/`. It introduces
+`SignalBlock`, a fixed block pool, a bounded block queue, `DataIngestPipeline`, a minimal
+single-threaded `ProcessingEngine`, pipeline metrics, and rate-limited diagnostics.
+
+In the current transition state, `HighLoadSimulatorBcoStreamSource` feeds this data plane
+instead of the older `WaterfallController -> pendingSamples -> RealtimeSignalPipeline`
+path. `WaterfallController` remains a Qt presentation/control adapter for sessions,
+history, and future snapshots, but it no longer owns the high-load raw processing loop.
+
+This scaffold intentionally does not yet implement production DSP, exact bearing,
+storage writer, lock-free queues, SIMD, or the final Waterfall/Spectrum GUI snapshot
+publishers. The temporary copy from `BcoSampleBlock::samples` into `SignalBlock` remains
+a migration step until sources fill pooled blocks directly.
+
 ## 6. Simulator Profiles
 
 The baseline recognizes these simulator profiles:

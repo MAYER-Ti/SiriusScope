@@ -1,11 +1,6 @@
 #include "waterfallcontroller.h"
 
-#include "bearingframebus.h"
 #include "frequencyviewportmodel.h"
-#include "hardware/interfaces/bco_sample_source.h"
-#include "realtimesignalpipeline.h"
-#include "signalsamplebus.h"
-#include "spectrumenvelopeworker.h"
 #include "waterfallringbuffer.h"
 #include "waterfallrowresampler.h"
 
@@ -18,7 +13,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <exception>
-#include <sstream>
 #include <utility>
 
 namespace siriusscope::app {
@@ -62,14 +56,13 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                          BearingFrameBus* bearingFrameBus,
                                          SignalSampleBus* signalSampleBus,
                                          SpectrumEnvelopeWorker* spectrumEnvelopeWorker,
+                                         pipeline::DataIngestPipeline* dataIngestPipeline,
                                          QObject* parent)
     : QObject(parent)
     , m_viewportModel(viewportModel)
     , m_streamSource(streamSource)
     , m_diagnosticsSink(diagnosticsSink)
-    , m_bearingFrameBus(bearingFrameBus)
-    , m_signalSampleBus(signalSampleBus)
-    , m_spectrumEnvelopeWorker(spectrumEnvelopeWorker)
+    , m_dataIngestPipeline(dataIngestPipeline)
     , m_ringBuffer(new WaterfallRingBuffer(config.renderBinCount,
                                            config.visibleRowCount,
                                            300e6,
@@ -78,7 +71,12 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
     , m_sessionStorage(sessionStorage)
     , m_timelineViewport(config.visibleRowCount, config.sourceFlushIntervalMs)
     , m_controllerConfig(config)
+    , m_bandConfigs(std::move(bandConfigs))
 {
+    (void)bearingFrameBus;
+    (void)signalSampleBus;
+    (void)spectrumEnvelopeWorker;
+
     if (!m_sessionStorage) {
         m_ownedSessionStorage = std::make_unique<InMemoryWaterfallSessionStorage>();
         m_sessionStorage = m_ownedSessionStorage.get();
@@ -94,8 +92,6 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
         m_sourceMinHz = m_viewportModel->globalMinHz();
         m_sourceMaxHz = m_viewportModel->globalMaxHz();
     }
-
-    m_processingConfig = makeProcessingConfig(bandConfigs);
 
     startHistoryWorker();
     reloadHistoryFromStorage();
@@ -165,17 +161,13 @@ void WaterfallController::stop()
 
 void WaterfallController::startWorkers()
 {
-    {
-        std::lock_guard lock(m_workerMutex);
-        if (m_workerRunning) {
-            return;
+    if (m_dataIngestPipeline) {
+        const auto started = m_dataIngestPipeline->start();
+        if (!started) {
+            publish(infrastructure::DiagnosticSeverity::Error,
+                    "Data ingest pipeline start failed: " + started.message);
         }
-
-        m_stopRequested = false;
-        m_workerRunning = true;
     }
-
-    m_worker = std::thread(&WaterfallController::processingLoop, this);
 }
 
 core::OperationResult WaterfallController::startLiveSource()
@@ -189,6 +181,15 @@ core::OperationResult WaterfallController::startLiveSource()
 
     if (m_sourceStarted) {
         return core::OperationResult::ok();
+    }
+
+    if (m_dataIngestPipeline && !m_dataIngestPipeline->running()) {
+        const auto started = m_dataIngestPipeline->start();
+        if (!started) {
+            publish(infrastructure::DiagnosticSeverity::Error,
+                    "Data ingest pipeline start failed: " + started.message);
+            return started;
+        }
     }
 
     const auto started = m_streamSource->start([this](
@@ -225,51 +226,29 @@ core::OperationResult WaterfallController::stopLiveSource()
 
 void WaterfallController::stopWorkers()
 {
-    {
-        std::lock_guard lock(m_workerMutex);
-        if (!m_workerRunning && !m_worker.joinable()) {
-            return;
-        }
-        m_stopRequested = true;
-    }
-
-    m_workerCondition.notify_all();
-
-    if (m_worker.joinable() && m_worker.get_id() != std::this_thread::get_id()) {
-        m_worker.join();
-    }
-
-    {
-        std::lock_guard lock(m_workerMutex);
-        m_workerRunning = false;
-        m_stopRequested = false;
-        m_queuedBlocks.clear();
+    if (m_dataIngestPipeline) {
+        m_dataIngestPipeline->stop();
     }
 }
 
 void WaterfallController::setAcceptingLiveSamples(bool accepting)
 {
-    std::lock_guard lock(m_workerMutex);
     m_acceptingLiveSamples = accepting;
+    if (m_dataIngestPipeline) {
+        m_dataIngestPipeline->setAccepting(accepting);
+    }
 }
 
 void WaterfallController::clearQueuedBatches()
 {
-    std::lock_guard lock(m_workerMutex);
-    m_queuedBlocks.clear();
-    m_droppedBatchCount = 0;
-    m_droppedSampleCount = 0;
+    if (m_dataIngestPipeline) {
+        m_dataIngestPipeline->clearQueuedBlocks();
+    }
 }
 
 void WaterfallController::setBandConfigs(std::vector<core::BandConfig> bandConfigs)
 {
-    {
-        std::lock_guard lock(m_workerMutex);
-        m_processingConfig = makeProcessingConfig(bandConfigs);
-        ++m_configRevision;
-    }
-
-    m_workerCondition.notify_all();
+    m_bandConfigs = std::move(bandConfigs);
 }
 
 core::OperationResult WaterfallController::flushProcessing(std::chrono::milliseconds timeout)
@@ -277,24 +256,11 @@ core::OperationResult WaterfallController::flushProcessing(std::chrono::millisec
     if (timeout.count() < 0) {
         return core::OperationResult::failure("processing flush timeout is invalid");
     }
-
-    std::unique_lock lock(m_workerMutex);
-    if (!m_workerRunning) {
-        return core::OperationResult::failure("processing worker is not running");
+    if (!m_dataIngestPipeline) {
+        return core::OperationResult::ok();
     }
 
-    const auto requestId = ++m_flushRequestId;
-    m_workerCondition.notify_all();
-
-    const bool completed =
-        m_workerCondition.wait_for(lock, timeout, [this, requestId] {
-            return m_completedFlushRequestId >= requestId || !m_workerRunning;
-        });
-    if (!completed || m_completedFlushRequestId < requestId) {
-        return core::OperationResult::failure("processing flush timed out");
-    }
-
-    return core::OperationResult::ok();
+    return m_dataIngestPipeline->flushProcessing(timeout);
 }
 
 void WaterfallController::flushProcessingAsync(std::chrono::milliseconds timeout,
@@ -309,26 +275,8 @@ void WaterfallController::flushProcessingAsync(std::chrono::milliseconds timeout
         return;
     }
 
-    std::uint64_t requestId = 0;
-    {
-        std::lock_guard lock(m_workerMutex);
-        if (!m_workerRunning) {
-            callback(core::OperationResult::failure("processing worker is not running"));
-            return;
-        }
-
-        requestId = ++m_flushRequestId;
-    }
-
-    {
-        std::lock_guard lock(m_asyncFlushMutex);
-        m_asyncFlushRequests.emplace_back(requestId, std::move(callback));
-    }
-
-    m_workerCondition.notify_all();
-    QTimer::singleShot(static_cast<int>(timeout.count()), this, [this, requestId] {
-        completeAsyncFlush(requestId,
-                           core::OperationResult::failure("processing flush timed out"));
+    QTimer::singleShot(0, this, [this, timeout, callback = std::move(callback)]() mutable {
+        callback(flushProcessing(timeout));
     });
 }
 
@@ -531,7 +479,7 @@ void WaterfallController::startRecording()
     metadata.endUtcMs = nowUtcMs;
     metadata.rowPeriodMs = std::max<qint64>(1, m_controllerConfig.sourceFlushIntervalMs);
     metadata.binCount = m_controllerConfig.renderBinCount;
-    metadata.bandCount = static_cast<int>(m_processingConfig.bands.size());
+    metadata.bandCount = static_cast<int>(m_bandConfigs.size());
     metadata.beamCount = 2;
     metadata.sourceName = QStringLiteral("BCO");
 
@@ -586,263 +534,20 @@ void WaterfallController::commitViewport()
 
 void WaterfallController::enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block)
 {
-    if (!block) {
+    if (!block || !m_dataIngestPipeline) {
         return;
     }
 
-    {
-        std::lock_guard lock(m_workerMutex);
-        if (!m_acceptingLiveSamples) {
-            return;
-        }
+    pipeline::SignalBlockMetadata metadata;
+    metadata.firstSampleIndex = block->stats.firstSampleIndex;
+    metadata.lastSampleIndex = block->stats.lastSampleIndex;
+    metadata.producedAt = block->stats.producedAt;
 
-        if (m_controllerConfig.maxQueuedBatches > 0
-            && m_queuedBlocks.size() >= m_controllerConfig.maxQueuedBatches) {
-            const auto& dropped = m_queuedBlocks.front();
-            ++m_droppedBatchCount;
-            if (dropped) {
-                m_droppedSampleCount += dropped->samples.size();
-            }
-            m_queuedBlocks.pop_front();
-        }
-
-        m_queuedBlocks.push_back(block);
+    const auto result = m_dataIngestPipeline->ingestSamples(block->samples, metadata);
+    if (!result && m_acceptingLiveSamples) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "Data ingest rejected BCO block: " + result.message);
     }
-
-    m_workerCondition.notify_all();
-
-    if (m_spectrumEnvelopeWorker && !block->samples.empty()) {
-        hardware::BcoSampleBatch spectrumBatch;
-        spectrumBatch.samples = block->samples;
-
-        auto* worker = m_spectrumEnvelopeWorker;
-        QMetaObject::invokeMethod(worker,
-                                  [worker, batch = std::move(spectrumBatch)]() mutable {
-                                      worker->ingestBatch(std::move(batch));
-                                  },
-                                  Qt::QueuedConnection);
-    }
-}
-
-void WaterfallController::processingLoop()
-{
-    processing::SampleProcessingConfig config;
-    std::size_t workerConfigRevision = 0;
-    {
-        std::lock_guard lock(m_workerMutex);
-        config = m_processingConfig;
-        workerConfigRevision = m_configRevision;
-    }
-
-    RealtimeSignalPipeline pipeline(RealtimeSignalPipelineConfig{
-        config,
-        m_signalSampleBus,
-        m_bearingFrameBus,
-        m_sourceMinHz,
-        m_sourceMaxHz,
-        m_controllerConfig.renderBinCount,
-        m_diagnosticsSink,
-    });
-    std::vector<core::SignalSample> pendingSamples;
-    std::size_t pendingEmptyBatches = 0;
-    std::uint64_t workerFlushRequestId = 0;
-    auto nextFlush = std::chrono::steady_clock::now()
-        + std::chrono::milliseconds(std::max(1, m_controllerConfig.sourceFlushIntervalMs));
-
-    for (;;) {
-        std::deque<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
-        std::size_t droppedBatches = 0;
-        std::size_t droppedSamples = 0;
-        bool configChanged = false;
-        bool flushRequested = false;
-        std::uint64_t flushRequestId = 0;
-
-        {
-            std::unique_lock lock(m_workerMutex);
-            m_workerCondition.wait_until(lock,
-                                         nextFlush,
-                                         [this, workerConfigRevision, &workerFlushRequestId] {
-                                             return m_stopRequested
-                                                 || !m_queuedBlocks.empty()
-                                                 || m_configRevision != workerConfigRevision
-                                                 || m_flushRequestId > workerFlushRequestId;
-                                         });
-
-            if (m_stopRequested) {
-                break;
-            }
-
-            flushRequested = m_flushRequestId > workerFlushRequestId;
-            flushRequestId = m_flushRequestId;
-            blocks.swap(m_queuedBlocks);
-            droppedBatches = m_droppedBatchCount;
-            droppedSamples = m_droppedSampleCount;
-            m_droppedBatchCount = 0;
-            m_droppedSampleCount = 0;
-
-            if (m_configRevision != workerConfigRevision) {
-                config = m_processingConfig;
-                workerConfigRevision = m_configRevision;
-                configChanged = true;
-            }
-        }
-
-        const auto completeFlush = [&] {
-            if (!flushRequested) {
-                return;
-            }
-
-            {
-                std::lock_guard lock(m_workerMutex);
-                workerFlushRequestId = std::max(workerFlushRequestId, flushRequestId);
-                m_completedFlushRequestId =
-                    std::max(m_completedFlushRequestId, flushRequestId);
-            }
-            m_workerCondition.notify_all();
-            QMetaObject::invokeMethod(this,
-                                      [this, flushRequestId] {
-                                          completeAsyncFlushesUpTo(flushRequestId);
-                                      },
-                                      Qt::QueuedConnection);
-        };
-
-        if (configChanged) {
-            pipeline.setProcessingConfig(config);
-            pendingSamples.clear();
-            pendingEmptyBatches = 0;
-        }
-
-        if (droppedBatches > 0) {
-            std::ostringstream message;
-            message << "dropped " << droppedBatches
-                    << " queued BCO sample blocks containing "
-                    << droppedSamples << " samples";
-            publish(infrastructure::DiagnosticSeverity::Warning, message.str());
-        }
-
-        for (const auto& block : blocks) {
-            if (!block || block->samples.empty()) {
-                ++pendingEmptyBatches;
-                continue;
-            }
-
-            pendingSamples.insert(pendingSamples.end(),
-                                  block->samples.begin(),
-                                  block->samples.end());
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (!flushRequested && now < nextFlush) {
-            continue;
-        }
-
-        nextFlush = now + std::chrono::milliseconds(
-            std::max(1, m_controllerConfig.sourceFlushIntervalMs));
-
-        processing::SampleBatch processingBatch;
-        processingBatch.samples = std::move(pendingSamples);
-        pendingSamples.clear();
-
-        const bool shouldProcessEmptyBatch =
-            processingBatch.samples.empty() && pendingEmptyBatches > 0;
-        pendingEmptyBatches = 0;
-        if (processingBatch.samples.empty() && !shouldProcessEmptyBatch) {
-            completeFlush();
-            continue;
-        }
-
-        try {
-            pipeline.setWaterfallRenderContext(m_sourceMinHz,
-                                               m_sourceMaxHz,
-                                               m_controllerConfig.renderBinCount);
-            auto pipelineResult = pipeline.process(RealtimeSignalPipelineInput{
-                std::move(processingBatch),
-                QDateTime::currentMSecsSinceEpoch(),
-            });
-            if (pipelineResult.emptyBatchCount > 0) {
-                publish(infrastructure::DiagnosticSeverity::Info, "sample batch is empty");
-            }
-
-            if (!pipelineResult.renderResult) {
-                completeFlush();
-                continue;
-            }
-
-            QMetaObject::invokeMethod(this,
-                                      [this,
-                                       result = std::move(*pipelineResult.renderResult)]() mutable {
-                                          appendRenderRow(std::move(result));
-                                      },
-                                      Qt::QueuedConnection);
-        } catch (const std::exception& error) {
-            publish(infrastructure::DiagnosticSeverity::Error,
-                    std::string("processor exception: ") + error.what());
-        } catch (...) {
-            publish(infrastructure::DiagnosticSeverity::Error,
-                    "processor exception: unknown failure");
-        }
-
-        completeFlush();
-    }
-}
-
-void WaterfallController::completeAsyncFlushesUpTo(std::uint64_t requestId)
-{
-    std::vector<FlushCallback> callbacks;
-    {
-        std::lock_guard lock(m_asyncFlushMutex);
-        auto writeIt = m_asyncFlushRequests.begin();
-        for (auto readIt = m_asyncFlushRequests.begin(); readIt != m_asyncFlushRequests.end();
-             ++readIt) {
-            if (readIt->first <= requestId) {
-                callbacks.push_back(std::move(readIt->second));
-                continue;
-            }
-
-            if (writeIt != readIt) {
-                *writeIt = std::move(*readIt);
-            }
-            ++writeIt;
-        }
-        m_asyncFlushRequests.erase(writeIt, m_asyncFlushRequests.end());
-    }
-
-    for (auto& callback : callbacks) {
-        callback(core::OperationResult::ok());
-    }
-}
-
-void WaterfallController::completeAsyncFlush(std::uint64_t requestId,
-                                             core::OperationResult result)
-{
-    FlushCallback callback;
-    {
-        std::lock_guard lock(m_asyncFlushMutex);
-        const auto found =
-            std::find_if(m_asyncFlushRequests.begin(),
-                         m_asyncFlushRequests.end(),
-                         [requestId](const auto& request) {
-                             return request.first == requestId;
-                         });
-        if (found == m_asyncFlushRequests.end()) {
-            return;
-        }
-
-        callback = std::move(found->second);
-        m_asyncFlushRequests.erase(found);
-    }
-
-    callback(std::move(result));
-}
-
-processing::SampleProcessingConfig WaterfallController::makeProcessingConfig(
-    const std::vector<core::BandConfig>& bandConfigs) const
-{
-    processing::SampleProcessingConfig config;
-    config.bands = bandConfigs;
-    config.capabilities = core::defaultRuntimeCapabilities();
-    config.aggregationWindow.diagnoseMissingWaterfallCells = false;
-    return config;
 }
 
 void WaterfallController::scheduleRetune(double minHz, double maxHz)

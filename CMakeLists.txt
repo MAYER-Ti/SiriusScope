@@ -118,6 +118,23 @@ set(SIRIUSSCOPE_PROCESSING_SOURCES
     src/processing/spectrum_envelope_processor.cpp
 )
 
+set(SIRIUSSCOPE_PIPELINE_SOURCES
+    src/pipeline/README.md
+    src/pipeline/bounded_block_queue.h
+    src/pipeline/data_ingest_pipeline.h
+    src/pipeline/data_ingest_pipeline.cpp
+    src/pipeline/pipeline_diagnostics.h
+    src/pipeline/pipeline_diagnostics.cpp
+    src/pipeline/pipeline_metrics.h
+    src/pipeline/pipeline_metrics.cpp
+    src/pipeline/processing_engine.h
+    src/pipeline/processing_engine.cpp
+    src/pipeline/signal_block.h
+    src/pipeline/signal_block.cpp
+    src/pipeline/signal_block_pool.h
+    src/pipeline/signal_block_pool.cpp
+)
+
 set(SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES
     src/hardware/hardware_profile.h
     src/hardware/interfaces/antenna_azimuth_source.h
@@ -213,6 +230,19 @@ target_link_libraries(siriusscope_processing
         siriusscope_core
 )
 
+add_library(siriusscope_pipeline STATIC
+    ${SIRIUSSCOPE_PIPELINE_SOURCES}
+)
+
+target_compile_features(siriusscope_pipeline
+    PUBLIC cxx_std_20
+)
+
+target_include_directories(siriusscope_pipeline
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
 add_library(siriusscope_processing_iface INTERFACE)
 target_link_libraries(siriusscope_processing_iface
     INTERFACE
@@ -250,6 +280,13 @@ target_link_libraries(siriusscope_infrastructure_iface
     INTERFACE
         siriusscope_core
         siriusscope_processing_iface
+)
+
+target_link_libraries(siriusscope_pipeline
+    PUBLIC
+        Threads::Threads
+        siriusscope_core
+        siriusscope_infrastructure_iface
 )
 
 add_library(siriusscope_infrastructure STATIC
@@ -309,6 +346,7 @@ target_link_libraries(siriusscope_application
         Qt6::QuickControls2
         siriusscope_core
         siriusscope_processing_iface
+        siriusscope_pipeline
         siriusscope_infrastructure_iface
         siriusscope_infrastructure
         siriusscope_hardware

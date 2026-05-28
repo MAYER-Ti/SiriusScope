@@ -64,6 +64,23 @@ target_link_libraries(tst_signal_parameter_accumulator
 
 add_test(NAME tst_signal_parameter_accumulator COMMAND tst_signal_parameter_accumulator)
 
+add_executable(tst_pipeline
+    pipeline/tst_pipeline.cpp
+)
+
+target_link_libraries(tst_pipeline
+    PRIVATE
+        siriusscope_pipeline
+        siriusscope_hardware
+)
+
+target_include_directories(tst_pipeline
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_pipeline COMMAND tst_pipeline)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )

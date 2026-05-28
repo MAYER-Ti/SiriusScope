@@ -72,6 +72,8 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides bearing frame bus");
     test.require(bootstrap.signalSampleBus() != nullptr,
                  "bootstrap provides signal sample bus");
+    test.require(bootstrap.dataIngestPipeline() != nullptr,
+                 "bootstrap provides high-load data ingest pipeline");
     test.require(bootstrap.scanAcquisitionRecorder() != nullptr,
                  "bootstrap provides scan acquisition recorder");
     test.require(bootstrap.processingFlushControl() != nullptr,
