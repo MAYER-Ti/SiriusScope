@@ -1,63 +1,145 @@
 # Architecture Baseline
 
-This note describes the stage 1 architectural baseline for SiriusScope.
+This note describes the current implementation baseline and how it differs from the
+target high-load architecture.
 
-## Layers
+For target rules, use:
 
-SiriusScope keeps the same logical layers defined in `docs/architecture/layers.md`:
+- `docs/architecture/layers.md`;
+- `docs/architecture/data-flow.md`;
+- `docs/architecture/high-load-data-plane.md`.
 
-- UI: QML views and lightweight bindings only.
-- Application: QML-facing models, controllers, commands, and composition root.
-- Core: domain models, constraints, validation, and UI-independent operation results.
-- Processing: sample validation, aggregation, Waterfall row preparation, and future bearing inputs.
-- Hardware adapters: BCO and antenna sources/commands behind stable interfaces.
-- Infrastructure: storage, settings, and diagnostics interfaces.
+## 1. Current Baseline
 
-## Added interfaces
+`ApplicationBootstrap` is the current composition root. It wires the available UI-facing
+models, controllers, simulator/runtime sources, storage placeholders or implementations,
+and diagnostics sinks.
 
-Hardware contracts live under `src/hardware/interfaces/`:
+The current runtime has already moved beyond the earliest stub-only state. In particular,
+the BCO runtime may use `HighLoadSimulatorBcoStreamSource` and the
+`RealBcoEquivalent` profile. This exposes high-load pressure that the older downstream
+MVP path was not designed to absorb.
 
-- `IBcoSampleSource`
-- `IAntennaAzimuthSource`
-- `IBcoControl`
-- `IAntennaControl`
+## 2. Existing Contracts
 
-Infrastructure contracts live under `src/infrastructure/interfaces/`:
+Hardware and stream contracts live under `src/hardware/interfaces/` and related
+subdirectories. Important contracts include:
 
-- `IWaterfallStorage`
-- `IResultTableStorage`
-- `ISettingsStorage`
-- `IDiagnosticsSink`
+- BCO stream source interfaces;
+- antenna azimuth source interfaces;
+- BCO control interfaces;
+- antenna control interfaces.
 
-These contracts use domain/processing types and standard C++ types. They do not depend on QML or Qt Quick.
+Infrastructure contracts live under `src/infrastructure/interfaces/` and related
+subdirectories. Important contracts include:
 
-## Current stub mode
+- waterfall/result storage interfaces;
+- settings interfaces;
+- diagnostics sinks.
 
-`ApplicationBootstrap` is the current composition root. It creates the existing demo models and stub controllers:
+These contracts must not depend on QML or Qt Quick.
 
-- `FrequencyViewportModel`
-- `FrequencyGridModel`
-- `SpectrumControllerStub`
-- `SpectrumDecimator`
-- `WaterfallControllerStub`
-- `AntennaControllerStub`
+## 3. Transitional Components
 
-It also creates placeholder implementations for diagnostics, Waterfall storage, BCO control, and antenna control. These placeholders do not implement protocols, binary storage, or bearing calculation.
+The following components may still exist as current implementation or compatibility
+pieces:
 
-## UI boundary
+- `FrequencyViewportModel`;
+- `FrequencyGridModel`;
+- `SpectrumControllerStub`;
+- `SpectrumDecimator`;
+- `WaterfallControllerStub`;
+- `WaterfallController`;
+- `AntennaControllerStub`;
+- `SampleProcessor`;
+- `SignalSampleBus`;
+- `BearingFrameBus`;
+- `BearingService`.
 
-QML must continue to talk only to application-facing singletons and QML elements. It must not create hardware adapters, parse packets, read/write archives, or inspect low-level diagnostics directly.
+They are not all wrong by existence. The rule is narrower:
 
-The current QML singleton names are unchanged. Future simulator and hardware modes should be selected inside `ApplicationBootstrap` or a later application composition service, not inside QML.
+- they must not become the production transport for the high-load data plane;
+- they must not carry raw high-load vectors through Qt queued paths;
+- they must not make QML, `QObject`, or presentation models own raw stream processing;
+- they must be replaced or constrained as the high-load pipeline is introduced.
 
-## Replacing stub mode later
+## 4. Current Risk Areas
 
-Future stages should replace placeholders in this order:
+Current/legacy behavior that must be treated as transition work:
 
-1. Add simulator implementations of the hardware interfaces.
-2. Route samples through processing instead of synthetic UI timers.
-3. Replace null storage with persistent infrastructure implementations.
-4. Add real UDP/TCP adapters behind the same hardware interfaces.
-5. Connect diagnostics to an application status model and technical log storage.
+- `WaterfallController` can accumulate incoming source blocks up to
+  `sourceFlushIntervalMs = 1000`, build a large `std::vector`, and forward it to the old
+  processing path.
+- `SampleProcessor` can create waterfall rows per `sampleIndex`, which can produce
+  millions of `WaterfallCell` values under `RealBcoEquivalent`.
+- Bearing candidate construction can require both beams in one exact candidate, causing
+  excessive `MissingBeamSample` diagnostics when beam indices alternate.
+- Diagnostics can be published too granularly and overload diagnostics/log/UI queues.
+- `SignalSampleBus` and `BearingFrameBus` can move large vectors through callback or Qt
+  queued paths.
+- `ScanController` can be tempted to observe raw samples directly.
+- Spectrum update paths can copy every high-load block into GUI-oriented workers.
 
-The UI should not need a separate simulator path or hardware path when these replacements happen.
+These are acceptable only as known migration targets, not as production design.
+
+## 5. Target Replacement Direction
+
+The replacement direction is:
+
+```text
+BCO UDP / HighLoadSimulator
+    -> RX / ingest thread
+    -> preallocated block pool / memory pool
+    -> bounded queues
+    -> ProcessingEngine
+    -> WaterfallAggregator
+    -> SpectrumAggregator
+    -> BearingAggregator
+    -> SignalParameterAggregator
+    -> StoragePipeline
+    -> GuiSnapshotPublisher
+    -> Qt/QML presentation
+```
+
+`SignalSampleBus` and `BearingFrameBus` may remain for low-rate transition/testing uses
+only. They are not valid high-load sample delivery mechanisms.
+
+`WaterfallController` should become a presentation adapter that consumes immutable
+waterfall snapshots, not the owner of raw stream aggregation.
+
+`ScanController` should publish scan-session state and consume scan summaries /
+`BearingResult` values, not raw sample blocks.
+
+## 6. Simulator Profiles
+
+The baseline recognizes these simulator profiles:
+
+- `UiDemo` - safe default for UI development and visual checks.
+- `MediumLoad` - intermediate integration load.
+- `RealBcoEquivalent` - approximately real BCO rate; about 1,000,000 sample slots/s with
+  10 ms batches.
+- `Stress150Percent` - overload/stress profile.
+
+`RealBcoEquivalent` is a high-load verification profile. It must not be treated as a
+safe everyday default until bounded queues, block pool ownership, data plane aggregation,
+storage backpressure, diagnostics rate limiting, and performance tests are in place.
+
+## 7. Migration Milestones
+
+1. Stabilize high-load runtime.
+2. Add `SignalBlock`, block pool / memory pool, and bounded queues.
+3. Add `ProcessingEngine` v1.
+4. Add `WaterfallAggregator` v1.
+5. Add `SpectrumAggregator` v1.
+6. Add `BearingAggregator` v1.
+7. Add `StoragePipeline`.
+8. Add end-to-end performance tests.
+
+## 8. UI Boundary
+
+QML must continue to talk only to application-facing singletons, models, and QML
+elements. It must not create hardware adapters, parse packets, read/write raw archives,
+inspect low-level diagnostics directly, or receive raw stream vectors.
+
+Future simulator and hardware modes should be selected inside `ApplicationBootstrap` or a
+later composition service, not inside QML.

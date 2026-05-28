@@ -1,40 +1,49 @@
 # Repository Guidance for Codex
 
+Любое описание commit пиши на русском языке.
+
 This file is the short operational contract for AI-assisted work in SiriusScope.
-Keep this file concise. Detailed requirements must live in `docs/`.
+Detailed requirements live in `docs/`.
 
-## Project summary
+## Project Summary
 
-SiriusScope is a Qt/C++ desktop application for изделие «Сириус», a radio-technical reconnaissance system.
+SiriusScope is a Qt/C++ desktop system for изделие «Сириус», a radio-technical
+reconnaissance system.
 
-The current iteration focuses on:
+The product direction is high-load BCO stream processing with explicit data plane /
+control plane separation. SiriusScope must receive a high-speed BCO stream, process it
+with predictable latency, calculate bearing, build waterfall/spectrum summaries, estimate
+signal parameters, write continuous data, and display aggregated operator-facing results.
 
-- signal reception;
-- real-time visualization;
-- continuous data storage;
-- sector scanning;
-- bearing calculation;
-- work with both real hardware and simulator through the same interfaces.
+SiriusScope is not a target MVP/demo GUI architecture. Any current demo-rate path must be
+treated as legacy/current implementation unless it is explicitly documented as target
+architecture.
 
-RTS type recognition, map background, export to external systems, advanced analytics, and long-term target tracking are future extensions unless explicitly requested.
+Future extensions unless explicitly requested:
 
-## Source of truth
+- RTS type recognition;
+- map background;
+- external system export;
+- advanced analytics;
+- long-term target tracking;
+- implemented 8-beam antenna support.
+
+## Source Of Truth
 
 Before changing code, read this file first.
 
-Then read only the documents relevant to the current task:
+Then read only the documents relevant to the task:
 
-- `docs/README.md` — documentation map;
-- `docs/spec/scope.md` — current scope and out-of-scope features;
-- `docs/spec/glossary.md` — domain terms;
-- `docs/architecture/layers.md` — layer boundaries;
-- `docs/architecture/data-flow.md` — runtime data flow;
-- `docs/domain/models.md` — domain models and formulas;
-- `docs/ui/components.md` — UI component contracts;
-- `docs/hardware/interfaces-and-protocols.md` — hardware and simulator boundaries;
-- `docs/storage/archive-format.md` — storage and persistence rules;
-- `docs/development/build-and-test.md` — build and test commands.
-- `docs/spec/SiriusScope_TZ_v0.1.md` — full technical assignment. Read it when implementing new features, changing behavior, resolving requirement conflicts, or working on architecture-sensitive tasks.
+- `docs/README.md` - documentation map;
+- `docs/spec/scope.md` - current scope;
+- `docs/spec/glossary.md` - domain terms;
+- `docs/architecture/layers.md` - layer boundaries;
+- `docs/architecture/data-flow.md` - runtime data flow;
+- `docs/architecture/high-load-data-plane.md` - high-load data plane target;
+- `docs/architecture/baseline.md` - current/legacy implementation notes;
+- `docs/storage/archive-format.md` - storage rules;
+- `docs/development/build-and-test.md` - build, test, and performance checks;
+- `docs/spec/SiriusScope_TZ_v0.1.md` - full technical assignment.
 
 If documents conflict, use this priority:
 
@@ -44,198 +53,196 @@ If documents conflict, use this priority:
 4. Existing code.
 5. README.
 
-## Non-negotiable rules
+## Non-Negotiable Rules
 
-- Do not put DSP, protocol parsing, hardware control, storage, or heavy processing in QML.
+- Do not put DSP, protocol parsing, hardware control, storage, or heavy processing in
+  QML.
 - Do not access hardware protocols directly from UI.
-- Keep UI, presentation/application, core/domain, infrastructure, and hardware-adapter concerns separated.
-- Do not block the GUI thread with receiving, processing, rendering preparation, file I/O, or long calculations.
-- Do not change architecture or public module boundaries unless the task explicitly asks for it.
-- Do not implement out-of-scope features without a direct task.
-- Preserve compatibility with both real hardware and simulator paths through the same interfaces.
-- Add or update tests when changing nontrivial domain, parsing, buffering, storage, or processing logic.
+- Do not pass high-load raw samples through QML, `QObject`, `QAbstractListModel`,
+  `QMetaObject::invokeMethod`, or Qt queued signals.
+- Do not use `WaterfallController`, `SignalSampleBus`, or `BearingFrameBus` as
+  production high-load raw data transports.
+- Keep UI, application/control, core/domain, hardware/ingest, pipeline/data plane,
+  DSP/processing, storage, and infrastructure concerns separated.
+- Do not block the GUI thread with receiving, processing, rendering preparation, file
+  I/O, history loading, or long calculations.
+- Preserve compatibility with real hardware and simulator through the same interfaces.
+- Add or update tests when changing nontrivial domain, parsing, buffering, storage,
+  processing, aggregation, or bearing logic.
 
-## Architecture rules
+## Architecture Rules
 
-Use layered architecture:
+Target runtime:
 
 ```text
-UI layer
-    QML views and lightweight bindings only.
-
-Presentation / Application layer
-    QML-facing models, controllers, commands, orchestration.
-
-Core / Domain layer
-    Signal models, time model, bearing results, processing-independent business rules.
-
-Processing layer
-    Sample validation, aggregation, Waterfall row preparation, bearing-related calculations.
-
-Infrastructure layer
-    Storage, settings, logging, binary formats, file rotation.
-
-Hardware adapter layer
-    UDP/TCP clients, protocol parsers, BCO/antenna command adapters, simulator adapters.
+BCO UDP / HighLoadSimulator
+    -> RX / ingest thread
+    -> preallocated block pool / memory pool
+    -> bounded queues
+    -> DSP / processing thread pool
+    -> aggregators
+    -> storage writer
+    -> GUI snapshot publisher
+    -> Qt/QML GUI
 ```
 
-Dependency direction must remain stable:
+Logical layers:
 
 ```text
-UI -> Application -> Core
-Processing -> Core
-Infrastructure -> Core
-Hardware adapters -> Core/Application interfaces
+Qt adapter / presentation layer
+Application / control layer
+Core / domain layer
+Hardware / ingest layer
+Pipeline / data plane layer
+DSP / processing layer
+Storage layer
+Infrastructure support layer
 ```
 
 Forbidden dependencies:
 
 ```text
 QML -> UDP/TCP protocol parser
+QML -> raw stream queue
 QML -> file archive writer
 QML -> DSP algorithm
-DSP/Core -> QML type
+QML -> bearing algorithm
+Application controller -> raw high-load sample vector
+Processing/data plane -> QML item or QAbstractListModel
 Domain model -> Qt UI type
 ```
 
-## QML rules
+## QML Rules
 
 QML may:
 
-* render UI;
-* bind to prepared models;
-* handle simple user interaction;
-* call application-level commands.
+- render UI;
+- bind to prepared models;
+- render immutable/downsampled snapshots;
+- handle simple user interaction;
+- call application-level commands.
 
 QML must not:
 
-* parse packets;
-* write archives;
-* calculate bearing;
-* aggregate high-rate signal streams;
-* perform heavy loops over incoming data;
-* own long-running timers for core processing.
+- parse packets;
+- write archives;
+- calculate bearing;
+- aggregate high-rate signal streams;
+- perform heavy loops over incoming data;
+- own long-running timers for data plane processing;
+- receive raw high-load sample vectors.
 
-## Hardware and simulator rules
+## Hardware And Simulator Rules
 
-Real hardware and simulator must use the same application-level interfaces.
+Real hardware and simulator must use the same application-level and data plane
+interfaces. The UI must not know whether data comes from:
 
-The UI must not know whether data comes from:
+- real BCO over UDP;
+- real antenna controller over TCP;
+- high-load simulator;
+- UI demo simulator;
+- replay file.
 
-* real BCO over UDP;
-* real antenna controller over TCP;
-* test generator;
-* replay file.
+Protocol versions are isolated in parser/adapter classes. Unsupported versions produce
+aggregated diagnostics, not crashes.
 
-Protocol versions must be isolated in parser/adapter classes.
+Simulator profiles:
 
-Unsupported protocol versions must produce diagnostics, not crashes.
+- `UiDemo` - safe default for UI development.
+- `MediumLoad` - intermediate load.
+- `RealBcoEquivalent` - about 1,000,000 sample slots/s and 10 ms batches.
+- `Stress150Percent` - overload/stress profile.
 
-## Current domain constraints
+`RealBcoEquivalent` is not a safe ordinary default until the high-load data plane is
+bounded, instrumented, and performance-tested.
 
-Current iteration assumptions:
+## Current Domain Constraints
 
-* SiriusScope works with 5 `BandItem` objects.
-* Each `BandItem` represents one BCO band up to 500 MHz.
-* 5 bands provide up to 2500 MHz of simultaneous observation.
-* The BCO control protocol may support up to 8 configured frequency ranges; SiriusScope uses 5 in the current iteration.
-* SiriusScope does not interact with the RPU directly.
-* Frequency ranges, dwell time, filters, polarization, attenuators, and other receiver settings are sent to the BCO; the BCO controls the RPU internally.
-* Full product frequency range is 0.3–18 GHz.
-* Current antenna model uses 2 beams: `beamIndex = 0` and `beamIndex = 1`.
-* Future 8-beam support must not be made impossible.
-* Input amplitude range is 1–127.
-* Amplitude value 0 is invalid for input samples.
-* Invalid input data must be rejected or marked diagnostically without crashing.
-* Bearing calculation is the main task of the current product iteration.
+- SiriusScope works with 5 `BandItem` objects in the current workflow.
+- Each `BandItem` represents one BCO band up to 500 MHz.
+- 5 bands provide up to 2500 MHz of simultaneous observation.
+- BCO control may support up to 8 configured frequency ranges; SiriusScope uses 5.
+- SiriusScope does not interact with the RPU directly.
+- Receiver settings are sent to the BCO; the BCO controls the RPU internally.
+- Full product frequency range is `0.3..18 GHz`.
+- Current antenna model uses `beamIndex = 0` and `beamIndex = 1`.
+- Future 8-beam support must not be made impossible.
+- Input amplitude range is `1..127`.
+- Amplitude value `0` is invalid for input samples.
+- Invalid input data is rejected or marked diagnostically without crashing.
+- Bearing calculation is the main task of the current product iteration.
 
-## Time model rules
+## Time Model Rules
 
-Preserve the original BCO `sampleIndex`.
+Preserve original BCO `sampleIndex`.
 
 Use a dedicated time model to derive:
 
-* local time from recording start;
-* global UTC/system time;
-* display time for WaterfallView and result table.
+- local time from recording start;
+- global UTC/system time;
+- display time for WaterfallView and result table.
 
-Do not replace `sampleIndex` with UI time.
+Do not replace `sampleIndex` with UI time. Do not use exact `sampleIndex` as the only
+high-load bearing pairing key; target pairing uses time/frequency/band windows.
 
-## UI component responsibilities
-
-`SpectrumView`:
-
-* displays frequency scale;
-* displays and controls 5 `BandItem` objects;
-* controls the visible frequency range for `WaterfallView`.
-
-`BandItem`:
-
-* represents BCO reception settings for one frequency band;
-* must not directly send hardware commands from QML;
-* changes must go through application/controller layer.
-
-`WaterfallView`:
-
-* displays frequency-time history;
-* must support preserved history;
-* must not be cleared when frequency viewport changes;
-* must be prepared for asynchronous data loading.
-
-`AntennaIndicator`:
-
-* displays current antenna azimuth;
-* displays selected scan sector;
-* displays bearing results by `BandItem` color.
-
-`ResultTable`:
-
-* displays final scan results;
-* loads previous saved results on startup;
-* is read-only for the user in the current iteration.
-
-`StatusBar`:
-
-* displays program, hardware, recording, and diagnostic status;
-* replaces a visible event log in the current iteration.
-
-## Storage rules
+## Storage Rules
 
 SiriusScope must preserve data between launches.
 
-Store large runtime data in files, not in QSettings.
+High-volume data belongs to an asynchronous storage pipeline:
 
-Expected storage responsibilities:
+- binary;
+- chunked;
+- append-only;
+- indexed;
+- bounded by backpressure and metrics.
 
-* Waterfall rows;
-* result table rows;
-* metadata;
-* settings;
-* technical logs;
-* indexes/cache for fast history access.
+Settings and metadata may use INI, JSON, QSettings, or SQLite where appropriate, but
+these formats are not raw high-rate stream stores.
 
-Use binary files for high-volume data.
-Use INI or JSON for settings and metadata.
 File I/O must not block the GUI thread.
 
-## Testing rules
+## Diagnostics And Metrics Rules
+
+Operator diagnostics are aggregated warnings and state changes. Per-sample or
+per-candidate diagnostics are forbidden on the high-load path.
+
+Required pipeline metrics include:
+
+- input MB/s;
+- processed MB/s;
+- dropped blocks;
+- queue depth;
+- RX latency;
+- DSP latency;
+- storage latency;
+- GUI snapshot FPS;
+- max block age;
+- block pool usage.
+
+Diagnostics publication must be rate-limited before logs or UI.
+
+## Testing Rules
 
 Add tests for:
 
-* domain models;
-* time conversion;
-* protocol parsers;
-* invalid input handling;
-* storage read/write;
-* file rotation;
-* bearing-related calculations;
-* nontrivial data aggregation.
+- domain models;
+- time conversion;
+- protocol parsers;
+- invalid input handling;
+- block pool and bounded queue behavior;
+- storage read/write and recovery;
+- file rotation;
+- bearing-related calculations;
+- waterfall/spectrum/bearing aggregation;
+- diagnostics rate limiting;
+- simulator profiles and performance behavior.
 
 Target coverage for the project is at least 50%.
 
 For UI-only changes, run the application and manually verify the affected view.
 
-## Build commands
+## Build Commands
 
 Configure debug build:
 
@@ -255,26 +262,23 @@ Run tests:
 ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
-Keep concrete CMake build trees under `build/`; do not use the repository-root `build/` directory itself as the build tree. See `docs/development/build-and-test.md` for detailed build and test workflow.
+Keep concrete CMake build trees under `build/`; do not use the repository-root `build/`
+directory itself as the build tree.
 
-Use Qt 6.8+ with Qt Quick.
-For the current Windows developer workflow, Qt, CMake, Ninja, and MinGW are installed locally through the standard Qt installer under `C:/Qt` and are selected by the `qt-win-mingw-debug` CMake preset, not downloaded by Conan.
-
-## Change discipline
+## Change Discipline
 
 Prefer small, scoped changes.
 
 When implementing a task:
 
 1. Read the relevant docs.
-2. Identify the target layer.
+2. Identify the target layer and whether the work belongs to data plane or control plane.
 3. Avoid unrelated refactoring.
 4. Keep public interfaces stable unless the task requires changing them.
-5. Add or update tests for business logic.
+5. Add or update tests for business logic and high-load behavior.
 6. Update docs when behavior, architecture, or constraints change.
 
 Do not silently introduce new product features.
 Do not remove simulator compatibility.
 Do not weaken real-time responsiveness requirements.
 Do not move temporary prototype logic into permanent architecture without documenting it.
-

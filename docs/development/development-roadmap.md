@@ -1,382 +1,287 @@
-# План дальнейшей разработки SiriusScope
+# SiriusScope Development Roadmap
 
-## 1. Назначение документа
+This document defines the strategic migration path for SiriusScope.
 
-Этот документ фиксирует стратегический план дальнейшей разработки SiriusScope и нужен, чтобы разработчики и Codex удерживали единое направление при крупных изменениях.
+It no longer describes the target as a minimal MVP/demo vertical slice. The target is a
+high-load BCO stream processing product with explicit data plane / control plane
+separation.
 
-Roadmap не заменяет техническое задание, scope и архитектурные документы. Он дополняет их как практический план перехода от развитого UI-прототипа к рабочему вертикальному срезу продукта. Подробные требования остаются в `docs/spec/SiriusScope_TZ_v0.1.md`, границы текущей итерации - в `docs/spec/scope.md`, архитектурные правила - в `docs/architecture/layers.md` и `docs/architecture/data-flow.md`.
+Authoritative architecture documents:
 
-Документ не привязан к внешним трекерам задач и не является списком мелких задач. Его цель - задавать правильную последовательность развития подсистем и не позволять временным stub-решениям стать боевой архитектурой.
+- `docs/architecture/layers.md`;
+- `docs/architecture/data-flow.md`;
+- `docs/architecture/high-load-data-plane.md`;
+- `docs/architecture/baseline.md`.
 
-## 2. Текущее состояние проекта
+## 1. Current State
 
-SiriusScope сейчас находится в состоянии развитого UI-прототипа:
+The repository contains a useful UI and a partial runtime path, but some downstream
+components still reflect the earlier demo/MVP-rate architecture.
 
-- QML-интерфейс уже существует и является полезной основой для проверки компоновки, основных операторских сценариев и визуальных контрактов.
-- В проекте есть `SpectrumView`, `BandItem`, `WaterfallView`, `AntennaIndicator`, `ResultTablePanel`, `StatusBar` / `FooterDataView` и связанные UI-элементы.
-- Core/domain слой реализован частично: уже есть базовые доменные модели и ограничения, но не все сценарии доведены до полноценных application use-case.
-- Processing слой реализован частично через `SampleProcessor`; он должен стать частью реального runtime-потока, а не обслуживать только демонстрационные данные.
-- Waterfall пока опирается на синтетический источник и in-memory storage, что полезно для прототипа, но недостаточно для продукта с сохранением истории между запусками.
-- `SpectrumControllerStub`, `WaterfallControllerStub`, `AntennaControllerStub` и аналогичные классы являются временными решениями для связывания UI и прототипного поведения.
-- Hardware layer и Infrastructure layer в основном находятся в scaffold-состоянии: реальные UDP/TCP-адаптеры, протокольные парсеры, persistent storage, diagnostics и composition root еще должны быть оформлены.
-- Полный use-case пеленгования реализован частично: `ScanController` и `BearingService` уже дают первый вертикальный срез до `AntennaIndicator`, но еще отсутствуют `ResultTableModel`, хранение результатов и полная сквозная связь с будущими аппаратными источниками.
+Current known state:
 
-Текущее состояние допустимо как промежуточный этап, но дальнейшая разработка должна смещаться от UI-заглушек к явным application/core/processing/infrastructure/hardware границам.
+- QML UI exists and is useful for layout, operator scenarios, and visual contracts.
+- Core/domain models and constraints exist partially.
+- Processing exists partially through `SampleProcessor`.
+- Runtime may use `HighLoadSimulatorBcoStreamSource` and the `RealBcoEquivalent` profile.
+- `RealBcoEquivalent` produces about 1,000,000 sample slots/s with 10 ms batches.
+- Older downstream paths were designed around much lower rates, around 1,280 samples/s.
+- `WaterfallController`, `SignalSampleBus`, `BearingFrameBus`, and `ScanController`
+  paths may still carry raw or large vectors in transition scenarios.
 
-## 3. Главная цель ближайшего этапа
+This state is useful for discovering pressure points. It is not the target architecture.
 
-Главная цель ближайшей разработки - получить минимальный рабочий вертикальный срез, в котором данные проходят через те же архитектурные границы, что и будущая аппаратная эксплуатация:
+## 2. Target Direction
 
-```text
-Simulator или hardware source
-    -> parser / validation
-    -> SampleProcessor
-    -> WaterfallView
-    -> ScanController
-    -> BearingService
-    -> AntennaIndicator
-    -> ResultTable
-    -> persistent storage
-```
-
-Сначала нужно добиться работающего сквозного потока, пусть с минимальными алгоритмами и упрощенными протоколами. Оптимизация, финальная визуальная полировка и расширенные пользовательские функции должны идти после того, как данные перестанут обходить application-level interfaces и начнут сохраняться на диск.
-
-Этот вертикальный срез должен подтвердить:
-
-- simulator и real hardware смогут подключаться через одинаковые application-level interfaces;
-- QML получает подготовленные модели и команды, а не raw samples, протоколы или storage-форматы;
-- `SampleProcessor`, `ScanController`, `BearingService`, storage и diagnostics находятся в правильных слоях;
-- перезапуск приложения не уничтожает полезные Waterfall rows и строки итоговой таблицы.
-
-## 4. Принцип разработки
-
-Дальнейшая разработка должна следовать этим правилам:
-
-- Не наращивать боевую функциональность внутри классов с суффиксом `Stub`. Stub-контроллеры можно использовать только как временную прослойку, пока рядом создается правильный application-facing интерфейс или контроллер.
-- Не превращать `SpectrumControllerStub`, `WaterfallControllerStub`, `AntennaControllerStub` и похожие классы в permanent architecture. Если появляется реальная логика, ее нужно переносить в application/domain/processing/infrastructure слой по назначению.
-- QML не должен становиться владельцем бизнес-логики. Он может отображать данные, вызывать application commands и показывать preview, но не должен владеть расчетом пеленга, парсингом протоколов, storage или high-rate processing.
-- UI должен работать через application-facing models/controllers: `BandListModel`, `BandConfigController`, `WaterfallController`, `ScanController`, `ResultTableModel`, `StatusModel` и аналогичные контракты.
-- Simulator и real hardware должны использовать одинаковые application-level interfaces, чтобы UI и business logic не знали источник данных.
-- Storage, hardware protocols, bearing calculation и тяжелая processing-логика не должны попадать в QML.
-- SiriusScope не управляет РПУ напрямую. Настройки диапазонов, dwell time, фильтры, поляризация, аттенюаторы и другие receiver settings должны идти через BCO control interface; БЦО управляет РПУ внутри аппаратного комплекса.
-- Любая новая подсистема должна проектироваться так, чтобы ее можно было тестировать без запуска QML.
-
-## 5. Этапы разработки
-
-### Этап 1. Архитектурный каркас и интерфейсы
-
-Сначала нужно оформить явные интерфейсы между application, processing, infrastructure и hardware adapter слоями:
-
-- `IBcoSampleSource`;
-- `IAntennaAzimuthSource`;
-- `IBcoControl`;
-- `IAntennaControl`;
-- `IWaterfallStorage`;
-- `IResultTableStorage`;
-- `ISettingsStorage`;
-- `IDiagnosticsSink`.
-
-Также нужен application bootstrap / composition root, который собирает приложение в разных режимах:
-
-- simulator mode для разработки и тестов;
-- hardware mode для реальной аппаратуры;
-- replay mode позже, после стабилизации live-пути.
-
-Composition root должен быть единственным местом, где выбираются конкретные реализации источников, контроллеров, storage и diagnostics. UI не должен создавать concrete hardware/storage классы.
-
-### Этап 2. BandConfig и настройки диапазонов
-
-Источник истины по `BandItem` нужно перенести из QML в C++ application/core model.
-
-Целевые компоненты:
-
-- `BandListModel`;
-- `BandConfigController`;
-- доменная модель `BandConfig` с validation rules.
-
-Целевой путь изменения настроек:
+Target runtime:
 
 ```text
-BandSettingsDialog
-    -> BandConfigController
-    -> BandConfig validation
-    -> IBcoControl
-    -> diagnostics/status
+BCO UDP / HighLoadSimulator
+    -> RX / ingest thread
+    -> preallocated block pool / memory pool
+    -> bounded queues
+    -> DSP / processing thread pool
+    -> WaterfallAggregator
+    -> SpectrumAggregator
+    -> BearingAggregator
+    -> SignalParameterAggregator
+    -> StoragePipeline
+    -> GuiSnapshotPublisher
+    -> Qt/QML GUI
 ```
 
-`BandItem` должен отображать и редактировать application state, но не формировать BCO protocol payload и не отправлять команды аппаратуре напрямую.
-
-### Этап 3. Симулятор через реальные интерфейсы
-
-Симулятор должен перестать выдавать готовые `WaterfallRow` напрямую в UI-путь. Он должен имитировать аппаратные источники через те же интерфейсы, что и будущая реальная аппаратура.
-
-Нужны:
-
-- `SimulatorBcoSampleSource`;
-- `SimulatorAntennaAzimuthSource`;
-- `SimulatorBcoControl`;
-- `SimulatorAntennaControl`.
-
-Симулятор должен выдавать поток `BeamSample` / `SignalSample` и азимут, принимать конфигурацию диапазонов через `IBcoControl`, а поведение антенны - через `IAntennaControl`. Это позволит использовать simulator path для integration tests и не создавать отдельную UI-only ветку.
-
-### Этап 4. Реальный runtime-поток Waterfall
-
-Нужно связать `SampleProcessor` с `WaterfallView` через application-level контроллер и render buffer:
+Control plane:
 
 ```text
-IBcoSampleSource
-    -> SampleProcessor
-    -> WaterfallFrame
-    -> WaterfallController
-    -> render buffer
-    -> WaterfallView
+QML
+    -> application controllers
+    -> validated commands and configuration
+    -> scan session lifecycle
+    -> status / aggregated diagnostics
+    -> immutable snapshots and domain-level results
 ```
 
-В этом потоке должно быть явное преобразование:
+The target design must prove:
 
-```text
-domain amplitude 1..127
-    -> aggregated amplitude
-    -> render intensity
-    -> RGBA
-```
+- real hardware, simulator, and replay can share the same interfaces;
+- QML receives snapshots and command/status models, not raw samples;
+- data plane stages use bounded queues and explicit backpressure;
+- storage is asynchronous and append-only for high-volume data;
+- diagnostics are aggregated and rate-limited;
+- performance metrics show actual throughput and latency.
 
-`WaterfallView` может быть оптимизирован позже, но уже на этом этапе данные должны идти из processing слоя, а не из QML-таймера или synthetic UI generator.
+## 3. Development Principles
 
-### Этап 5. Persistent Waterfall storage
+- Do not move production logic into QML.
+- Do not extend stub/demo paths into the high-load data plane.
+- Do not use Qt queued paths for raw high-load vectors.
+- Keep `WaterfallController` as a presentation adapter in the target design.
+- Keep `ScanController` as a control-plane scan lifecycle coordinator.
+- Keep `BearingService` replaceable, with input prepared by `BearingAggregator`.
+- Keep simulator and real hardware behind shared interfaces.
+- Add tests for nontrivial domain, parsing, queue, storage, aggregation, and performance
+  behavior.
 
-`InMemoryWaterfallStorage` нужно заменить или закрыть production-путем `BinaryWaterfallStorage`.
+## 4. Migration Milestones
 
-Минимальная структура записи:
+### Milestone 1. Stabilize High-Load Runtime
 
-```text
-recordings/
-    YYYY-MM-DD_HH-MM-SS/
-        metadata.json
-        waterfall.bin
-        waterfall.idx
-```
+Goal: make the current high-load simulator path diagnosable and bounded enough for
+development.
 
-Минимальные требования:
+Tasks:
 
-- запись Waterfall rows;
-- чтение диапазона по времени или `sampleIndex`;
-- восстановление последних строк после перезапуска;
-- отсутствие блокировки GUI при записи и чтении;
-- устойчивость к отсутствующим, частично записанным или поврежденным файлам;
-- диагностика ошибок storage через общий diagnostics path.
+- document `UiDemo`, `MediumLoad`, `RealBcoEquivalent`, and `Stress150Percent` profiles;
+- prevent `RealBcoEquivalent` from being treated as a safe ordinary default;
+- add or expose basic throughput and drop metrics;
+- aggregate diagnostics instead of publishing per-sample/per-candidate warnings;
+- identify and isolate paths that copy large vectors into GUI/control-plane components.
 
-Финальный бинарный формат может уточняться отдельно, но storage interface и асинхронная модель должны быть заложены до расширения UI-функций истории.
+Acceptance:
 
-### Этап 6. DiagnosticsService и настоящий StatusBar
+- `UiDemo` is safe for UI development;
+- `RealBcoEquivalent` overloads are visible and do not crash the app immediately;
+- diagnostics/log/UI queues do not get spammed by per-sample messages.
 
-Статические статусы нужно заменить реальными диагностическими событиями.
+### Milestone 2. `SignalBlock`, Block Pool, And Bounded Queues
 
-Целевые компоненты:
+Goal: replace raw vector transport with bounded data plane ownership.
 
-- `DiagnosticsService`;
-- `StatusModel`;
-- `DiagnosticEvent`.
+Tasks:
 
-Диагностика должна приходить от:
+- introduce a `SignalBlock` concept with timing/source metadata;
+- introduce preallocated block pool / memory pool;
+- introduce bounded queues between ingest, processing, storage, and snapshot stages;
+- define overflow/backpressure policy;
+- add metrics: queue depth, dropped blocks, max block age, block pool usage.
 
-- BCO connection/source;
-- antenna connection/source;
-- protocol parsers;
-- `SampleProcessor`;
-- storage;
-- `ScanController`;
-- `BearingService`.
+Acceptance:
 
-`StatusBar` должен отображать application-level состояние и последние важные события, а не читать низкоуровневые ошибки socket/storage напрямую.
+- high-load data movement has explicit memory bounds;
+- unbounded `std::vector` callback/Qt queued transport is removed from the hot path.
 
-### Этап 7. ScanController
+### Milestone 3. `ProcessingEngine` v1
 
-Секторное сканирование должно стать application use-case, а не QML-сценарием.
+Goal: create the central data plane processing engine.
 
-Целевой поток:
+Tasks:
 
-```text
-User selects sector
-    -> ScanController
-    -> AntennaMotionPlanner / validation
-    -> IAntennaControl
-    -> collect samples during scan
-    -> BearingService
-    -> ResultTable / AntennaIndicator / storage
-```
+- consume `SignalBlock` handles from bounded queues;
+- run validation and dispatch to aggregators;
+- keep processing independent from QML/`QObject` presentation;
+- publish metrics for processed MB/s and DSP latency.
 
-Логика слепой зоны должна находиться в C++ application/domain logic. QML может оставлять только визуальный preview выбранного сектора и прогресса.
+Acceptance:
 
-`ScanController` должен координировать команды антенны, сбор данных, состояние сканирования, диагностику и передачу входных кадров в `BearingService`.
+- processing can run independently of the GUI thread;
+- test coverage exists for basic block processing and overload behavior.
 
-### Этап 8. BearingService
+### Milestone 4. `WaterfallAggregator` v1
 
-Расчет пеленга должен быть выделен в отдельный сервис:
+Goal: replace per-`sampleIndex` waterfall generation with time-bucket aggregation.
 
-- `BearingService`;
-- `BearingInputFrame`;
-- `BearingResult`.
+Tasks:
 
-Current implementation note: `BearingService` lives in the Processing Layer and
-calculates an MVP two-beam bearing estimate from `BearingFrameObservation`
-values. `ScanController` enriches `BearingInputFrame` with antenna azimuth,
-publishes QML-ready bearing marks, and exposes a signal for the future
-`ResultTableController`; persistent result-table storage remains a later stage.
+- aggregate by time window, frequency bucket, band, and beam;
+- produce compact waterfall rows or render buffers;
+- publish immutable `WaterfallSnapshot` values at bounded cadence;
+- keep viewport changes independent from raw stream replay through QML.
 
-На первом этапе алгоритм может быть минимальным или упрощенным, например тестовым алгоритмом для simulator path. Важно, чтобы место алгоритма было архитектурно правильным: вне QML, независимо от visual item state и с возможностью unit/integration testing.
+Acceptance:
 
-`BearingResult` должен быть доменным/application результатом, из которого затем строятся отметки для `AntennaIndicator` и строки для `ResultTable`.
+- waterfall GUI consumes snapshots;
+- `WaterfallController` no longer owns production high-load aggregation;
+- viewport changes do not clear history or pull raw stream through QML.
 
-### Этап 9. ResultTableModel и хранение результатов
+### Milestone 5. `SpectrumAggregator` v1
 
-Статический `ResultTablePanel.qml` нужно связать с настоящей моделью и storage.
+Goal: make spectrum display consume compact snapshots.
 
-Целевые компоненты:
+Tasks:
 
-- `ResultTableModel`;
-- `ResultTableController`;
-- `BinaryResultTableStorage`.
+- aggregate per visible frequency/bin range;
+- avoid copying every high-load block into GUI-oriented workers;
+- publish low-rate `SpectrumSnapshot` values.
 
-Целевой поток:
+Acceptance:
 
-```text
-BearingResult
-    -> ResultTableRow
-    -> ResultTableModel
-    -> ResultTableStorage
-    -> QML ResultTablePanel
-```
+- spectrum display remains responsive under high-load profiles;
+- no raw high-load vectors are delivered to presentation models.
 
-Таблица в текущей итерации остается read-only для оператора, но должна получать реальные результаты сканирования и восстанавливаться после перезапуска.
+### Milestone 6. `BearingAggregator` v1
 
-### Этап 10. Hardware adapter layer
+Goal: prepare bearing inputs from high-load blocks without exact `sampleIndex` coupling.
 
-После стабилизации simulator path нужно подготовить реальные аппаратные адаптеры:
+Tasks:
 
-- `UdpBcoReceiver`;
-- `TcpAntennaClient`;
-- `BcoProtocolParserV1`;
-- `AntennaProtocolParserV1`;
-- `BcoCommandAdapter`;
-- `AntennaCommandAdapter`.
+- pair beams by time/frequency/band window;
+- aggregate missing-beam diagnostics by window/band/session;
+- produce compact candidate sets for `BearingService`;
+- keep `ScanController` out of raw sample collection.
 
-Даже если точные форматы протоколов остаются `TBD`, интерфейсы и изоляцию протоколов нужно заложить заранее. Новая версия протокола не должна требовать переписывания UI или domain logic.
+Acceptance:
 
-Unsupported protocol versions, malformed packets и lost connection должны порождать diagnostics, а не crash.
+- alternating beam index streams do not create per-sample `MissingBeamSample` spam;
+- `BearingService` receives prepared candidates;
+- `ResultTable` receives domain-level `BearingResult` values.
 
-### Этап 11. Асинхронность и потоки
+### Milestone 7. `StoragePipeline`
 
-Целевая потоковая схема:
+Goal: move high-volume persistence to a dedicated append-only pipeline.
 
-- GUI thread;
-- BCO receiver thread;
-- antenna thread;
-- processing worker;
-- storage worker;
-- history loading worker.
+Tasks:
 
-Тяжелая работа не должна выполняться в GUI thread:
+- add bounded storage queue;
+- write binary chunked append-only files;
+- maintain indexes and metadata;
+- expose storage throughput/latency/drop metrics;
+- define storage backpressure policy.
 
-- прием UDP/TCP;
-- парсинг пакетов;
-- high-rate sample aggregation;
-- Waterfall row preparation;
-- запись и чтение архивов;
-- восстановление истории;
-- расчет пеленга;
-- длительная обработка ошибок и recovery.
+Acceptance:
 
-Конкретные primitives могут уточняться при реализации, но границы ответственности и запрет на блокировку UI должны сохраняться.
+- raw/near-raw or aggregated high-volume data is not written through GUI/controller paths;
+- history loading is asynchronous;
+- storage overload is visible and bounded.
 
-### Этап 12. Тестирование
+### Milestone 8. End-To-End Performance Tests
 
-Тестирование должно развиваться вместе с переносом логики из QML/stub в C++ слои.
+Goal: verify the complete data plane under defined simulator profiles.
 
-Направления тестирования:
+Tasks:
 
-- core tests для доменных моделей, `BandConfig`, `ScanSector`, `TimeBase`, `BearingResult`;
-- processing tests для validation, aggregation, Waterfall frame preparation и invalid input handling;
-- infrastructure storage tests для read/write, indexes, metadata, corrupted/missing files и restart recovery;
-- application controller tests для `BandConfigController`, `ScanController`, `ResultTableController`, diagnostics routing;
-- simulator integration tests для проверки simulator через те же interfaces, что и hardware path;
-- end-to-end tests для сценариев:
-  - simulator -> processing -> waterfall -> storage;
-  - scan -> bearing -> result table;
-  - restart -> restore waterfall/result table.
+- add profile-based integration/performance tests;
+- measure throughput and latency;
+- check bounded memory behavior;
+- verify diagnostics rate limiting.
 
-Цель тестов - подтверждать архитектурные границы и сквозные сценарии, а не только отдельные helpers.
+Acceptance:
 
-## 6. Ближайшая MVP-цель
+- `UiDemo`: no drops.
+- `MediumLoad`: no drops or accepted controlled drops.
+- `RealBcoEquivalent`: no crash, no OOM, bounded queues, responsive GUI, no diagnostics
+  spam.
+- `Stress150Percent`: system survives by detecting and bounding overload.
+- Long `RealBcoEquivalent`: at least 30 minutes without uncontrolled memory growth.
 
-MVP-1 считается достигнутым, когда выполнен минимальный вертикальный срез:
+## 5. Current/Legacy Paths To Avoid Extending
 
-1. Приложение запускается.
-2. Данные идут от simulator source через тот же интерфейс, что и будущая аппаратура.
-3. `SampleProcessor` формирует `WaterfallFrame`.
-4. `WaterfallView` отображает эти данные.
-5. Оператор выбирает сектор.
-6. `ScanController` запускает симуляцию сканирования.
-7. `BearingService` рассчитывает тестовый пеленг.
-8. `AntennaIndicator` показывает результат.
-9. `ResultTable` показывает строку результата.
-10. Waterfall и `ResultTable` сохраняются на диск.
-11. После перезапуска данные восстанавливаются.
+These paths may exist during migration but must not become production high-load design:
 
-Этот MVP не обязан иметь финальный алгоритм пеленгации, финальный binary format или максимальную производительность. Он обязан доказать, что основные подсистемы соединены через правильные интерфейсы и что временные UI/stub пути больше не являются основой product flow.
+- `WaterfallController` accumulating high-load raw blocks and forwarding large vectors;
+- `SampleProcessor` building waterfall rows per exact `sampleIndex`;
+- `SignalSampleBus` carrying high-load raw sample vectors;
+- `BearingFrameBus` carrying high-load bearing frames through callback/Qt queued paths;
+- `ScanController` collecting raw high-load sample vectors;
+- per-sample/per-candidate diagnostics;
+- GUI-oriented spectrum path copying every high-load block;
+- SQLite/JSON/INI/QSettings used for raw high-rate stream storage.
 
-## 7. Что пока не реализовывать
+## 6. Do Not Implement Yet
 
-До завершения вертикального среза не нужно заниматься:
+Until the high-load data plane is stable, do not spend architecture capacity on:
 
-- распознаванием типа РТС;
-- картой и географическим фоном;
-- экспортом во внешние системы;
-- поддержкой 8 лучей;
-- сложной фильтрацией, сортировкой и аналитикой итоговой таблицы;
-- полной пользовательской настройкой layout;
-- сложным replay-режимом;
-- premature optimization под 90 МБ/с;
-- финальной визуальной полировкой Waterfall.
+- RTS type recognition;
+- map/geographic background;
+- external export;
+- implemented 8-beam antenna support;
+- long-term target tracking;
+- advanced result-table tooling;
+- final visual polish of WaterfallView that depends on a stable snapshot contract.
 
-Эти направления могут оставаться архитектурно возможными, но не должны отвлекать от MVP-1 и не должны добавляться через обходные QML/stub решения.
+## 7. Recommended Work Order
 
-## 8. Рекомендуемый порядок работ
-
-| Шаг | Направление |
+| Step | Direction |
 |---:|---|
-| 1 | Интерфейсы и composition root |
-| 2 | `BandConfigController` и C++ Band model |
-| 3 | Simulator через реальные interfaces |
-| 4 | Runtime Waterfall через `SampleProcessor` |
-| 5 | `BinaryWaterfallStorage` |
-| 6 | `DiagnosticsService` и `StatusBar` |
-| 7 | `ScanController` |
-| 8 | `BearingService` |
-| 9 | `ResultTableModel` + storage |
-| 10 | Hardware adapters |
-| 11 | Потоки и нагрузка |
-| 12 | Интеграционные тесты |
+| 1 | Stabilize high-load runtime and metrics |
+| 2 | `SignalBlock`, memory pool, bounded queues |
+| 3 | `ProcessingEngine` v1 |
+| 4 | `WaterfallAggregator` v1 |
+| 5 | `SpectrumAggregator` v1 |
+| 6 | `BearingAggregator` v1 |
+| 7 | `StoragePipeline` |
+| 8 | End-to-end performance tests |
 
-Этот порядок можно уточнять для конкретных задач, но нельзя пропускать архитектурные interfaces и simulator path ради быстрого расширения stub/UI-поведения.
+This order can be refined for concrete tasks, but do not skip data plane ownership,
+backpressure, and metrics in order to extend old UI/demo paths faster.
 
-## 9. Правила для будущих задач Codex
+## 8. Rules For Future Codex Tasks
 
-Перед крупной задачей Codex должен:
+Before a large task, Codex must read:
 
-- читать `AGENTS.md`;
-- читать `docs/README.md`;
-- если задача затрагивает architecture, читать `docs/architecture/layers.md` и `docs/architecture/data-flow.md`;
-- если задача затрагивает требования, читать `docs/spec/scope.md` и `docs/spec/SiriusScope_TZ_v0.1.md`;
-- если задача затрагивает roadmap-направления, читать этот документ.
+- `AGENTS.md`;
+- `docs/README.md`;
+- `docs/architecture/layers.md`;
+- `docs/architecture/data-flow.md`;
+- `docs/architecture/high-load-data-plane.md`;
+- `docs/spec/scope.md`;
+- this roadmap when the task affects architecture, application flow, storage, simulator,
+  hardware adapters, scanning, or bearing.
 
-При реализации:
+When implementing:
 
-- не превращать stub-классы в permanent architecture;
-- не добавлять business logic в QML;
-- не создавать отдельный UI-only путь для simulator;
-- не обходить application-level interfaces для hardware, storage, scanning и bearing;
-- при добавлении новой подсистемы обновлять документацию;
-- при добавлении бизнес-логики добавлять или обновлять тесты;
-- не менять соседние модули без необходимости;
-- явно фиксировать `TBD`, если точные hardware protocol или binary format еще не известны.
+- do not change unrelated modules;
+- do not put business logic in QML;
+- do not bypass hardware/simulator abstraction;
+- do not use legacy buses as high-load transports;
+- update documentation when contracts or behavior change;
+- add tests for nontrivial logic and high-load behavior.

@@ -1,102 +1,135 @@
 # SiriusScope
 
-SiriusScope — настольное приложение на Qt/C++ для изделия «Сириус», комплекса радиотехнической разведки.
+SiriusScope is a Qt/C++ desktop system for изделие «Сириус», a radio-technical
+reconnaissance system.
 
-Текущая итерация продукта сосредоточена на приеме сигналов, визуализации в реальном времени, непрерывном хранении данных, секторном сканировании, расчете пеленга и работе как с реальной аппаратурой, так и с симулятором через общие интерфейсы прикладного уровня.
+The current architecture direction treats SiriusScope as a high-load BCO stream
+processing product, not as an MVP/demo GUI. The application must receive a high-speed BCO
+stream, process it with predictable latency, calculate bearing, build waterfall and
+spectrum summaries, estimate signal parameters, write continuous data, and show
+aggregated results to the operator.
 
-Подробные требования находятся в `docs/`. Для разработки используйте `docs/README.md` как карту документации.
+Detailed requirements live in `docs/`. Start with `docs/README.md`.
 
-## Текущий состав работ
+## Product Scope
 
-Входит в текущую итерацию:
+In scope for the current product direction:
 
-- прием отсчетов сигнала БЦО по UDP;
-- прием азимута антенны / поворотного устройства по TCP;
-- поддержка симулятора через те же интерфейсы, что и реальная аппаратура;
-- `SpectrumView` с 5 объектами `BandItem`;
-- `WaterfallView` с сохраняемой частотно-временной историей;
-- `AntennaIndicator` с выбором сектора и отображением результатов пеленгации;
-- итоговая таблица `ResultTable` только для чтения;
-- `StatusBar` для состояния программы, аппаратуры, записи и диагностики;
-- непрерывное хранение строк Waterfall, строк результатов, метаданных, настроек, технических логов и индексов/кэша при необходимости;
-- тесты для нетривиальной доменной логики, обработки, протоколов, хранения и расчетов, связанных с пеленгацией.
+- high-speed BCO stream reception over the hardware/simulator source interface;
+- antenna / rotating device azimuth reception;
+- shared real hardware, simulator, and replay interfaces;
+- sector scanning and scan session lifecycle;
+- bearing calculation from aggregated two-beam data;
+- waterfall and spectrum visualization from snapshots;
+- final read-only `ResultTable`;
+- continuous append-only storage for high-volume data and results;
+- aggregated diagnostics and pipeline metrics;
+- tests for nontrivial domain, processing, storage, simulator, and performance behavior.
 
-Не входит в текущую итерацию без отдельного задания:
+Out of scope unless explicitly requested:
 
-- распознавание типа РТС;
-- картографический фон;
-- экспорт во внешние системы;
-- расширенная фильтрация, сортировка и экспорт итоговой таблицы;
-- полная пользовательская настройка компоновки интерфейса;
-- реализация 8-лучевой антенны;
-- долговременное сопровождение целей.
+- RTS type recognition;
+- map background;
+- export to external systems;
+- advanced result-table editing/filtering/export;
+- full user-customizable layout;
+- implemented 8-beam antenna support;
+- long-term target tracking.
 
-## Технологический стек
+## Architecture
+
+The main architecture rule is data plane / control plane separation.
+
+Data plane:
+
+```text
+BCO UDP / HighLoadSimulator
+    -> RX / ingest thread
+    -> preallocated block pool / memory pool
+    -> bounded queues
+    -> DSP / processing thread pool
+    -> aggregators
+    -> storage writer
+    -> GUI snapshot publisher
+```
+
+Control plane:
+
+```text
+Qt/QML GUI
+    -> application controllers
+    -> configuration, scan commands, status, diagnostics
+    -> presentation models and immutable snapshots
+```
+
+Key rules:
+
+- QML displays UI and invokes application-level commands only.
+- QML must not parse protocols, calculate bearing, write archives, aggregate high-rate
+  streams, or receive raw high-load sample vectors.
+- `WaterfallController`, `SignalSampleBus`, and `BearingFrameBus` are not valid
+  production high-load raw data transports.
+- The GUI receives immutable/downsampled snapshots at a bounded cadence, not raw stream
+  blocks.
+- Storage is an asynchronous append-only pipeline with backpressure and metrics.
+- Diagnostics are aggregated and rate-limited.
+
+Authoritative architecture documents:
+
+- `docs/architecture/layers.md`
+- `docs/architecture/data-flow.md`
+- `docs/architecture/high-load-data-plane.md`
+- `docs/architecture/baseline.md`
+
+## Simulator Profiles
+
+Expected simulator profiles:
+
+- `UiDemo` - safe default for UI development.
+- `MediumLoad` - intermediate integration load.
+- `RealBcoEquivalent` - approximately real BCO rate, about 1,000,000 sample slots/s with
+  10 ms batches.
+- `Stress150Percent` - overload/stress profile.
+
+`RealBcoEquivalent` must not be treated as an ordinary safe default until the high-load
+data plane is implemented, bounded, instrumented, and performance-tested.
+
+## Technology Stack
 
 - C++20
 - Boost
-- Qt 6 с Qt Quick / QML
-- минимально допустимая версия Qt для разработки: 6.8+
+- Qt 6 with Qt Quick / QML
+- Qt 6.8+ minimum for the current Windows developer workflow
 - CMake
-- Conan
+- Conan when third-party dependencies are introduced or formalized
 - CTest
-- Qt Test или Catch2 для модульных тестов
+- Qt Test or Catch2 for unit tests
 
-Boost и Conan входят в целевой стек разработки. Boost следует использовать там, где он дает понятное преимущество перед стандартным C++ или Qt. Conan используется для управления внешними зависимостями, когда сторонние зависимости вводятся или формализуются.
+## Build
 
-## Архитектура
+Generated build trees must be under `build/`. Do not use the repository-root `build/`
+directory itself as a CMake build tree.
 
-SiriusScope использует слоистую архитектуру:
-
-```text
-UI Layer
-Presentation / Application Layer
-Core / Domain Layer
-Processing Layer
-Infrastructure Layer
-Hardware Adapter Layer
-```
-
-Ключевые правила:
-
-- QML только отображает интерфейс и вызывает команды прикладного уровня.
-- QML не должен разбирать протоколы, рассчитывать пеленг, писать архивы, агрегировать высокочастотные потоки или напрямую обращаться к аппаратуре.
-- Обработка, хранение, аппаратный обмен и тяжелая подготовка данных для отрисовки не должны блокировать GUI-поток.
-- Реальная аппаратура, симулятор и replay-источники должны оставаться за общими интерфейсами прикладного уровня.
-
-Авторитетные правила архитектуры описаны в `docs/architecture/layers.md` и `docs/architecture/data-flow.md`.
-
-## Сборка
-
-Сгенерированные деревья сборки должны создаваться внутри `build/`. Не используйте корневую директорию `build/` как саму CMake build tree.
-
-Стандартная локальная debug-сборка:
+Standard local debug build:
 
 ```bash
 cmake --preset qt-win-mingw-debug
 cmake --build build/win-mingw-debug
 ```
 
-В Windows при текущей сборке через Qt Installer MinGW/Ninja исполняемый файл ожидается здесь:
+Current Windows MinGW/Ninja executable path:
 
 ```text
 build/win-mingw-debug/appSiriusScope.exe
 ```
 
-## Тесты
+## Tests
 
-Запуск CTest из настроенной директории сборки:
+Run CTest from the configured build directory:
 
 ```bash
 ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
-## Документация
-
-Основные точки входа:
-
-- `docs/README.md` — карта документации и приоритет источников истины.
-- `docs/spec/scope.md` — текущий состав продукта.
-- `docs/spec/SiriusScope_TZ_v0.1.md` — полное техническое задание.
-- `docs/architecture/layers.md` — границы архитектурных слоев.
-- `docs/development/build-and-test.md` — команды сборки, тестов и проверки качества.
+For performance-sensitive work, also follow the high-load acceptance criteria in
+`docs/development/build-and-test.md`.

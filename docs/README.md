@@ -4,6 +4,11 @@ This directory contains the project documentation used by developers and AI assi
 
 The purpose of this documentation set is to keep the repository maintainable over time: `AGENTS.md` defines how to work with the repository, while the files in `docs/` define what SiriusScope is, how it is structured, and how specific subsystems must behave.
 
+SiriusScope is documented as a real high-load BCO stream processing system, not as an
+MVP/demo GUI application. The documentation separates the C++ data plane from the
+Qt/QML/Application control plane. Older demo-rate wording must be read as current/legacy
+implementation unless it is explicitly marked as target architecture.
+
 ## Documentation map
 
 ### Product scope
@@ -30,6 +35,7 @@ Read these documents before changing module boundaries, dependencies, threading,
 - `architecture/layers.md` — architectural layers, responsibilities, allowed dependencies, and forbidden dependencies.
 - `architecture/data-flow.md` — runtime flow of signal data, azimuth data, bearing results, UI updates, and storage operations.
 - `architecture/baseline.md` — current stage 1 composition root and hardware/infrastructure interface baseline.
+- `architecture/high-load-data-plane.md` — target data plane, control plane, ingest pipeline, DSP pipeline, snapshots, backpressure, memory pool, bounded queue rules, simulator profiles, and migration milestones.
 
 ### Domain model
 
@@ -57,7 +63,7 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 
 ### Hardware and simulator
 
-Read these documents before changing UDP/TCP communication, protocol parsers, hardware control, or simulator behavior.
+Read these documents before changing UDP/TCP communication, protocol parsers, hardware control, simulator behavior, ingest pipeline behavior, or simulator load profiles.
 
 These documents are planned but do not exist yet. Until they are added, use `spec/SiriusScope_TZ_v0.1.md`, `spec/scope.md`, and the architecture documents for the relevant requirements.
 
@@ -65,11 +71,11 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 - `hardware/bco-udp-protocol.md` — BCO UDP data stream format. May contain `TBD` sections until the real protocol is finalized.
 - `hardware/bco-control-protocol.md` — BCO control protocol for reception ranges, dwell time, filters, polarization, attenuators, diagnostics, and BCO-side RPU control. Planned; use `TBD` sections until the protocol is provided.
 - `hardware/antenna-tcp-protocol.md` — antenna / rotating device TCP messages. May contain `TBD` sections until the real protocol is finalized.
-- `hardware/simulator.md` — requirements for the software simulator.
+- `hardware/simulator.md` — requirements for the software simulator, including `UiDemo`, `MediumLoad`, `RealBcoEquivalent`, and `Stress150Percent` profiles.
 
 ### Storage
 
-Read these documents before changing recording, archive loading, metadata, settings, logs, or file rotation.
+Read these documents before changing recording, archive loading, metadata, settings, logs, file rotation, storage backpressure, or raw/near-raw stream persistence.
 
 These documents are planned but do not exist yet. Until they are added, use `spec/SiriusScope_TZ_v0.1.md`, `spec/scope.md`, and the architecture documents for the relevant requirements.
 
@@ -81,7 +87,7 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 
 Read these documents before changing build scripts, tests, formatting, or developer workflow.
 
-- `development/development-roadmap.md` — strategic roadmap for moving SiriusScope from the current UI prototype toward a working vertical product slice.
+- `development/development-roadmap.md` — strategic roadmap for moving SiriusScope toward the target high-load data plane architecture.
 - `development/build-and-test.md` — build, test, and QA commands.
 - `development/doxygen.md` - правила Doxygen-документирования исходного API и процесс генерации.
 - `generate-doxygen.ps1` - генерация русскоязычной HTML-документации Doxygen.
@@ -123,6 +129,9 @@ When adding or editing documentation:
 - link to related documents instead of copying their contents;
 - mark unknown protocol details as `TBD`;
 - separate current-version requirements from future extensions;
+- separate target high-load architecture from legacy/current MVP implementation paths;
+- never describe Qt/QML, `WaterfallController`, `SignalSampleBus`, or `BearingFrameBus` as valid high-load raw stream transports;
+- use `data plane`, `control plane`, `ingest pipeline`, `DSP pipeline`, `snapshot`, `backpressure`, `memory pool`, and `bounded queue` consistently;
 - обновляйте Doxygen-комментарии при изменении публичных C++-контрактов;
 - update `docs/README.md` when adding, renaming, or removing documentation files.
 

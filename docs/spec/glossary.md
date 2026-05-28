@@ -1,255 +1,296 @@
 # SiriusScope Glossary
 
-This document defines the main project terms and abbreviations used in SiriusScope documentation, code, issues, and Codex tasks.
+This document defines the main project terms and abbreviations used in SiriusScope
+documentation, code, issues, and Codex tasks.
 
 Use these terms consistently.
 
-## Product and project terms
+## Product And Project Terms
 
 ### SiriusScope
 
-The new cross-platform desktop software product for изделие «Сириус».
+The Qt/C++ desktop software system for изделие «Сириус».
 
-SiriusScope provides hardware control, signal reception, visualization, continuous storage, sector scanning, and bearing calculation.
+SiriusScope receives high-speed BCO data, runs stream processing and aggregation,
+calculates bearing, writes continuous data, and displays aggregated operator-facing
+results.
 
 ### Изделие «Сириус»
 
 The radio-technical reconnaissance system for which SiriusScope is developed.
 
-At the system level, изделие «Сириус» is intended for detecting, receiving, analyzing, and bearing radio emission sources.
+### Current Iteration
 
-### Current iteration
+The current product direction and implementation stage.
 
-The currently implemented scope of SiriusScope.
+It focuses on high-load BCO stream reception, data plane/control plane separation,
+waterfall/spectrum snapshots, sector scanning, bearing calculation, result storage,
+aggregated diagnostics, metrics, and simulator profiles.
 
-The current iteration focuses on:
+### Current/Legacy Implementation
 
-- signal reception;
-- SpectrumView;
-- WaterfallView;
-- AntennaIndicator;
-- sector scanning;
-- bearing calculation;
-- final result table;
-- continuous storage;
-- simulator support.
+Existing code or documentation that may still reflect the earlier MVP/demo-rate path.
 
-### Future extension
+Examples include raw vector transport through `SignalSampleBus`, `BearingFrameBus`, or
+`WaterfallController`. These are transition paths unless explicitly constrained to
+low-rate snapshots or tests.
 
-A feature that may be implemented later but is not part of the current iteration unless explicitly requested.
+### Future Extension
+
+A feature that may be implemented later but is not part of the current iteration unless
+explicitly requested.
 
 Examples:
 
 - RTS type recognition;
 - map background;
 - external system export;
-- 8-beam antenna support;
+- 8-beam antenna implementation;
 - long-term target tracking;
 - advanced result-table filtering and export.
 
-## Radio domain terms
+## Radio Domain Terms
 
 ### РТР
 
-Радиотехническая разведка.
-
-A field concerned with detecting, receiving, analyzing, and locating radio-technical emissions.
+Радиотехническая разведка. A field concerned with detecting, receiving, analyzing, and
+locating radio-technical emissions.
 
 ### РЭР
 
-Радиоэлектронная разведка.
-
-A broader term related to reconnaissance of electromagnetic emissions and radio-electronic systems.
+Радиоэлектронная разведка. A broader term related to reconnaissance of electromagnetic
+emissions and radio-electronic systems.
 
 ### РТС
 
-Радиотехническое средство.
-
-A radio-technical system or device that emits signals, for example radar or other radio-emitting equipment.
+Радиотехническое средство. A radio-technical system or device that emits signals.
 
 ### ИРИ
 
-Источник радиоизлучения.
-
-A source of radio emission.
-
-In SiriusScope, bearing calculation is performed to estimate the direction toward an ИРИ.
+Источник радиоизлучения. A source of radio emission.
 
 ### Signal
 
-A received radio-frequency event or emission represented in SiriusScope through samples, aggregated data, visual rows, and scan results.
+A received radio-frequency event or emission represented in SiriusScope at different
+levels:
 
-The exact level of abstraction depends on context:
-
-- raw or parsed BCO sample;
-- grouped sample set;
-- visual Waterfall cell;
-- bearing-related result.
-
-### Emission
-
-A radio emission produced by an ИРИ.
-
-In most SiriusScope documents, “signal” is used as the practical software-level term.
+- parsed sample inside a data plane block;
+- aggregated time/frequency bucket;
+- waterfall cell;
+- bearing candidate;
+- scan-level result.
 
 ### Bearing
 
-Direction to a radio emission source.
+Direction to a radio emission source. In Russian project materials: `пеленг`.
 
-In Russian project materials: `пеленг`.
-
-In the current iteration, bearing is calculated and displayed per `BandItem`.
+Bearing is calculated outside QML from aggregated data prepared by the data plane.
 
 ### Azimuth
 
-Current angular position of the antenna or bearing result angle.
-
-Usually expressed in degrees.
+Current angular position of the antenna or a bearing result angle, usually in degrees.
 
 ### Sector
 
 Angular range selected by the operator on `AntennaIndicator` for scanning.
 
-During sector scanning, the antenna moves through the selected sector and SiriusScope collects data for bearing calculation.
+### Blind Zone
 
-### Blind zone
+Angular range where the antenna center must not be positioned. Antenna control logic must
+account for it outside QML.
 
-Angular range where the antenna center must not be positioned.
-
-In the current assumptions, the antenna has a blind zone around 170–190 degrees. Antenna control logic must account for this.
-
-## Hardware terms
+## Hardware Terms
 
 ### АС
 
 Антенная система.
 
-The antenna system used to receive radio emissions.
-
 ### ПУ
 
 Поворотное устройство.
 
-The rotating device that changes the antenna direction and provides current azimuth.
-
 ### СВБ
 
-Project-specific name or abbreviation used for the antenna rotating mechanism / antenna position source.
-
-When used in software documentation, treat it as related to the antenna / rotating device interface unless a more precise hardware definition is provided.
+Project-specific name or abbreviation related to the antenna / rotating device interface.
 
 ### РПУ
 
 Радиоприемное устройство.
 
-Radio receiving device.
+SiriusScope does not control the RPU directly. The BCO controls the RPU internally, and
+SiriusScope sends reception configuration only to the BCO.
 
-Responsible for radio reception and primary analog/radio-frequency operations such as amplification and frequency conversion.
+### БЦО / BCO
 
-SiriusScope does not control the RPU directly. The BCO controls the RPU internally, and SiriusScope sends reception configuration only to the BCO.
+Блок цифровой обработки. Digital processing unit.
 
-### БЦО
+In SiriusScope, the BCO accepts reception configuration, controls the RPU internally, and
+sends a high-speed signal stream to the software.
 
-Блок цифровой обработки.
+### BCO Reception Configuration
 
-Digital processing unit.
+Structured receiver settings sent from SiriusScope to the BCO.
 
-In the current SiriusScope model, the BCO accepts reception configuration from SiriusScope, controls the RPU internally, and sends discrete signal samples to the software over UDP.
+It conceptually includes frequency ranges, dwell time, filter parameters, polarization,
+attenuators, and other settings needed by the BCO to control reception and the RPU.
 
-### Управляющая конфигурация БЦО
-
-A structured set of reception settings that SiriusScope sends to the BCO.
-
-It conceptually includes frequency ranges, dwell time, filter parameters, polarization, input/output attenuators, and other settings needed by the BCO to control reception and the RPU internally.
-
-The BCO protocol may support up to 8 configured ranges; the current SiriusScope iteration uses 5.
-
-Exact fields and binary/network representation are `TBD` until the dedicated BCO control protocol document is written.
-
-### Аппаратная часть
-
-The real hardware components of изделие «Сириус», including antenna system, rotating device, RPU, BCO, and related control interfaces. SiriusScope directly controls the BCO and antenna/rotating device, while RPU control is behind the BCO boundary.
+The BCO protocol may support up to 8 configured ranges; the current SiriusScope workflow
+uses 5.
 
 ### Simulator
 
-A software imitation of the hardware.
+Software imitation of hardware.
 
-The simulator must use the same application-level interfaces as real hardware. SiriusScope UI and business logic must not depend on whether data comes from real hardware or simulator.
+The simulator uses the same interfaces as real hardware and must not require a separate
+UI path.
+
+### Simulator Profiles
+
+Named load profiles for the BCO simulator:
+
+- `UiDemo` - safe default for UI development.
+- `MediumLoad` - intermediate integration load.
+- `RealBcoEquivalent` - approximates real BCO load, about 1,000,000 sample slots/s with
+  10 ms batches.
+- `Stress150Percent` - overload/stress profile.
+
+`RealBcoEquivalent` is not an ordinary safe default until high-load data plane work is
+complete.
 
 ### Replay
 
-A mode where previously recorded data is read from file and used as an input source.
+A mode where previously recorded data is used as an input source for testing, debugging,
+or analysis.
 
-Replay is useful for testing, debugging, and analysis.
+## Data Plane Terms
 
-## Data and protocol terms
+### Data Plane
+
+The C++ high-load path that receives, parses, validates, buffers, processes, aggregates,
+stores, and snapshots the BCO stream.
+
+The data plane must not depend on QML, Qt Quick item state, or presentation models.
+
+### Control Plane
+
+The Qt/QML/Application path for operator commands, configuration, scan lifecycle,
+statuses, aggregated diagnostics, and presentation models.
+
+Qt signals/slots are acceptable in the control plane.
+
+### Ingest Pipeline
+
+The first data plane stages:
+
+```text
+BCO UDP / HighLoadSimulator
+    -> RX / ingest thread
+    -> protocol parser
+    -> block pool / memory pool
+    -> bounded ingest queue
+```
+
+### DSP Pipeline
+
+The data plane stages that transform validated blocks into aggregated outputs:
+
+```text
+bounded queues
+    -> ProcessingEngine
+    -> WaterfallAggregator
+    -> SpectrumAggregator
+    -> BearingAggregator
+    -> SignalParameterAggregator
+```
+
+### SignalBlock
+
+A bounded batch of parsed BCO sample data plus timing/source metadata.
+
+Target high-load transport moves `SignalBlock` handles or descriptors, not fresh
+unbounded `std::vector<SignalSample>` payloads.
+
+### Memory Pool / Block Pool
+
+Preallocated storage used to reuse `SignalBlock` buffers and bound memory growth.
+
+### Bounded Queue
+
+A queue with explicit capacity and overflow policy. Every high-load thread boundary must
+use bounded queues or an equivalent bounded handoff.
+
+### Backpressure
+
+Explicit overload behavior when downstream stages cannot keep up. Backpressure may cause
+controlled drops, coalescing, degraded fidelity, or source throttling where available. It
+must be visible through metrics and diagnostics.
+
+### Snapshot
+
+Immutable/downsampled data prepared by the data plane for GUI consumption.
+
+Examples:
+
+- `WaterfallSnapshot`;
+- `SpectrumSnapshot`;
+- scan summary;
+- aggregated diagnostics snapshot;
+- result-table rows.
+
+Snapshots are low-rate presentation inputs, not raw stream data.
+
+## Data And Protocol Terms
 
 ### UDP
 
-User Datagram Protocol.
-
-Used by the BCO data stream in the current SiriusScope architecture.
+User Datagram Protocol. Used by the BCO data stream in the current architecture.
 
 ### TCP
 
-Transmission Control Protocol.
+Transmission Control Protocol. Used by the antenna / rotating device azimuth stream.
 
-Used by the antenna / rotating device azimuth stream in the current SiriusScope architecture.
+### Protocol Parser
 
-### Protocol parser
+A component that converts raw UDP/TCP packets or messages into typed software structures.
 
-A component responsible for converting raw UDP/TCP packets or messages into typed software structures.
-
-Protocol parsers must be isolated from QML and UI code.
-
-### Protocol version
-
-Explicit version of a hardware or simulator protocol.
-
-SiriusScope must be able to add new protocol versions without rewriting UI or core business logic.
+Protocol parsers are isolated from QML and UI code.
 
 ### Sample
 
 A discrete received data element from the BCO stream.
 
-In the current conceptual model, a sample contains:
+Conceptual fields:
 
 - `sampleIndex`;
 - `frequencyOffsetHz`;
 - `amplitude`;
 - `beamIndex`.
 
+High-load processing moves samples in blocks and aggregates, not per-sample UI events.
+
 ### `sampleIndex`
 
 The original sample number from the BCO processing session.
 
-SiriusScope must preserve it.
-
-It is used by `TimeBase` to compute local time and global display time.
+SiriusScope must preserve it. It is used by `TimeBase` and storage metadata, but target
+bearing candidate pairing is based on time/frequency/band windows, not exact
+`sampleIndex` equality only.
 
 ### `frequencyOffsetHz`
 
-Frequency offset in hertz relative to the base frequency configured for the related BCO-controlled reception band.
-
-The absolute display frequency is computed from base frequency plus offset.
+Frequency offset in hertz relative to the base frequency configured for the related
+BCO-controlled reception band.
 
 ### `amplitude`
 
-Signal amplitude in conditional units.
-
-Current valid input range:
+Signal amplitude in conditional units. Valid input range is:
 
 ```text
 1..127
 ```
 
-Invalid input values include:
-
-* 0;
-* negative values;
-* values above 127.
-
-Invalid values must not crash SiriusScope.
+Invalid values must not crash SiriusScope and must be diagnosed in aggregated,
+rate-limited form on the high-load path.
 
 ### `beamIndex`
 
@@ -262,298 +303,155 @@ Current iteration supports:
 1
 ```
 
-Future 8-beam support must remain architecturally possible, but is not implemented in the current iteration.
-
-### Beam
-
-A directional antenna lobe / reception channel.
-
-The current system uses two beams.
+Future 8-beam support must remain architecturally possible.
 
 ### `A0`
 
-Aggregated amplitude for beam 0 in a frequency-time cell.
+Aggregated amplitude for beam 0 in a frequency-time bucket.
 
 ### `A1`
 
-Aggregated amplitude for beam 1 in a frequency-time cell.
+Aggregated amplitude for beam 1 in a frequency-time bucket.
 
-### Direction difference
+### Direction Difference
 
-Normalized difference between two beam amplitudes.
-
-Common conceptual form:
+Normalized difference between two beam amplitudes. A common conceptual form:
 
 ```text
 D = (A0 - A1) / (A0 + A1)
 ```
 
-The exact sign convention must be kept consistent across domain logic, UI colors, and documentation.
+The exact sign convention must be consistent across domain logic, UI colors, and
+documentation.
 
 ### TimeBase
 
 Domain model that links BCO sample numbering to local and global time.
 
-It preserves:
-
-* recording start time;
-* first sample index;
-* sample period.
-
-It is used to compute:
-
-* local time from recording start;
-* global/system time for display;
-* stable historical reconstruction.
-
-### Local time
-
-Time offset from the beginning of a recording.
-
-### Global time
-
-System/UTC-based time used for display in WaterfallView and ResultTable.
-
-### Recording
-
-A continuous stored sequence of data.
-
-SiriusScope is designed around continuous recording rather than legacy fixed time sessions.
-
-### Archive
-
-Stored historical data that can be loaded after application restart.
-
-The archive includes high-volume binary data, metadata, settings snapshots, technical logs, and optional indexes/cache.
-
-### Metadata
-
-Descriptive information about a recording or archive file.
-
-Examples:
-
-* recording ID;
-* start time;
-* end time;
-* format version;
-* application version;
-* TimeBase values;
-* band configuration;
-* packet loss diagnostics.
-
-## UI terms
-
-### MainWindow
-
-The main SiriusScope application window.
-
-Current layout:
-
-* menu/toolbar at top;
-* SpectrumView and WaterfallView on the left;
-* AntennaIndicator and ResultTable on the right;
-* StatusBar at the bottom.
+## UI Terms
 
 ### SpectrumView
 
-The UI component that displays frequency-domain information and `BandItem` objects.
+UI component that displays frequency-domain information and `BandItem` objects.
 
-It controls the visible frequency range of `WaterfallView`.
+It consumes low-rate spectrum snapshots. It must not copy every high-load block into GUI
+processing.
 
 ### BandItem
 
 A frequency-band UI/domain object corresponding to one BCO-controlled reception band.
 
-Current iteration uses exactly 5 `BandItem` objects.
-
-Each `BandItem`:
-
-* represents up to 500 MHz;
-* has a fixed color;
-* is used for bearing result color mapping;
-* must not directly send hardware commands from QML.
-
-The BCO protocol may support up to 8 configured ranges, but the current SiriusScope iteration exposes exactly 5 `BandItem` objects.
+Current workflow uses exactly 5 `BandItem` objects. `BandItem` must not directly send
+hardware commands from QML.
 
 ### WaterfallView
 
-The frequency-time visualization component.
+Frequency-time visualization component.
 
-It displays signal history over time.
-
-Current behavior target:
-
-* frequency on horizontal axis;
-* time on vertical axis;
-* movement from top to bottom;
-* color based on amplitude and two-beam direction difference.
+Target behavior uses aggregated time/frequency buckets and immutable render snapshots.
+Waterfall is not a per-`sampleIndex` UI feed in production design.
 
 ### AntennaIndicator
 
 Circular indicator for antenna and bearing visualization.
 
-It displays:
-
-* current antenna azimuth;
-* selected scan sector;
-* scanning progress;
-* bearing results.
+It displays current antenna azimuth, selected scan sector, scan progress, and bearing
+results.
 
 ### ResultTable
 
-Final scan result table.
+Read-only final scan result table.
 
-It is not a detailed pulse table in the current iteration.
-
-It displays scan-level results and must load previous results from storage on startup.
+It displays domain-level scan results and loads previous results from storage. It does
+not consume raw stream data.
 
 ### StatusBar
 
 Bottom status and diagnostics area.
 
-It displays:
+It displays aggregated operator-facing state, not raw per-sample diagnostics.
 
-* application status;
-* hardware connection status;
-* current azimuth;
-* recording status;
-* latest errors and diagnostic messages.
+## Architecture Terms
 
-### MenuBar / Toolbar
+### Qt Adapter / Presentation Layer
 
-Top-level application commands and mode controls.
+Layer responsible for QML views, `QObject` wrappers, presentation models, and snapshots
+safe for QML.
 
-Detailed behavior is defined in UI documents as the product evolves.
+### Application / Control Layer
 
-## Architecture terms
-
-### UI Layer
-
-Layer responsible for QML views, lightweight bindings, and user interaction.
-
-The UI layer must not perform DSP, protocol parsing, hardware control, storage, or heavy processing.
-
-### Presentation Model Layer
-
-Layer responsible for preparing data for QML and exposing safe view models.
-
-Also called UI model layer in some documents.
-
-### Application Layer
-
-Layer responsible for orchestration, commands, use cases, controllers, and interaction between UI-facing models and core services.
+Layer responsible for orchestration, commands, scan lifecycle, configuration, and status
+routing.
 
 ### Core / Domain Layer
 
 Layer containing domain models, core rules, and processing-independent concepts.
 
-It must not depend on QML.
+### Hardware / Ingest Layer
+
+Layer responsible for hardware-facing and simulator-facing receive/control adapters.
+
+### Pipeline / Data Plane Layer
+
+Layer responsible for blocks, memory pool, bounded queues, backpressure, metrics, and
+worker-stage ownership.
 
 ### DSP / Processing Layer
 
-Layer responsible for signal processing, grouping, aggregation, detection-related logic, and bearing-related services.
+Layer responsible for signal processing, aggregation, detection-related logic, bearing
+candidate preparation, and algorithmic bearing services.
 
-The current iteration must avoid treating RTS classification as an active implemented component.
+### Storage Layer
 
-### Infrastructure Layer
+Layer responsible for append-only binary data, metadata, indexes, settings, logs, and
+history reads.
 
-Layer responsible for storage, settings, logs, caches, archive formats, and technical services.
+## Storage Terms
 
-### Hardware Adapter Layer
+### Binary Storage
 
-Layer responsible for hardware-facing clients and adapters:
+File storage for high-volume data such as waterfall chunks, snapshots, or raw/near-raw
+stream chunks where enabled.
 
-* UDP BCO receiver;
-* TCP antenna client;
-* BCO command adapter;
-* antenna command adapter;
-* simulator adapters;
-* protocol parsers.
+### Append-Only Storage
 
-### Adapter
+Storage model where high-volume records are appended sequentially and indexed. Existing
+records are not rewritten in the hot path.
 
-A component that hides details of an external system or protocol behind a stable interface.
+### Metadata Storage
 
-### Controller
+JSON/INI/SQLite/QSettings-compatible storage for low-volume descriptors and settings.
+It is not a raw high-rate stream store.
 
-A component that coordinates an application-level operation, such as scanning, updating settings, or requesting data.
-
-### Service
-
-A component that implements reusable business, processing, storage, or infrastructure logic.
-
-### Model
-
-A data structure or observable object used to represent domain state or UI-ready state.
-
-## Storage terms
-
-### Binary storage
-
-File storage format used for high-volume runtime data such as Waterfall rows or result rows.
-
-### Settings storage
-
-INI or JSON-based storage for application settings.
-
-Large runtime data must not be stored in settings.
-
-### Technical log
+### Technical Log
 
 File-based diagnostic log used for development, debugging, and field diagnostics.
 
 ### Rotation
 
-Policy for limiting stored archive files and removing or replacing old data.
+Policy for limiting stored archive files and replacing old data without corrupting the
+current recording.
 
-Rotation must not corrupt the current recording.
-
-### Cache
-
-Derived data used to speed up loading or display.
-
-Cache must be recoverable and must not be required for application startup.
-
-## Development terms
+## Development Terms
 
 ### MVP
 
-Minimum viable product for the current development stage.
+Minimum viable product. In current SiriusScope documentation, MVP usually denotes
+legacy/transition implementation, not target architecture.
 
-In SiriusScope, MVP must still respect architectural boundaries and real-time responsiveness requirements.
-
-### Current scope
-
-The set of features that may be implemented without special approval.
-
-Defined in `docs/spec/scope.md`.
-
-### Out of scope
-
-Features that must not be implemented unless explicitly requested.
+MVP paths must still respect layer boundaries and must not be extended into high-load
+production data plane transports.
 
 ### TBD
 
-To be determined.
-
-Use `TBD` for unknown protocol details, exact binary formats, or hardware-specific values that are not finalized yet.
+To be determined. Use `TBD` for unknown protocol details, exact binary formats, or
+hardware-specific values that are not finalized yet.
 
 ### ADR
 
 Architecture Decision Record.
 
-A short document that explains an important architecture decision, its context, and consequences.
+### Codex Task
 
-### Codex task
-
-A task given to Codex or another AI coding assistant.
-
-A good Codex task should specify:
-
-* goal;
-* files or docs to read;
-* target layer;
-* allowed changes;
-* forbidden changes;
-* expected tests.
-
+A task given to Codex or another AI coding assistant. A good task specifies goal, files
+or docs to read, target layer, allowed changes, forbidden changes, and expected tests.

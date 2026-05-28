@@ -1,640 +1,466 @@
 # SiriusScope Layered Architecture
 
-This document defines the architectural layers of SiriusScope, their responsibilities, allowed dependencies, and forbidden dependencies.
+This document defines the architectural layers of SiriusScope, their responsibilities,
+allowed dependencies, and forbidden dependencies.
 
-It is the main reference for preserving architectural consistency during long-term development.
+The current architecture direction is high-load dataflow with explicit separation between
+the C++ data plane and the Qt/QML control plane. See
+`docs/architecture/high-load-data-plane.md` for the detailed runtime pipeline.
 
-## 1. Architectural principle
+## 1. Architectural Principle
 
-SiriusScope uses a modular layered architecture.
+SiriusScope is not a demo/MVP GUI wrapped around signal samples. It is a
+high-throughput desktop system for receiving a BCO stream, processing it with predictable
+latency, writing continuous data, and showing aggregated operator-facing state.
 
-The main goals are:
+Primary rules:
 
-- keep the UI responsive;
-- isolate hardware protocols from UI and domain logic;
-- make simulator and real hardware interchangeable;
-- keep signal processing testable;
-- support continuous storage without blocking rendering;
-- make future protocol, antenna, storage, and UI changes possible without rewriting the whole application.
+- Qt/QML/Application layer is the control plane and presentation surface.
+- High-load stream processing is the C++ data plane.
+- Qt signals/slots are acceptable for control-plane commands and low-rate status updates.
+- Qt signals/slots, `QObject`, `QAbstractListModel`, and QML must not carry high-load
+  raw data, large sample vectors, or per-candidate diagnostics.
+- Data plane stages must use explicit ownership, preallocated blocks where practical,
+  bounded queues, metrics, and backpressure.
 
-The architecture must prevent accidental coupling between:
+## 2. Logical Layers
 
-- QML and hardware protocols;
-- QML and storage formats;
-- UI rendering and DSP;
-- domain models and Qt Quick types;
-- simulator logic and UI logic.
-
-## 2. Layers
-
-SiriusScope is divided into the following logical layers:
+SiriusScope is divided into these logical layers:
 
 ```text
-UI Layer
-Presentation / Application Layer
-Core / Domain Layer
-Processing Layer
-Infrastructure Layer
-Hardware Adapter Layer
+Qt adapter / presentation layer
+Application / control layer
+Core / domain layer
+Hardware / ingest layer
+Pipeline / data plane layer
+DSP / processing layer
+Storage layer
+Infrastructure support layer
 ```
 
-The physical repository structure may evolve, but code must still respect these logical boundaries.
+The physical repository structure may evolve, but code must respect these boundaries.
 
-## 3. UI Layer
+## 3. Qt Adapter / Presentation Layer
 
-### 3.1 Responsibility
+### Responsibilities
 
-The UI Layer is responsible for:
+The Qt adapter / presentation layer is responsible for:
 
-* rendering QML components;
-* displaying prepared data;
-* receiving lightweight user interaction;
-* binding to application-facing models;
-* calling application-level commands.
+- QML views and Qt Quick controls;
+- `QObject` wrappers and view models;
+- low-rate, UI-safe immutable snapshots;
+- layout, visual state, and lightweight formatting;
+- operator interaction and command invocation;
+- displaying aggregated diagnostics and status.
 
-Main UI components:
+Main UI components include:
 
-* `MainWindow`;
-* `MenuBar` / `Toolbar`;
-* `SpectrumView`;
-* `BandItem`;
-* `WaterfallView`;
-* `AntennaIndicator`;
-* `ResultTable`;
-* `StatusBar`;
-* configuration dialogs.
+- `MainWindow`;
+- `SpectrumView`;
+- `BandItem`;
+- `WaterfallView`;
+- `AntennaIndicator`;
+- `ResultTable`;
+- `StatusBar`;
+- configuration dialogs.
 
-### 3.2 Allowed logic
+### Allowed Logic
 
-QML may contain:
+QML may:
 
-* layout rules;
-* visual state;
-* simple interaction handling;
-* simple formatting for display;
-* bindings to exposed properties;
-* calls to invokable application commands.
+- render UI;
+- bind to prepared models;
+- handle simple user interaction;
+- call application-level commands;
+- display immutable/downsampled snapshots.
 
-### 3.3 Forbidden logic
+### Forbidden Logic
 
-QML must not contain:
+QML must not:
 
-* UDP/TCP parsing;
-* direct socket access;
-* direct hardware command formatting;
-* DSP algorithms;
-* bearing calculation algorithms;
-* high-rate sample aggregation;
-* archive writing or reading;
-* file rotation logic;
-* long-running loops over signal data;
-* blocking operations.
+- parse UDP/TCP packets;
+- access sockets directly;
+- build BCO or antenna protocol payloads;
+- calculate bearing;
+- run DSP algorithms;
+- aggregate high-rate signal streams;
+- own long-running timers for data plane processing;
+- write raw/near-raw archives;
+- read high-volume archive data synchronously;
+- receive raw high-load sample vectors.
 
-### 3.4 Dependency rules
+## 4. Application / Control Layer
 
-The UI Layer may depend on:
+### Responsibilities
 
-* QML components;
-* Qt Quick / Qt Controls;
-* presentation/application models exposed to QML.
+The application / control layer coordinates operator use cases and control-plane state:
 
-The UI Layer must not depend directly on:
-
-* hardware adapter classes;
-* protocol parser classes;
-* storage writer classes;
-* processing services;
-* raw sample queues.
-
-## 4. Presentation / Application Layer
-
-### 4.1 Responsibility
-
-The Presentation / Application Layer connects UI actions with application use cases.
-
-It is responsible for:
-
-* QML-facing models;
-* application controllers;
-* command routing;
-* validation of UI requests;
-* coordination of scan workflows;
-* coordination of device settings;
-* exposing UI-safe state;
-* adapting domain state for presentation.
+- application bootstrap and composition;
+- scan session lifecycle;
+- band and receiver configuration orchestration;
+- antenna sector commands;
+- device mode selection;
+- status and diagnostics routing;
+- exposing UI-safe state to presentation models;
+- connecting GUI commands to domain, hardware, pipeline, and storage interfaces.
 
 Typical components:
 
-* `ApplicationController`;
-* `SessionController`;
-* `ScanController`;
-* `DeviceControlFacade`;
-* `WaterfallController`;
-* `ResultTableController`;
-* `SettingsService`;
-* `FrequencyViewportModel`;
-* QML-facing list/table models.
+- `ApplicationController`;
+- `SessionController`;
+- `ScanController`;
+- `DeviceControlFacade`;
+- `ResultTableController`;
+- `SettingsService`;
+- `FrequencyViewportModel`;
+- QML-facing list/table models.
 
-### 4.2 Examples
+`WaterfallController` can exist as a presentation/controller adapter, but it is not the
+production owner of high-load waterfall processing. It consumes snapshots or render-ready
+buffers produced by the data plane.
 
-When the user changes a `BandItem` setting:
+### Scan Rule
 
-```text
-QML BandItem
-    -> application controller
-    -> validated BandConfig
-    -> BCO control interface
-    -> BCO command adapter
-    -> BCO applies receiver configuration and controls RPU internally
-```
+`ScanController` is a control-plane component. It coordinates sector scanning, antenna
+state, scan session lifecycle, and result publication. It must not receive raw high-load
+sample vectors through the Qt event loop.
 
-When the user starts sector scanning:
+Target scan flow:
 
 ```text
-AntennaIndicator
+Operator selects sector
     -> ScanController
-    -> AntennaMotionPlanner
-    -> antenna control interface
-    -> BearingFrameBus / BearingInputFrame collection
-    -> processing / bearing service
-    -> ResultTable model
-    -> storage writer
+    -> scan session descriptor
+    -> ProcessingEngine / BearingAggregator
+    -> scan summaries and BearingResult values
+    -> ResultTableController / AntennaIndicator model / storage pipeline
 ```
 
-### 4.3 Allowed dependencies
+### Dependencies
 
-The Application Layer may depend on:
+The application / control layer may depend on:
 
-* Core / Domain models;
-* processing service interfaces;
-* infrastructure service interfaces;
-* hardware adapter interfaces;
-* Qt object/model types when exposing data to QML.
+- core/domain models;
+- data plane control interfaces;
+- processing service interfaces;
+- storage interfaces;
+- hardware/control interfaces;
+- Qt object/model types only for presentation-facing adapters.
 
-### 4.4 Forbidden dependencies
-
-The Application Layer must not:
-
-* parse raw hardware packets directly if parser classes exist;
-* implement low-level UDP/TCP details;
-* perform heavy DSP in UI-facing models;
-* perform blocking file operations on the GUI thread;
-* expose mutable raw domain internals directly to QML.
+It must not implement the high-load data plane itself.
 
 ## 5. Core / Domain Layer
 
-### 5.1 Responsibility
+### Responsibilities
 
-The Core / Domain Layer contains the central concepts of SiriusScope.
+The core/domain layer contains UI-independent concepts and rules:
 
-It is responsible for:
-
-* stable domain data structures;
-* business rules independent of UI;
-* validation rules;
-* time model;
-* frequency model;
-* bearing result model;
-* recording metadata model;
-* application-independent constraints.
+- domain models;
+- validation rules;
+- time base;
+- frequency model;
+- band configuration;
+- scan sector model;
+- bearing result model;
+- recording metadata;
+- diagnostics categories and quality states.
 
 Typical domain models:
 
-* `SignalSample`;
-* `BeamSample`;
-* `BandConfig`;
-* `ScanSector`;
-* `TimeBase`;
-* `WaterfallCell`;
-* `WaterfallRow`;
-* `BearingResult`;
-* `ResultTableRow`;
-* `RecordingMetadata`.
+- `SignalSample`;
+- `BeamSample`;
+- `SignalBlock` metadata;
+- `BandConfig`;
+- `ScanSector`;
+- `TimeBase`;
+- `WaterfallCell`;
+- `WaterfallRow`;
+- `BearingCandidate`;
+- `BearingResult`;
+- `ResultTableRow`;
+- `RecordingMetadata`.
 
-### 5.2 Domain rules
+### Domain Rules
 
-Domain code should define and enforce rules such as:
+Domain code defines and enforces rules such as:
 
-* valid amplitude range is `1..127`;
-* input amplitude `0` is invalid;
-* frequency offset is relative to the configured band/base frequency;
-* full product frequency range is `0.3..18 GHz`;
-* current iteration uses 5 `BandItem` objects;
-* current iteration uses 2 beams;
-* future 8-beam support must remain possible;
-* original BCO `sampleIndex` must be preserved;
-* UI display time must be derived from the domain time model.
+- valid input amplitude range is `1..127`;
+- input amplitude `0` is invalid;
+- original BCO `sampleIndex` must be preserved;
+- display time is derived from `TimeBase`, not from UI timers;
+- current SiriusScope workflow uses 5 `BandItem` objects;
+- current antenna model uses beams `0` and `1`;
+- future 8-beam support must remain possible;
+- full product frequency range is `0.3..18 GHz`.
 
-### 5.3 Allowed dependencies
+The domain layer must not know QML item state, binary protocol layout, or concrete
+storage files.
 
-The Core / Domain Layer may depend on:
+## 6. Hardware / Ingest Layer
 
-* C++ standard library;
-* small, UI-independent utility types;
-* carefully isolated Qt Core types only if unavoidable.
+### Responsibilities
 
-Prefer standard C++ types in domain models.
+The hardware / ingest layer hides real hardware and simulator details behind stable
+interfaces:
 
-### 5.4 Forbidden dependencies
-
-The Core / Domain Layer must not depend on:
-
-* QML;
-* Qt Quick;
-* UI components;
-* socket implementation classes;
-* file archive implementation classes;
-* concrete simulator classes;
-* concrete hardware classes.
-
-## 6. Processing Layer
-
-### 6.1 Responsibility
-
-The Processing Layer transforms incoming samples into higher-level data.
-
-It is responsible for:
-
-* validation and filtering of input samples;
-* grouping samples by frequency, time, band, and beam;
-* aggregation for `WaterfallView`;
-* preparation of amplitude values by beam;
-* bearing-related calculations;
-* scan result preparation;
-* processing diagnostics.
-
-Possible components:
-
-* `SampleValidator`;
-* `SampleAggregator`;
-* `WaterfallRowBuilder`;
-* `BearingService`;
-* `ScanProcessingService`;
-* `SignalDetector`.
-
-### 6.2 Current iteration note
-
-RTS type recognition is out of scope for the current iteration.
-
-Do not implement an active `SignalClassifier` or RTS-recognition workflow unless explicitly requested. Classification may be mentioned only as a future extension.
-
-### 6.3 Performance rules
-
-Processing code must be suitable for near-real-time operation.
-
-It should:
-
-* avoid blocking the GUI thread;
-* support worker-thread execution;
-* avoid unnecessary allocations in high-rate paths;
-* expose bounded queues or controlled buffering where appropriate;
-* provide diagnostics for invalid data, queue pressure, and dropped data.
-
-### 6.4 Allowed dependencies
-
-The Processing Layer may depend on:
-
-* Core / Domain models;
-* processing configuration;
-* standard C++ utilities;
-* algorithm libraries if introduced deliberately.
-
-### 6.5 Forbidden dependencies
-
-The Processing Layer must not depend on:
-
-* QML;
-* QML item classes;
-* concrete UI rendering classes;
-* concrete socket classes;
-* concrete archive writer implementation unless explicitly isolated through an interface.
-
-## 7. Infrastructure Layer
-
-### 7.1 Responsibility
-
-The Infrastructure Layer provides technical services not specific to UI rendering or hardware protocols.
-
-It is responsible for:
-
-* binary archive storage;
-* result table storage;
-* settings storage;
-* metadata storage;
-* file rotation;
-* cache management;
-* technical logging;
-* diagnostics persistence;
-* replay file reading where applicable.
+- BCO UDP receive;
+- high-load simulator receive;
+- antenna TCP receive;
+- BCO command formatting and sending;
+- antenna command formatting and sending;
+- protocol parsing and version handling;
+- packet validation before data plane handoff;
+- source-level diagnostics and metrics.
 
 Typical components:
 
-* `BinaryWaterfallStorage`;
-* `BinaryResultTableStorage`;
-* `MetadataStorage`;
-* `SettingsStorage`;
-* `DiagnosticLogStorage`;
-* `ArchiveIndex`;
-* `FileRotationService`;
-* `ReplayReader`.
+- `UdpBcoReceiver`;
+- `HighLoadSimulatorBcoStreamSource`;
+- `IBcoStreamSource`;
+- `TcpAntennaClient`;
+- `ProtocolParserV*`;
+- `BcoCommandAdapter`;
+- `AntennaCommandAdapter`;
+- simulator adapters.
 
-### 7.2 Storage rules
+The ingest layer outputs parsed blocks or block-fill operations for the pipeline/data
+plane layer. It must not emit high-load raw sample vectors to QML or application
+controllers.
 
-Infrastructure must support:
+## 7. Pipeline / Data Plane Layer
 
-* continuous recording;
-* loading historical Waterfall rows after restart;
-* loading historical ResultTable rows after restart;
-* asynchronous file I/O;
-* recoverable cache;
-* non-fatal handling of corrupted or missing settings;
-* diagnostics for storage errors.
+### Responsibilities
 
-Large runtime data must not be stored in QSettings.
+The pipeline/data plane layer owns the high-load transport and execution model:
 
-### 7.3 Allowed dependencies
+- `SignalBlock` ownership;
+- preallocated block pool / memory pool;
+- bounded queues;
+- data plane worker lifecycle;
+- backpressure policy;
+- drop policy;
+- block age tracking;
+- throughput and latency metrics;
+- fan-out to DSP, storage, and snapshot stages.
 
-The Infrastructure Layer may depend on:
+Target flow:
 
-* Core / Domain models;
-* infrastructure interfaces;
-* filesystem libraries;
-* Qt Core classes if useful for settings or files;
-* serialization libraries if introduced deliberately.
+```text
+BCO UDP / HighLoadSimulator
+    -> RX / ingest thread
+    -> memory pool block
+    -> bounded queues
+    -> DSP / processing thread pool
+    -> aggregators
+    -> storage writer
+    -> snapshot publisher
+```
 
-### 7.4 Forbidden dependencies
+The pipeline/data plane layer must not depend on QML, Qt Quick, or presentation models.
 
-The Infrastructure Layer must not depend on:
+## 8. DSP / Processing Layer
 
-* QML UI components;
-* concrete QML item state;
-* hardware socket implementation details;
-* rendering internals.
+### Responsibilities
 
-## 8. Hardware Adapter Layer
+The DSP/processing layer transforms validated data plane blocks into compact results:
 
-### 8.1 Responsibility
+- sample validation and filtering;
+- pulse detection where implemented;
+- time-bucket aggregation;
+- frequency-bucket aggregation;
+- waterfall aggregation;
+- spectrum aggregation;
+- bearing candidate preparation;
+- beam pairing by time/frequency/band window;
+- signal parameter aggregation;
+- algorithmic bearing service execution;
+- processing diagnostics and metrics aggregation.
 
-The Hardware Adapter Layer hides real hardware and simulator communication details behind stable interfaces.
+Target components:
 
-It is responsible for:
+- `SampleValidator`;
+- `ProcessingEngine`;
+- `WaterfallAggregator`;
+- `SpectrumAggregator`;
+- `BearingAggregator`;
+- `SignalParameterAggregator`;
+- `BearingService`;
+- `SignalDetector` where scope allows it.
 
-* UDP reception from BCO;
-* TCP reception from antenna / rotating device;
-* BCO command formatting and sending, including receiver configuration that affects the RPU through the BCO;
-* antenna command formatting and sending;
-* protocol parsing;
-* protocol version handling;
-* simulator adapters;
-* hardware diagnostics.
+### Bearing Rule
 
-Typical components:
+`BearingService` remains a replaceable algorithmic component. In the high-load target it
+receives prepared candidate sets or compact frames from `BearingAggregator`. It must not
+receive raw high-load vectors from `ScanController`, `SignalSampleBus`,
+`BearingFrameBus`, or Qt queued callbacks.
 
-* `UdpBcoReceiver`;
-* `TcpAntennaClient`;
-* `ProtocolParserV1`;
-* `ProtocolParserV2`;
-* `BcoCommandAdapter`;
-* `AntennaCommandAdapter`;
-* `SimulatorBcoAdapter`;
-* `SimulatorAntennaAdapter`.
+### Waterfall Rule
 
-### 8.2 Interface rule
+Waterfall is time-bucket aggregation. It must not be described or implemented as a
+per-`sampleIndex` UI feed in production design.
 
-Real hardware and simulator must implement the same application-level interfaces.
+## 9. Storage Layer
 
-The rest of the application must be able to work with either source without changing UI or business logic.
+### Responsibilities
 
-Conceptual interface groups:
+The storage layer owns persistent data:
 
-* BCO sample source;
-* antenna azimuth source;
-* BCO control;
-* antenna control;
-* protocol version selection;
-* diagnostics source.
-
-There must be no separate SiriusScope-to-RPU control interface. The RPU is outside the direct software boundary and is controlled by the BCO.
-
-### 8.3 Protocol rules
-
-Protocol details must be isolated.
+- append-only binary chunks for high-volume data;
+- indexes for range lookup;
+- result table storage;
+- metadata;
+- settings;
+- technical logs;
+- recovery of partial/corrupted files where possible;
+- asynchronous archive reads for history.
 
 Rules:
 
-* UI must not parse protocol packets.
-* Core models must not know packet binary layout.
-* A new protocol version must not require rewriting QML.
-* Unsupported protocol versions must create diagnostics, not crashes.
-* Packet validation must happen before data enters core processing.
+- raw/near-raw stream data must not be written through GUI/controller paths;
+- high-volume stream data must use binary, chunked, append-only formats;
+- JSON, INI, SQLite, and QSettings may be used for metadata/settings/low-volume state,
+  but not for the raw high-rate stream;
+- storage writer must have a bounded queue, backpressure policy, and metrics;
+- file I/O must not block the GUI thread.
 
-### 8.4 Allowed dependencies
+## 10. Infrastructure Support Layer
 
-The Hardware Adapter Layer may depend on:
+Infrastructure support includes technical services that are not themselves the high-load
+pipeline:
 
-* Core / Domain structures used as parsed output;
-* application-level interfaces;
-* networking libraries;
-* byte parsing utilities;
-* simulator utilities.
+- settings storage;
+- diagnostics sinks;
+- logging;
+- configuration files;
+- archive indexes/cache;
+- replay readers;
+- utility services.
 
-### 8.5 Forbidden dependencies
+Infrastructure must not depend on QML UI components or hardware socket implementation
+details unless a service is explicitly an adapter.
 
-The Hardware Adapter Layer must not depend on:
-
-* QML UI components;
-* visual rendering classes;
-* direct ResultTable UI state;
-* direct WaterfallView UI state.
-
-## 9. Dependency direction
+## 11. Dependency Direction
 
 Preferred dependency direction:
 
 ```text
-UI
-  -> Presentation / Application
-      -> Core / Domain
-      -> Processing interfaces
-      -> Infrastructure interfaces
-      -> Hardware interfaces
+Qt adapter / presentation
+    -> Application / control
+        -> Core / domain
+        -> Pipeline/DataPlane interfaces
+        -> DSP/Processing interfaces
+        -> Storage interfaces
+        -> Hardware/Control interfaces
 
-Processing
-  -> Core / Domain
+Hardware / ingest
+    -> Core / domain
+    -> Pipeline/DataPlane interfaces
 
-Infrastructure
-  -> Core / Domain
+Pipeline / data plane
+    -> Core / domain
+    -> DSP/Processing interfaces
+    -> Storage interfaces
 
-Hardware Adapter
-  -> Core / Domain
-  -> Application-level interfaces
+DSP / processing
+    -> Core / domain
+
+Storage
+    -> Core / domain
 ```
 
-The key rule:
-
-```text
-Outer technical details may adapt to inner domain models,
-but inner domain models must not depend on outer technical details.
-```
-
-## 10. Forbidden dependency examples
-
-The following dependencies are forbidden:
+Forbidden dependency examples:
 
 ```text
 QML -> UDP socket
-QML -> TCP socket
 QML -> protocol parser
+QML -> raw stream queue
 QML -> archive writer
-QML -> binary file format
 QML -> DSP algorithm
 QML -> bearing algorithm
 
-Domain -> QML
-Domain -> Qt Quick
-Domain -> concrete UDP receiver
-Domain -> concrete archive writer
+Application controller -> high-load raw sample vector via Qt queued connection
+ScanController -> raw BCO sample stream
+WaterfallController -> production high-load aggregation owner
+SignalSampleBus -> high-load sample delivery
+BearingFrameBus -> high-load bearing-frame delivery
 
 Processing -> QML item
-Processing -> visual component
-Hardware Adapter -> QML component
-Infrastructure -> QML component
+Data plane -> QAbstractListModel
+Domain -> Qt Quick
+Storage writer -> QML callback
+Hardware adapter -> QML component
 ```
 
-## 11. Threading model
+## 12. Threading Expectations
 
-### 11.1 Required separation
+The target runtime must support explicit separation of:
 
-SiriusScope must be designed as a multithreaded or asynchronous application.
+- GUI thread;
+- BCO RX / ingest thread;
+- antenna control/receive thread;
+- DSP / processing thread pool;
+- storage writer thread/stage;
+- snapshot publisher;
+- history loading worker.
 
-At minimum, the design must support separation of:
+Thread boundaries in the high-load path require bounded queues and explicit ownership.
+Unbounded queued connections, hidden copies of large vectors, and per-sample dispatch are
+forbidden.
 
-* GUI thread;
-* BCO UDP reception;
-* antenna TCP interaction;
-* sample processing and aggregation;
-* Waterfall row preparation;
-* archive writing;
-* archive reading / history preload;
-* optional GPU/OpenGL preparation.
+## 13. Diagnostics And Metrics
 
-### 11.2 GUI thread rule
+Recoverable errors must be reported without crashing when safe continuation is possible.
 
-The GUI thread must not be blocked by:
+Operator diagnostics are aggregated warnings and state changes. Pipeline metrics are
+engineering data:
 
-* receiving packets;
-* parsing packets;
-* processing high-rate samples;
-* writing files;
-* reading old archive data;
-* rotating archive files;
-* long calculations.
+- input MB/s;
+- processed MB/s;
+- dropped blocks;
+- queue depth;
+- RX latency;
+- DSP latency;
+- storage latency;
+- GUI snapshot FPS;
+- max block age;
+- block pool usage.
 
-### 11.3 Cross-thread communication
+Per-sample and per-candidate diagnostics are forbidden in the high-load data plane.
+Diagnostics publication must be rate-limited before reaching logs or UI.
 
-Use controlled communication mechanisms:
+## 14. Current Transition Notes
 
-* Qt signals and slots;
-* thread-safe queues;
-* bounded queues;
-* worker objects;
-* explicit dispatchers;
-* lock-free structures only when justified.
+Some current code still reflects the MVP/demo architecture. This is acceptable only as a
+temporary implementation state.
 
-Avoid uncontrolled shared mutable state.
+Transition paths that must not be treated as production architecture:
 
-## 12. Data ownership principles
+- `WaterfallController` accumulating raw blocks and forwarding large vectors;
+- `SampleProcessor` building rows per exact `sampleIndex`;
+- `SignalSampleBus` or `BearingFrameBus` transporting high-load vectors;
+- `ScanController` collecting raw sample vectors;
+- per-sample `MissingBeamSample` diagnostics;
+- spectrum workers copying every high-load block into GUI-oriented processing.
 
-### 12.1 Raw input data
+When these names appear in documentation, they must be described as current/legacy or
+transition implementation unless they are explicitly limited to low-rate control-plane
+or snapshot delivery.
 
-Raw packets belong to the Hardware Adapter Layer.
+## 15. Testing Implications
 
-Raw packets must be parsed and validated before entering processing/domain logic.
+The architecture must make these areas testable without QML:
 
-### 12.2 Domain data
+- domain validation;
+- time conversion;
+- protocol parsers;
+- block pool ownership;
+- bounded queue behavior and overload policy;
+- processing aggregation;
+- waterfall time-bucket aggregation;
+- bearing window pairing;
+- storage write/read and recovery;
+- diagnostics rate limiting;
+- simulator profiles and performance acceptance.
 
-Domain data belongs to Core / Domain and Processing layers.
-
-It must be represented by explicit types.
-
-### 12.3 UI-ready data
-
-UI-ready data belongs to Presentation / Application models.
-
-QML receives prepared models, not raw hardware data.
-
-### 12.4 Stored data
-
-Stored data belongs to Infrastructure.
-
-Storage formats must be isolated from UI and hardware protocol details.
-
-## 13. Error handling and diagnostics
-
-Recoverable errors must not crash the application when safe continuation is possible.
-
-Examples:
-
-* lost TCP antenna connection;
-* missing UDP BCO data;
-* invalid amplitude;
-* unsupported protocol version;
-* queue overflow;
-* storage write failure;
-* corrupted settings file;
-* missing cache.
-
-Errors must be:
-
-* reported to application-level diagnostics;
-* visible through `StatusBar`;
-* written to technical logs when appropriate.
-
-## 14. Testing implications
-
-The architecture must make the following testable without QML:
-
-* domain validation;
-* time conversion;
-* frequency calculations;
-* bearing-related calculations;
-* protocol parsers;
-* storage read/write;
-* file rotation;
-* simulator behavior;
-* processing aggregation.
-
-When adding nontrivial logic, prefer implementing it outside QML so it can be covered by unit or integration tests.
-
-## 15. Architecture change policy
-
-Do not change layer boundaries or dependency direction casually.
-
-An architecture change must be explicit and documented when it affects:
-
-* public interfaces between layers;
-* data ownership;
-* threading model;
-* storage format;
-* hardware/simulator abstraction;
-* current-vs-future scope separation.
-
-For significant changes, add or update an ADR in:
-
-```text
-docs/architecture/adr/
-```
-
-## 16. Current known simplifications
-
-Some current code may still be prototype-level.
-
-Prototype code is acceptable temporarily if it does not become the permanent architecture by accident.
-
-When replacing prototype logic:
-
-* move business logic out of QML;
-* replace stubs with interfaces and implementations;
-* preserve simulator compatibility;
-* add tests for moved logic;
-* update documentation when responsibilities change.
+Performance acceptance criteria are defined in
+`docs/architecture/high-load-data-plane.md` and `docs/development/build-and-test.md`.

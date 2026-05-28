@@ -185,6 +185,11 @@ Add or update automated tests when changing nontrivial logic in:
 * protocol parsers;
 * sample aggregation;
 * Waterfall row building;
+* data plane block ownership;
+* memory pool / block pool reuse;
+* bounded queue pressure and backpressure;
+* diagnostics aggregation and rate limiting;
+* simulator load profiles;
 * binary storage;
 * result-table storage;
 * settings loading and defaults;
@@ -271,6 +276,8 @@ Required:
 
 * build and CTest run;
 * tests for queue bounds or shutdown behavior where practical;
+* tests or instrumentation for backpressure, dropped blocks, and max block age when the
+  change touches the high-load data plane;
 * manual run to check no UI freeze.
 
 ### CMake or dependency change
@@ -445,9 +452,10 @@ Boost is part of the target development stack, but it must not be linked to a ta
 * use `find_package(Boost REQUIRED COMPONENTS ...)` in CMake;
 * link only the required Boost components to the specific target that needs them.
 
-## 18. Performance checks
+## 18. Performance and high-load checks
 
-For performance-sensitive changes, especially Waterfall, processing, buffering, or storage:
+For performance-sensitive changes, especially ingest pipeline, DSP pipeline, Waterfall,
+Spectrum, bearing, buffering, diagnostics, or storage:
 
 Check at least:
 
@@ -455,10 +463,49 @@ Check at least:
 * no unbounded memory growth;
 * no heavy processing in QML;
 * no blocking file I/O on GUI thread;
-* bounded or controlled queues for high-rate data;
+* bounded queues or equivalent controlled handoff for high-rate data;
+* explicit backpressure policy for overload;
 * diagnostic messages for overload conditions where applicable.
 
-Expected long-term performance targets are defined in scope and subsystem documents.
+High-load data plane changes must also check:
+
+* raw stream is not sent through QML, `QObject`, `QAbstractListModel`,
+  `QMetaObject::invokeMethod`, or Qt queued signals;
+* `WaterfallController`, `SignalSampleBus`, and `BearingFrameBus` are not used as
+  production high-load raw data transports;
+* GUI receives immutable/downsampled snapshots rather than raw stream vectors;
+* storage writer is asynchronous and has bounded queue metrics;
+* diagnostics are aggregated and rate-limited, not emitted per sample or per candidate.
+
+Required pipeline metrics for high-load validation:
+
+* input MB/s;
+* processed MB/s;
+* dropped blocks;
+* queue depth per stage;
+* RX latency;
+* DSP latency;
+* storage latency;
+* GUI snapshot FPS;
+* max block age;
+* block pool usage.
+
+Simulator profile acceptance criteria:
+
+* `UiDemo`: no drops, no diagnostics spam, stable GUI.
+* `MediumLoad`: no drops, or only explicitly accepted controlled drops with metrics.
+* `RealBcoEquivalent`: no crash, no OOM, bounded queues, responsive GUI, rate-limited
+  diagnostics, visible throughput and latency metrics.
+* `Stress150Percent`: system does not die; overload is detected, bounded, and shown
+  explicitly.
+* Long `RealBcoEquivalent` run: at least 30 minutes without uncontrolled memory growth.
+
+`RealBcoEquivalent` approximates real BCO throughput at about 1,000,000 sample slots/s
+with 10 ms batches. It must not be used as an ordinary safe default until the high-load
+data plane is implemented, bounded, instrumented, and performance-tested.
+
+Expected long-term performance targets are defined in scope and subsystem documents,
+especially `docs/architecture/high-load-data-plane.md`.
 
 ## 19. Reporting completion
 

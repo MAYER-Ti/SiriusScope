@@ -1,26 +1,13 @@
-# To do list
+# Todo
 
-[ ] Сделать "Глубокое" нажатие на кнопки поворота антенны
+This file is a lightweight scratch list. Authoritative requirements live in `docs/`.
 
-/
-├── AGENTS.md
-├── README.md
-├── CONTEXT.md              # временно оставить, чтобы не ломать CMake
-├── ARCHITECTURE.md         # временно оставить, чтобы не ломать CMake
-│
-└── docs/
-    ├── README.md
-    │
-    ├── spec/
-    │   ├── scope.md        # из CONTEXT.md, но скорректировать
-    │   └── glossary.md     # новый файл
-    │
-    ├── architecture/
-    │   ├── layers.md       # из ARCHITECTURE.md, но скорректировать
-    │   └── data-flow.md    # новый короткий файл
-    │
-    └── development/
-        └── build-and-test.md
-		
+Current item:
 
+- [ ] Сделать "глубокое" нажатие на кнопки поворота антенны.
 
+Architecture reminder:
+
+- SiriusScope target architecture is high-load data plane / control plane separation.
+- Do not add raw BCO stream processing to QML or GUI controllers.
+- Use `docs/architecture/high-load-data-plane.md` for migration milestones.

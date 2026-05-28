@@ -6,6 +6,95 @@
 
 ---
 
+## Актуализация архитектурного направления: high-load data plane
+
+Этот раздел уточняет и переопределяет все более ранние формулировки настоящего ТЗ,
+которые могли описывать SiriusScope как MVP/demo GUI или как поток с демонстрационной
+скоростью. Такие формулировки сохраняются только как historical/current implementation
+context и не являются целевой архитектурой изделия.
+
+SiriusScope должен рассматриваться как high-load система обработки потока БЦО с явным
+разделением data plane и control plane.
+
+Целевой поток:
+
+```text
+BCO UDP / HighLoadSimulator
+    -> RX / ingest thread
+    -> preallocated block pool / memory pool
+    -> bounded queues
+    -> DSP / processing thread pool
+    -> WaterfallAggregator
+    -> SpectrumAggregator
+    -> BearingAggregator
+    -> SignalParameterAggregator
+    -> StoragePipeline
+    -> GUI snapshot publisher
+    -> Qt/QML GUI
+```
+
+Правила:
+
+- Qt/QML/Application layer является control plane и presentation layer.
+- High-load stream processing является C++ data plane.
+- Qt signals/slots допустимы для control plane, но не для передачи high-load raw data.
+- Raw stream не должен попадать в QML, `QObject`, `QAbstractListModel`,
+  `QMetaObject::invokeMethod` или Qt queued path с большими payload.
+- `WaterfallController`, `SignalSampleBus` и `BearingFrameBus` не являются целевыми
+  транспортами high-load raw stream.
+- GUI получает immutable/downsampled snapshot с ограниченной частотой обновления,
+  ориентировочно 20-30 FPS.
+- Waterfall строится через time-bucket aggregation, а не как per-`sampleIndex` UI feed.
+- Bearing candidate строится по time/frequency/band window; exact `sampleIndex` не
+  должен быть единственным ключом pairing.
+- Missing-beam diagnostics агрегируются по окну времени, полосе и scan session; per-sample
+  warning запрещен на high-load path.
+- Storage writer является отдельной асинхронной стадией pipeline. High-volume data
+  хранится в binary chunked append-only формате. SQLite/JSON/INI/QSettings допустимы для
+  metadata/settings, но не для raw high-rate stream.
+- Diagnostics и metrics должны rate-limit-иться и агрегироваться.
+
+Режимы симулятора:
+
+- `UiDemo` - безопасный default для UI-разработки.
+- `MediumLoad` - промежуточная нагрузка.
+- `RealBcoEquivalent` - нагрузка, приближенная к реальному БЦО, примерно
+  1,000,000 sample slots/s и batch каждые 10 ms.
+- `Stress150Percent` - стресс-тест перегрузки.
+
+`RealBcoEquivalent` не должен включаться как обычный safe default до завершения
+high-load data plane, bounded queues, storage backpressure, diagnostics rate limiting и
+end-to-end performance tests.
+
+Acceptance criteria:
+
+- `UiDemo`: без drops.
+- `MediumLoad`: без drops или только controlled drops с явными metrics.
+- `RealBcoEquivalent`: приложение не падает, нет OOM, очереди bounded, GUI отвечает,
+  diagnostics не спамят.
+- `Stress150Percent`: система не умирает, overload обнаруживается и явно отображается.
+- Длительный `RealBcoEquivalent`: минимум 30 минут без неконтролируемого роста памяти.
+
+Миграционный план:
+
+1. Stabilize high-load runtime.
+2. `SignalBlock` / block pool / memory pool / bounded queues.
+3. `ProcessingEngine` v1.
+4. `WaterfallAggregator` v1.
+5. `SpectrumAggregator` v1.
+6. `BearingAggregator` v1.
+7. `StoragePipeline`.
+8. End-to-end performance tests.
+
+Подробные актуальные правила находятся в:
+
+- `docs/architecture/high-load-data-plane.md`;
+- `docs/architecture/data-flow.md`;
+- `docs/architecture/layers.md`;
+- `docs/development/build-and-test.md`.
+
+---
+
 ## 1. Общие сведения
 
 ### 1.1. Наименование проекта
@@ -94,12 +183,12 @@ SiriusScope — принципиально новое кроссплатформ
 
 ### 3.1. Архитектурный принцип
 
-SiriusScope должен разрабатываться как модульное, расширяемое и кроссплатформенное ПО. Основная архитектурная идея — отделение пользовательского интерфейса, бизнес-логики, аппаратных протоколов и хранения данных.
+SiriusScope должен разрабатываться как модульное, расширяемое и кроссплатформенное ПО. Основная архитектурная идея — отделение control plane от high-load data plane, а также отделение пользовательского интерфейса, доменной логики, аппаратных протоколов, обработки, хранения данных и диагностики.
 
 Рекомендуемое разделение:
 
 ```text
-UI layer
+Qt adapter / presentation layer
     MainWindow
     MenuBar
     SpectrumView
@@ -110,12 +199,12 @@ UI layer
     StatusBar
     BandSettingsDialog
 
-Application layer
+Application / control layer
     ApplicationController
     SessionController
     ScanController
     DeviceControlFacade
-    WaterfallController
+    WaterfallController как presentation adapter для snapshot
     ResultTableController
     SettingsService
 
@@ -127,22 +216,37 @@ Core / Domain layer
     BearingResult
     ScanSector
     TimeBase
-    Processing services
-    Bearing services
 
-Infrastructure layer
+Hardware / ingest layer
     TcpAntennaClient
     UdpBcoReceiver
     ProtocolParserV1/V2/...
     BcoCommandAdapter
     AntennaCommandAdapter
+
+Pipeline / data plane layer
+    SignalBlock
+    block pool / memory pool
+    bounded queues
+    ProcessingEngine
+    metrics and backpressure
+
+DSP / Processing layer
+    WaterfallAggregator
+    SpectrumAggregator
+    BearingAggregator
+    SignalParameterAggregator
+    BearingService
+
+Storage layer
+    StoragePipeline
     BinaryWaterfallStorage
     BinaryResultTableStorage
     JsonOrIniSettingsStorage
     DiagnosticLogStorage
 ```
 
-Примечание: приведенная выше схема является ранним укрупненным разделением системы. В актуальной архитектурной документации аппаратные адаптеры и инфраструктура хранения разделяются на отдельные логические слои, а обработка сигналов и пеленгация выделяются в Processing Layer. При проектировании и реализации новых подсистем необходимо сверяться с `docs/architecture/layers.md`.
+Примечание: `WaterfallController`, `ScanController`, `SignalSampleBus` и `BearingFrameBus` не должны использоваться как transport для high-load raw stream. При проектировании и реализации новых подсистем необходимо сверяться с `docs/architecture/layers.md`, `docs/architecture/data-flow.md` и `docs/architecture/high-load-data-plane.md`.
 
 ### 3.2. Инкапсуляция аппаратного взаимодействия
 
@@ -207,13 +311,13 @@ SiriusScope должен быть многопоточным. Заморозка
 - поток записи данных в архив;
 - при необходимости отдельный поток подготовки данных для GPU/OpenGL.
 
-Обмен между потоками должен выполняться через потокобезопасные очереди, сигналы, слоты или иные контролируемые механизмы. GUI не должен напрямую выполнять тяжелую обработку входного потока.
+Обмен между потоками должен выполняться через контролируемые механизмы с явным владением данными. Для high-load data plane целевыми механизмами являются memory pool / block pool и bounded queues. Qt signals/slots допустимы для control plane и low-rate status/snapshot updates, но не для передачи raw high-load sample vectors. GUI не должен напрямую выполнять тяжелую обработку входного потока.
 
 ### 3.6. Использование GPU/OpenGL
 
 Для WaterfallView предпочтительно использовать GPU/OpenGL или другой аппаратно-ускоренный механизм отрисовки, чтобы снизить нагрузку на CPU.
 
-Реализация должна учитывать поток входных данных до 90 МБ/с и необходимость сохранения отзывчивости интерфейса при частоте обновления GUI не менее 30 FPS.
+Реализация должна учитывать high-load входной поток, включая историческую цель до 90 МБ/с и профиль `RealBcoEquivalent`, и необходимость сохранения отзывчивости интерфейса. GUI должен обновляться через bounded snapshot cadence; data plane throughput не должен задаваться частотой GUI.
 
 ---
 
@@ -911,11 +1015,15 @@ public:
 Требования:
 
 - частота обновления интерфейса: не менее 30 FPS;
-- ожидаемая скорость WaterfallView: примерно 1 строка в секунду;
-- входной поток данных от БЦО: до 90 МБ/с;
+- GUI получает immutable/downsampled snapshot с bounded cadence, ориентировочно 20-30 FPS;
+- историческая формулировка "примерно 1 строка WaterfallView в секунду" относится к раннему UI/demo behavior и не задает production data plane rate;
+- Waterfall row в целевой архитектуре строится из time-bucket aggregation;
+- входной поток данных от БЦО: до 90 МБ/с или выше в соответствии с профилем `RealBcoEquivalent`/реальной аппаратурой;
 - UDP-пакеты БЦО: около 1500 байт;
 - количество BandItem в текущей версии: 5;
 - SiriusScope должен сохранять отзывчивость интерфейса при приеме, обработке, отображении и записи данных.
+- очереди data plane должны быть bounded, backpressure должен быть явным;
+- metrics должны показывать фактический throughput и latency.
 
 ### 15.2. Устойчивость к ошибкам
 
@@ -983,7 +1091,8 @@ SiriusScope должен работать с генератором так же,
 - тесты ротации файлов;
 - тесты настройки BandItem и формирования конфигурации БЦО;
 - интеграционные тесты с тестовым генератором;
-- нагрузочные тесты входного потока до 90 МБ/с;
+- нагрузочные тесты по профилям `UiDemo`, `MediumLoad`, `RealBcoEquivalent` и `Stress150Percent`; историческая проверка до 90 МБ/с остается совместимой, но не заменяет profile-based high-load acceptance;
+- тесты bounded queues, backpressure, dropped blocks, queue depth, max block age и diagnostics rate limiting;
 - UI-тесты критических сценариев, если это технически оправдано.
 
 ### 17.3. Критерии приемки
@@ -1081,7 +1190,7 @@ SiriusScope должен вести технический лог, достат�
 
 - Реализовать ведомое поведение относительно SpectrumView.
 - Реализовать движение сверху вниз.
-- Реализовать скорость около 1 строки в секунду.
+- Реализовать отображение aggregated Waterfall snapshot; историческую скорость около 1 строки в секунду рассматривать только как demo/current UI behavior, не как data plane rate.
 - Реализовать цветовую модель по амплитуде и разнице лучей.
 - Реализовать шкалу времени слева.
 - Реализовать прокрутку истории и предварительную подгрузку данных из файлов.
@@ -1114,7 +1223,8 @@ SiriusScope должен вести технический лог, достат�
 
 - Довести покрытие тестами до 50%.
 - Провести интеграционные тесты с генератором.
-- Провести нагрузочные тесты до 90 МБ/с.
+- Провести нагрузочные тесты по профилям `UiDemo`, `MediumLoad`, `RealBcoEquivalent` и `Stress150Percent`.
+- Проверить bounded queues, backpressure, dropped blocks, queue depth, RX/DSP/storage latency, GUI snapshot FPS и max block age.
 - Проверить отсутствие заморозки интерфейса.
 - Проверить сохранение и восстановление WaterfallView и итоговой таблицы.
 - Проверить работу ротации файлов.
@@ -1133,6 +1243,8 @@ SiriusScope должен вести технический лог, достат�
 - покрывать новую бизнес-логику тестами;
 - не хранить крупные данные через QSettings;
 - не блокировать GUI-поток операциями приема, обработки или записи;
+- не передавать high-load raw stream через QML, `QObject`, `SignalSampleBus`, `BearingFrameBus`, `WaterfallController` или Qt queued path;
+- использовать data plane/control plane separation, memory pool, bounded queue, backpressure, snapshot и rate-limited diagnostics в соответствии с актуальной архитектурной документацией;
 - учитывать будущую поддержку другого количества BandItem и лучей антенны.
 
 ---
@@ -1154,4 +1266,4 @@ SiriusScope должен вести технический лог, достат�
 
 ## 22. Краткое резюме требований
 
-SiriusScope должен быть новым кроссплатформенным программным комплексом на C++/Boost/Qt/QML/CMake/Conan, объединяющим управление БЦО и поворотным устройством, прием данных, визуализацию, хранение и пеленгование. Программа должна работать с аппаратурой и имитационным генератором через одинаковые интерфейсы, передавать в БЦО конфигурацию приема для 5 BandItem, не взаимодействовать с РПУ напрямую, принимать данные от БЦО по UDP и азимут от поворотного устройства по TCP, отображать 5 BandItem в SpectrumView, вести WaterfallView сверху вниз со скоростью около одной строки в секунду, выполнять сканирование выбранного сектора на AntennaIndicator, показывать пеленг по каждому BandItem, непрерывно сохранять данные в бинарные файлы и загружать историю между запусками. Интерфейс должен оставаться отзывчивым при входном потоке до 90 МБ/с, а исходный код должен быть покрыт тестами не менее чем на 50%.
+SiriusScope должен быть новым кроссплатформенным программным комплексом на C++/Boost/Qt/QML/CMake/Conan, объединяющим управление БЦО и поворотным устройством, прием данных, потоковую обработку, визуализацию, хранение и пеленгование. Программа должна работать с аппаратурой и имитационным генератором через одинаковые интерфейсы, передавать в БЦО конфигурацию приема для 5 BandItem, не взаимодействовать с РПУ напрямую, принимать данные от БЦО по UDP и азимут от поворотного устройства по TCP, отображать 5 BandItem в SpectrumView, вести WaterfallView сверху вниз по aggregated snapshots, выполнять сканирование выбранного сектора на AntennaIndicator, показывать пеленг по каждому BandItem, непрерывно сохранять данные в binary chunked append-only storage и загружать историю между запусками. Интерфейс должен оставаться отзывчивым при high-load входном потоке; data plane должен использовать memory pool, bounded queues, backpressure, aggregated diagnostics и metrics. Исходный код должен быть покрыт тестами не менее чем на 50%.

@@ -1,9 +1,51 @@
 # Archive Format
 
-This document describes the current persistent storage format for WaterfallView history
-and final result table rows.
+This document describes the current persistent storage format and the target storage
+architecture constraints for SiriusScope.
 
-## Layout
+The current format stores aggregated waterfall rows and final result table rows. It is
+not a complete production raw/near-raw BCO stream storage format.
+
+For high-load data plane rules, see `docs/architecture/high-load-data-plane.md`.
+
+## 1. Storage Architecture Rules
+
+High-volume stream data must not be written through the GUI/controller path.
+
+Target storage pipeline:
+
+```text
+SignalBlock / aggregated products
+    -> bounded storage queue
+    -> StorageWriter thread/stage
+    -> binary chunk files
+    -> index files
+    -> metadata files
+    -> aggregated diagnostics and metrics
+```
+
+Rules:
+
+- storage writer is asynchronous and separate from QML/application controllers;
+- high-volume data is binary, chunked, append-only, and indexed;
+- storage has a bounded queue, backpressure policy, and metrics;
+- storage overload is diagnosed and reported in aggregated/rate-limited form;
+- JSON/INI/QSettings are acceptable for settings and metadata only;
+- SQLite may be used for metadata or indexes only if deliberately introduced;
+- SQLite/JSON/INI/QSettings are not valid raw high-rate stream stores;
+- file I/O must not block the GUI thread.
+
+Required storage metrics:
+
+- storage queue depth;
+- written MB/s;
+- write latency;
+- dropped or skipped chunks;
+- max block/chunk age;
+- metadata flush latency;
+- storage error counters.
+
+## 2. Current Waterfall Storage Layout
 
 Waterfall sessions are stored under the configured data root:
 
@@ -18,6 +60,11 @@ SiriusScopeData/
 
 One directory is one Waterfall recording session.
 
+This current format stores aggregated waterfall rows. It is compatible with the target
+architecture as an aggregated storage product, but it is not the raw BCO stream hot path.
+
+## 3. Current Result Table Storage Layout
+
 Final result table rows are stored under the same configured data root:
 
 ```text
@@ -28,32 +75,36 @@ SiriusScopeData/
         result_table.idx
 ```
 
-The result table is a cross-session final scan result table in the current
-iteration. It is not stored inside a specific Waterfall session directory because
-`ResultTableRow` does not currently carry a session identifier.
+The result table is a cross-session final scan result table in the current iteration. It
+is not stored inside a specific Waterfall session directory because `ResultTableRow` does
+not currently carry a session identifier.
 
-## `metadata.json`
+## 4. `metadata.json`
 
-`metadata.json` is a human-readable session descriptor. Format version `1` stores:
+`metadata.json` is a human-readable session descriptor. Current format version `1`
+stores:
 
-- `id`
-- `startUtcMs`
-- `endUtcMs`
-- `rowPeriodMs`
-- `binCount`
-- `bandCount`
-- `beamCount`
-- `sourceName`
-- `closed`
-- `waterfallBinFile`
-- `waterfallIndexFile`
-- `schema`
-- `byteOrder`
-- `rowRecordVersion`
+- `id`;
+- `startUtcMs`;
+- `endUtcMs`;
+- `rowPeriodMs`;
+- `binCount`;
+- `bandCount`;
+- `beamCount`;
+- `sourceName`;
+- `closed`;
+- `waterfallBinFile`;
+- `waterfallIndexFile`;
+- `schema`;
+- `byteOrder`;
+- `rowRecordVersion`.
 
 The current schema name is `WaterfallSessionStorage`; byte order is `little-endian`.
 
-## `waterfall.bin`
+Metadata is low-volume control/storage information. It must not be used to carry raw
+high-load samples.
+
+## 5. `waterfall.bin`
 
 `waterfall.bin` starts with `WaterfallBinFileHeader`:
 
@@ -81,9 +132,13 @@ crc32             reserved, currently 0
 payload           binCount * WaterfallBeamBinDisk
 ```
 
-`WaterfallBeamBinDisk` stores two `uint16_t` values: left beam amplitude and right beam amplitude.
+`WaterfallBeamBinDisk` stores two `uint16_t` values: left beam amplitude and right beam
+amplitude.
 
-## `waterfall.idx`
+High-load target note: these rows should be produced by `WaterfallAggregator` from
+time-bucket aggregation, not by sending every raw `sampleIndex` through the UI path.
+
+## 6. `waterfall.idx`
 
 `waterfall.idx` starts with `WaterfallIndexFileHeader`:
 
@@ -106,30 +161,24 @@ rowByteSize
 binCount
 ```
 
-Records are appended in arrival order and are expected to be time-sorted for normal live recording. If the index is missing or invalid at startup, SiriusScope rebuilds it by scanning `waterfall.bin`.
+Records are appended in arrival order and are expected to be time-sorted for normal live
+recording. If the index is missing or invalid at startup, SiriusScope rebuilds it by
+scanning `waterfall.bin`.
 
-## Reliability Rules
-
-- Missing or corrupted session metadata makes only that session unavailable.
-- Missing `waterfall.bin` skips the session.
-- Missing or corrupted `waterfall.idx` is recoverable when `waterfall.bin` can be scanned.
-- Storage diagnostics are reported through the common diagnostics sink.
-- `crc32` is reserved in v1 and written as `0`; mandatory CRC validation is a future extension.
-
-## Result Table Storage
+## 7. Result Table Storage
 
 ### `result_table/metadata.json`
 
-`metadata.json` is a human-readable descriptor for the result table store.
-Format version `2` stores:
+`metadata.json` is a human-readable descriptor for the result table store. Format
+version `2` stores:
 
-- `schema`
-- `formatVersion`
-- `byteOrder`
-- `resultTableBinFile`
-- `resultTableIndexFile`
-- `rowCount`
-- `updatedUtcMs`
+- `schema`;
+- `formatVersion`;
+- `byteOrder`;
+- `resultTableBinFile`;
+- `resultTableIndexFile`;
+- `rowCount`;
+- `updatedUtcMs`.
 
 The current schema name is `ResultTableStorage`; byte order is `little-endian`.
 
@@ -171,11 +220,12 @@ diagnosticCount
 diagnostics[]     ValidationCode + message bytes
 ```
 
-Version 2 stores both azimuth values. `bearingAzimuthDeg` is the calculated bearing
-shown in the result table and must match the bearing rendered by `AntennaIndicator`.
-`antennaAzimuthDeg` is retained only as scan context for storage/internal diagnostics and
-is not exposed by the result-table UI model. Version 1 result-table files are not
-supported and must be cleared before writing new scan results.
+Version 2 stores both azimuth values. `bearingAzimuthDeg` is the calculated bearing shown
+in the result table and must match the bearing rendered by `AntennaIndicator`.
+`antennaAzimuthDeg` is retained as scan context for storage/internal diagnostics.
+
+Result table records are domain-level results. They must not contain raw high-load sample
+vectors.
 
 ### `result_table.idx`
 
@@ -199,13 +249,35 @@ recordByteSize
 bandIndex
 ```
 
-The v2 reader can restore rows by scanning `result_table.bin`; the index is
-written for future range loading and fast history lookup.
+The v2 reader can restore rows by scanning `result_table.bin`; the index is written for
+future range loading and fast history lookup.
 
-### Result Table Reliability Rules
+## 8. Reliability Rules
 
+- Missing or corrupted session metadata makes only that session unavailable.
+- Missing `waterfall.bin` skips the session.
+- Missing or corrupted `waterfall.idx` is recoverable when `waterfall.bin` can be
+  scanned.
 - Missing `result_table.bin` means the table starts empty.
 - Invalid or unsupported result-table headers make only result-table history unavailable.
 - Partial or corrupted records are diagnosed and reading stops at the damaged record.
-- Result-table storage diagnostics are reported through the common diagnostics sink.
-- `crc32` is reserved in v2 and written as `0`; mandatory CRC validation is a future extension.
+- `crc32` is reserved in current formats and written as `0`; mandatory CRC validation is
+  a future extension.
+- Storage diagnostics are reported through the common diagnostics path in aggregated,
+  rate-limited form.
+
+## 9. Target Raw/Near-Raw Stream Storage
+
+The final raw/near-raw BCO stream storage format is `TBD`.
+
+When introduced, it must:
+
+- be binary, chunked, append-only, and versioned;
+- store blocks or chunks directly from the data plane, not from GUI/controller paths;
+- include timing, source, band, beam, and sequence metadata needed for replay and
+  diagnostics;
+- include indexes for time/frequency/session lookup;
+- support recovery after partial writes;
+- expose storage queue depth, write throughput, write latency, dropped chunks, and error
+  counters;
+- define an explicit backpressure policy for overload.
