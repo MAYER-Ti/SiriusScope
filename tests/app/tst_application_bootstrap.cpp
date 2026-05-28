@@ -1,6 +1,6 @@
 #include "app/applicationbootstrap.h"
 #include "app/qmlsingletons.h"
-#include "hardware/simulator/simulator_bco_sample_source.h"
+#include "hardware/simulator/high_load_simulator_bco_stream_source.h"
 
 #include <QCoreApplication>
 #include <QStandardPaths>
@@ -86,8 +86,11 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides waterfall storage placeholder");
     test.require(bootstrap.bcoControl() != nullptr,
                  "bootstrap provides BCO control");
-    test.require(bootstrap.bcoSampleSource() != nullptr,
-                 "bootstrap provides BCO sample source");
+    test.require(bootstrap.bcoStreamSource() != nullptr,
+                 "bootstrap provides BCO stream source");
+    test.require(dynamic_cast<siriusscope::hardware::HighLoadSimulatorBcoStreamSource*>(
+                     bootstrap.bcoStreamSource()) != nullptr,
+                 "bootstrap uses high-load simulator BCO stream source");
     test.require(bootstrap.antennaControl() != nullptr,
                  "bootstrap provides antenna control");
     test.require(bootstrap.antennaAzimuthSource() != nullptr,
@@ -133,13 +136,13 @@ void testBootstrapProvidesObjects(TestRunner& test)
 void testBootstrapWiresGeneratorPulseSettingsToSimulator(TestRunner& test)
 {
     siriusscope::app::ApplicationBootstrap bootstrap;
-    auto* sampleSource =
-        dynamic_cast<siriusscope::hardware::SimulatorBcoSampleSource*>(
-            bootstrap.bcoSampleSource());
+    auto* streamSource =
+        dynamic_cast<siriusscope::hardware::HighLoadSimulatorBcoStreamSource*>(
+            bootstrap.bcoStreamSource());
 
-    test.require(sampleSource != nullptr,
-                 "bootstrap uses simulator BCO sample source in the legacy path");
-    if (!sampleSource) {
+    test.require(streamSource != nullptr,
+                 "bootstrap uses high-load simulator BCO stream source");
+    if (!streamSource) {
         return;
     }
 
@@ -147,12 +150,12 @@ void testBootstrapWiresGeneratorPulseSettingsToSimulator(TestRunner& test)
         bootstrap.bandConfigController()->applyGeneratorPulseSettings(1, 200000.0, 25000.0);
     test.require(applied, "generator pulse settings apply through bootstrap controller");
 
-    const auto configs = sampleSource->pulseBandConfigs();
+    const auto configs = streamSource->pulseBandConfigs();
     const auto band1 = std::find_if(configs.begin(), configs.end(), [](const auto& config) {
         return config.bandIndex == 1;
     });
 
-    test.require(band1 != configs.end(), "simulator pulse configs contain updated band");
+    test.require(band1 != configs.end(), "high-load simulator pulse configs contain updated band");
     if (band1 != configs.end()) {
         test.require(band1->pulsePeriodUs == 200000.0,
                      "simulator receives updated generator pulse period");

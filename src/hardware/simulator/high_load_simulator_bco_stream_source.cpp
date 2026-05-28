@@ -362,6 +362,12 @@ HighLoadSimulatorBcoStreamSource::~HighLoadSimulatorBcoStreamSource()
 core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
     const BcoStreamConfig& config)
 {
+    std::vector<SimulatorPulseBandConfig> pulseConfigs;
+    {
+        std::lock_guard lock(m_mutex);
+        pulseConfigs = m_loadConfig.pulseBandConfigs;
+    }
+
     if (config.bandConfigs.empty()) {
         publish(infrastructure::DiagnosticSeverity::Error,
                 "high-load BCO simulator configuration rejected: no band configs");
@@ -375,8 +381,8 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
         return core::OperationResult::failure("BCO stream config must contain enabled bands");
     }
 
-    if (!m_loadConfig.pulseBandConfigs.empty()) {
-        for (const auto& pulseConfig : m_loadConfig.pulseBandConfigs) {
+    if (!pulseConfigs.empty()) {
+        for (const auto& pulseConfig : pulseConfigs) {
             if (!enabledBandsContain(enabledBands, pulseConfig.bandIndex)) {
                 publish(infrastructure::DiagnosticSeverity::Warning,
                         "high-load BCO simulator pulse config references unknown or disabled bandIndex "
@@ -390,9 +396,9 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
         }
 
         const bool allEnabledBandsDisabledByPulseConfig =
-            std::all_of(enabledBands.begin(), enabledBands.end(), [this](const auto& band) {
+            std::all_of(enabledBands.begin(), enabledBands.end(), [&pulseConfigs](const auto& band) {
                 const auto* pulseConfig =
-                    pulseConfigForBand(m_loadConfig.pulseBandConfigs, band.bandIndex);
+                    pulseConfigForBand(pulseConfigs, band.bandIndex);
                 return pulseConfig && !pulseConfig->enabled;
             });
         if (allEnabledBandsDisabledByPulseConfig) {
@@ -489,6 +495,19 @@ BcoSourceMetrics HighLoadSimulatorBcoStreamSource::metrics() const
     return m_metrics;
 }
 
+void HighLoadSimulatorBcoStreamSource::setPulseBandConfigs(
+    std::vector<SimulatorPulseBandConfig> configs)
+{
+    std::lock_guard lock(m_mutex);
+    m_loadConfig.pulseBandConfigs = std::move(configs);
+}
+
+std::vector<SimulatorPulseBandConfig> HighLoadSimulatorBcoStreamSource::pulseBandConfigs() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_loadConfig.pulseBandConfigs;
+}
+
 void HighLoadSimulatorBcoStreamSource::generationLoop(SampleBlockCallback callback)
 {
     for (;;) {
@@ -530,6 +549,7 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     std::uint64_t batchStartSampleIndex = 0;
     std::uint64_t timeBaseFirstSampleIndex = 0;
     std::uint64_t samplePeriodNs = 1;
+    std::vector<SimulatorPulseBandConfig> pulseConfigs;
 
     {
         std::lock_guard lock(m_mutex);
@@ -537,6 +557,7 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
         batchStartSampleIndex = m_nextSampleIndex;
         timeBaseFirstSampleIndex = m_streamConfig.timeBase.firstSampleIndex;
         samplePeriodNs = std::max<std::uint64_t>(1, m_streamConfig.timeBase.samplePeriodNs);
+        pulseConfigs = m_loadConfig.pulseBandConfigs;
     }
 
     const auto sampleSlotsInBatch =
@@ -550,7 +571,7 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     block->samples.reserve(sampleCount);
 
     if (!enabledBands.empty() && sampleSlotsInBatch > 0) {
-        if (m_loadConfig.pulseBandConfigs.empty()) {
+        if (pulseConfigs.empty()) {
             for (std::uint64_t i = 0; i < sampleSlotsInBatch; ++i) {
                 const auto& band =
                     enabledBands[static_cast<std::size_t>(i % enabledBands.size())];
@@ -569,7 +590,7 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
                     timeBaseFirstSampleIndex,
                     samplePeriodNs,
                     enabledBands,
-                    m_loadConfig.pulseBandConfigs);
+                    pulseConfigs);
                 if (!nextSampleIndex) {
                     break;
                 }

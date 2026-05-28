@@ -1,6 +1,8 @@
 #include "applicationbootstrap.h"
 
 #include "appstate.h"
+#include "hardware/simulator/high_load_simulator_bco_control.h"
+#include "hardware/simulator/high_load_simulator_bco_stream_source.h"
 #include "infrastructure/storage/binary_result_table_storage.h"
 #include "infrastructure/storage/binary_waterfall_session_storage.h"
 #include "qmlsingletons.h"
@@ -69,16 +71,10 @@ ApplicationBootstrap::ApplicationBootstrap()
               },
               m_diagnosticsService.get()))
     , m_antennaState(std::make_unique<hardware::SimulatorAntennaState>())
-    , m_bcoSampleSource(std::make_unique<hardware::SimulatorBcoSampleSource>(
-          hardware::SimulatorBcoSampleSourceConfig{},
-          m_antennaState.get(),
-          m_diagnosticsService.get()))
     , m_antennaAzimuthSource(std::make_unique<hardware::SimulatorAntennaAzimuthSource>(
           m_antennaState.get(),
           hardware::SimulatorAntennaAzimuthSourceConfig{},
           m_diagnosticsService.get()))
-    , m_bcoControl(std::make_unique<hardware::SimulatorBcoControl>(m_bcoSampleSource.get(),
-                                                                   m_diagnosticsService.get()))
     , m_antennaControl(std::make_unique<hardware::SimulatorAntennaControl>(
           m_antennaState.get(),
           m_diagnosticsService.get()))
@@ -97,7 +93,6 @@ ApplicationBootstrap::ApplicationBootstrap()
           m_resultTableModel.get(),
           m_resultTableStorage.get(),
           m_diagnosticsService.get()))
-    , m_bandConfigController(&m_bandListModel, m_bcoControl.get(), m_diagnosticsService.get())
 {
     m_spectrumEnvelopeController.setDiagnosticsSink(m_diagnosticsService.get());
     m_spectrumEnvelopeWorker =
@@ -114,10 +109,16 @@ ApplicationBootstrap::ApplicationBootstrap()
                      Qt::QueuedConnection);
     m_spectrumEnvelopeThread.start();
 
-    m_bcoSampleSource->setBandConfigs(m_bandListModel.bandConfigs());
-    m_bcoSampleSource->setPulseBandConfigs(simulatorPulseConfigsFromBands(m_bandListModel));
     createBcoStreamSource();
     configureBcoStreamSource();
+    m_bcoControl = std::make_unique<hardware::HighLoadSimulatorBcoControl>(
+        &m_hardwareProfile,
+        m_bcoStreamSource.get(),
+        m_diagnosticsService.get());
+    m_bandConfigController =
+        std::make_unique<BandConfigController>(&m_bandListModel,
+                                               m_bcoControl.get(),
+                                               m_diagnosticsService.get());
 
     QMetaObject::invokeMethod(m_spectrumEnvelopeWorker,
                               [worker = m_spectrumEnvelopeWorker,
@@ -137,7 +138,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                                   m_spectrumEnvelopeWorker);
     m_recordingController = std::make_unique<RecordingController>(m_bcoControl.get(),
                                                                   &m_bandListModel,
-                                                                  &m_bandConfigController,
+                                                                  m_bandConfigController.get(),
                                                                   m_waterfallController.get(),
                                                                   &m_spectrumEnvelopeController,
                                                                   m_spectrumEnvelopeWorker,
@@ -178,7 +179,7 @@ ApplicationBootstrap::ApplicationBootstrap()
                          });
                      });
 
-    QObject::connect(&m_bandConfigController,
+    QObject::connect(m_bandConfigController.get(),
                      &BandConfigController::bandSettingsApplied,
                      m_waterfallController.get(),
                      [this](int) {
@@ -187,16 +188,18 @@ ApplicationBootstrap::ApplicationBootstrap()
                          }
                          configureBcoStreamSource();
                      });
-    QObject::connect(&m_bandConfigController,
+    QObject::connect(m_bandConfigController.get(),
                      &BandConfigController::generatorPulseSettingsApplied,
-                     &m_bandConfigController,
+                     m_bandConfigController.get(),
                      [this](int) {
                          const auto pulseConfigs =
                              simulatorPulseConfigsFromBands(m_bandListModel);
-                         if (m_bcoSampleSource) {
-                             m_bcoSampleSource->setPulseBandConfigs(pulseConfigs);
-                         }
                          m_hardwareProfile.simulatorLoadConfig.pulseBandConfigs = pulseConfigs;
+                         if (auto* highLoadSource =
+                                 dynamic_cast<hardware::HighLoadSimulatorBcoStreamSource*>(
+                                     m_bcoStreamSource.get())) {
+                             highLoadSource->setPulseBandConfigs(pulseConfigs);
+                         }
                      });
     QObject::connect(&m_viewportModel,
                      &FrequencyViewportModel::viewportChanged,
@@ -248,9 +251,7 @@ hardware::HardwareProfile ApplicationBootstrap::makeDefaultHardwareProfile() con
     hardware::HardwareProfile profile;
     profile.dataSourceMode = hardware::DataSourceMode::Simulator;
     profile.bcoStreamConfig = makeBcoStreamConfig();
-    profile.simulatorLoadConfig.profile = hardware::SimulatorLoadProfile::UiDemo;
-    profile.simulatorLoadConfig.samplesPerSecond = 1'280;
-    profile.simulatorLoadConfig.batchPeriod = std::chrono::milliseconds{100};
+    profile.simulatorLoadConfig.profile = hardware::SimulatorLoadProfile::RealBcoEquivalent;
     profile.simulatorLoadConfig.pulseBandConfigs =
         simulatorPulseConfigsFromBands(m_bandListModel);
     return profile;
@@ -261,15 +262,31 @@ void ApplicationBootstrap::createBcoStreamSource()
     m_hardwareProfile = makeDefaultHardwareProfile();
 
     m_bcoStreamSource =
-        hardware::DataSourceFactory::createBcoStreamSourceFromLegacySimulator(
+        hardware::DataSourceFactory::createHighLoadSimulatorBcoStreamSource(
             m_hardwareProfile,
-            m_bcoSampleSource.get());
+            m_diagnosticsService.get());
 
     if (!m_bcoStreamSource && m_diagnosticsService) {
         m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
             infrastructure::DiagnosticSeverity::Error,
             "Application",
-            "BCO stream source creation failed",
+            "High-load BCO stream source creation failed",
+            std::chrono::system_clock::now(),
+        });
+        return;
+    }
+
+    if (m_diagnosticsService) {
+        m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
+            infrastructure::DiagnosticSeverity::Info,
+            "Application",
+            "BCO stream source selected: high-load simulator",
+            std::chrono::system_clock::now(),
+        });
+        m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
+            infrastructure::DiagnosticSeverity::Info,
+            "Application",
+            "High-load BCO profile: RealBcoEquivalent",
             std::chrono::system_clock::now(),
         });
     }
@@ -310,7 +327,7 @@ void ApplicationBootstrap::registerQmlSingletons()
     AntennaControllerQmlSingleton::instance = &m_antennaController;
     ScanControllerQmlSingleton::instance = m_scanController.get();
     BandListModelQmlSingleton::instance = &m_bandListModel;
-    BandConfigControllerQmlSingleton::instance = &m_bandConfigController;
+    BandConfigControllerQmlSingleton::instance = m_bandConfigController.get();
     DiagnosticsServiceQmlSingleton::instance = m_diagnosticsService.get();
     StatusModelQmlSingleton::instance = m_statusModel.get();
     ResultTableModelQmlSingleton::instance = m_resultTableModel.get();

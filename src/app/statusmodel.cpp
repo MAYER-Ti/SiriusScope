@@ -26,12 +26,14 @@ bool isError(int severity)
 bool isBcoSubsystem(const QString& subsystem)
 {
     return subsystem == QStringLiteral("SimulatorBcoSampleSource")
+        || subsystem == QStringLiteral("HighLoadSimulatorBcoStreamSource")
         || subsystem == QStringLiteral("WaterfallProcessing");
 }
 
 bool isBcoControlSubsystem(const QString& subsystem)
 {
     return subsystem == QStringLiteral("SimulatorBcoControl")
+        || subsystem == QStringLiteral("HighLoadSimulatorBcoControl")
         || subsystem == QStringLiteral("BandConfig");
 }
 

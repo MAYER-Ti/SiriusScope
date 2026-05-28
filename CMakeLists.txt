@@ -143,6 +143,8 @@ set(SIRIUSSCOPE_HARDWARE_STUB_SOURCES
 )
 
 set(SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES
+    src/hardware/simulator/high_load_simulator_bco_control.h
+    src/hardware/simulator/high_load_simulator_bco_control.cpp
     src/hardware/simulator/high_load_simulator_bco_stream_source.h
     src/hardware/simulator/high_load_simulator_bco_stream_source.cpp
     src/hardware/simulator/simulator_pulse_config.h

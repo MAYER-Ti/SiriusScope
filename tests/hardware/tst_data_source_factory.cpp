@@ -55,6 +55,12 @@ hardware::HardwareProfile makeProfile(hardware::DataSourceMode mode)
     return profile;
 }
 
+core::BandConfig makeBandConfig()
+{
+    const auto created = core::BandConfig::create(0, 3'000'000'000LL, 500'000'000LL);
+    return *created.value();
+}
+
 void testCreatesLegacySimulatorAdapter(TestRunner& test)
 {
     FakeBcoSampleSource legacySource;
@@ -116,6 +122,17 @@ void testRealStubFactoryRejectsSimulatorMode(TestRunner& test)
     test.require(source == nullptr, "real source stub factory rejects simulator mode");
 }
 
+void testCreatesHighLoadSimulatorSource(TestRunner& test)
+{
+    auto profile = makeProfile(hardware::DataSourceMode::Simulator);
+    profile.bcoStreamConfig.bandConfigs = {makeBandConfig()};
+    profile.simulatorLoadConfig.profile = hardware::SimulatorLoadProfile::RealBcoEquivalent;
+
+    auto source = hardware::DataSourceFactory::createHighLoadSimulatorBcoStreamSource(profile);
+
+    test.require(source != nullptr, "factory creates high-load simulator source");
+}
+
 } // namespace
 
 int main()
@@ -127,6 +144,7 @@ int main()
     testSimulatorFactoryRejectsWrongMode(test);
     testCreatesRealSourceStub(test);
     testRealStubFactoryRejectsSimulatorMode(test);
+    testCreatesHighLoadSimulatorSource(test);
 
     return test.result();
 }

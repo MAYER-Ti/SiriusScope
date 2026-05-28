@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace siriusscope::hardware {
 
@@ -26,6 +27,9 @@ public:
     core::OperationResult start(SampleBlockCallback callback) override;
     core::OperationResult stop() override;
     BcoSourceMetrics metrics() const override;
+
+    void setPulseBandConfigs(std::vector<SimulatorPulseBandConfig> configs);
+    std::vector<SimulatorPulseBandConfig> pulseBandConfigs() const;
 
 private:
     void generationLoop(SampleBlockCallback callback);

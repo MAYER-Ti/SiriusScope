@@ -415,6 +415,80 @@ void testStopIsIdempotent(TestRunner& test)
     test.require(secondStop.success, "second stop succeeds");
 }
 
+void testPulseConfigsCanBeUpdated(TestRunner& test)
+{
+    hardware::HighLoadSimulatorBcoStreamSource source(makeShortLoadConfig());
+    std::vector<hardware::SimulatorPulseBandConfig> configs{
+        hardware::SimulatorPulseBandConfig{0, true, 50.0, 10.0},
+    };
+
+    source.setPulseBandConfigs(configs);
+    const auto stored = source.pulseBandConfigs();
+
+    test.require(stored.size() == 1, "source stores updated pulse config count");
+    if (!stored.empty()) {
+        test.require(stored.front().bandIndex == 0,
+                     "source stores updated pulse config band index");
+        test.require(stored.front().pulsePeriodUs == 50.0,
+                     "source stores updated pulse period");
+        test.require(stored.front().pulseWidthUs == 10.0,
+                     "source stores updated pulse width");
+    }
+}
+
+void testRuntimePulseConfigUpdateAppliesToNextBlocks(TestRunner& test)
+{
+    auto loadConfig = makePulseLoadConfig();
+    loadConfig.pulseBandConfigs.clear();
+    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig);
+
+    auto config = makeValidConfig();
+    config.timeBase.samplePeriodNs = 1000;
+    const auto configureResult = source.configure(config);
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+
+    const auto startResult = source.start([&](auto block) {
+        {
+            std::lock_guard lock(mutex);
+            blocks.push_back(std::move(block));
+            if (blocks.size() == 1) {
+                source.setPulseBandConfigs({
+                    hardware::SimulatorPulseBandConfig{0, false, 10.0, 3.0},
+                });
+            }
+        }
+        condition.notify_one();
+    });
+
+    std::unique_lock lock(mutex);
+    const bool arrived = condition.wait_for(lock, std::chrono::milliseconds{500}, [&] {
+        return blocks.size() >= 2;
+    });
+    lock.unlock();
+
+    source.stop();
+
+    test.require(configureResult.success,
+                 "runtime pulse update source accepts valid config");
+    test.require(startResult.success,
+                 "runtime pulse update source starts");
+    test.require(arrived,
+                 "runtime pulse update source emits blocks before and after update");
+    test.require(blocks.size() >= 2 && blocks[0] && blocks[1],
+                 "runtime pulse update source has two non-null blocks");
+    if (blocks.size() < 2 || !blocks[0] || !blocks[1]) {
+        return;
+    }
+
+    test.require(!blocks[0]->samples.empty(),
+                 "source emits continuous samples before pulse config update");
+    test.require(blocks[1]->samples.empty(),
+                 "source applies disabled pulse config to following block");
+}
+
 void testFactoryCreatesHighLoadSimulator(TestRunner& test)
 {
     hardware::HardwareProfile profile;
@@ -452,6 +526,8 @@ int main()
     testDifferentBandsUseIndependentPulseConfigs(test);
     testSampleIndexAdvancesThroughPulsePauses(test);
     testStopIsIdempotent(test);
+    testPulseConfigsCanBeUpdated(test);
+    testRuntimePulseConfigUpdateAppliesToNextBlocks(test);
     testFactoryCreatesHighLoadSimulator(test);
     testFactoryRejectsWrongMode(test);
 

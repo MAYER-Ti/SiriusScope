@@ -31,14 +31,11 @@
 #include "hardware/hardware_profile.h"
 #include "hardware/interfaces/antenna_azimuth_source.h"
 #include "hardware/interfaces/antenna_control.h"
-#include "hardware/interfaces/bco_sample_source.h"
 #include "hardware/interfaces/bco_stream_source.h"
 #include "hardware/interfaces/bco_control.h"
 #include "hardware/simulator/simulator_antenna_azimuth_source.h"
 #include "hardware/simulator/simulator_antenna_control.h"
 #include "hardware/simulator/simulator_antenna_state.h"
-#include "hardware/simulator/simulator_bco_control.h"
-#include "hardware/simulator/simulator_bco_sample_source.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "infrastructure/interfaces/result_table_storage.h"
 #include "infrastructure/interfaces/waterfall_storage.h"
@@ -69,7 +66,7 @@ public:
     WaterfallController* waterfallController() noexcept { return m_waterfallController.get(); }
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
     BandListModel* bandListModel() noexcept { return &m_bandListModel; }
-    BandConfigController* bandConfigController() noexcept { return &m_bandConfigController; }
+    BandConfigController* bandConfigController() noexcept { return m_bandConfigController.get(); }
     DiagnosticsService* diagnosticsService() noexcept { return m_diagnosticsService.get(); }
     StatusModel* statusModel() noexcept { return m_statusModel.get(); }
     RecordingController* recordingController() noexcept { return m_recordingController.get(); }
@@ -113,9 +110,9 @@ public:
         return m_bcoControl.get();
     }
 
-    hardware::IBcoSampleSource* bcoSampleSource() noexcept
+    hardware::IBcoStreamSource* bcoStreamSource() noexcept
     {
-        return m_bcoSampleSource.get();
+        return m_bcoStreamSource.get();
     }
 
     hardware::IAntennaControl* antennaControl() noexcept
@@ -147,7 +144,6 @@ private:
     std::unique_ptr<infrastructure::IWaterfallStorage> m_waterfallStorage;
     std::unique_ptr<IWaterfallSessionStorage> m_waterfallSessionStorage;
     std::unique_ptr<hardware::SimulatorAntennaState> m_antennaState;
-    std::unique_ptr<hardware::SimulatorBcoSampleSource> m_bcoSampleSource;
     hardware::HardwareProfile m_hardwareProfile;
     std::unique_ptr<hardware::IBcoStreamSource> m_bcoStreamSource;
     std::unique_ptr<hardware::SimulatorAntennaAzimuthSource> m_antennaAzimuthSource;
@@ -162,7 +158,7 @@ private:
     std::unique_ptr<ResultTableModel> m_resultTableModel;
     std::unique_ptr<ResultTableController> m_resultTableController;
     BandListModel m_bandListModel;
-    BandConfigController m_bandConfigController;
+    std::unique_ptr<BandConfigController> m_bandConfigController;
     std::unique_ptr<WaterfallController> m_waterfallController;
     std::unique_ptr<RecordingController> m_recordingController;
     std::unique_ptr<ScanController> m_scanController;

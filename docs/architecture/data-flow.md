@@ -412,6 +412,11 @@ Simulator source
     -> Application / Processing / UI
 ```
 
+Current bootstrap runtime uses `HighLoadSimulatorBcoStreamSource` through
+`IBcoStreamSource`. The legacy `SimulatorBcoSampleSource` /
+`LegacyBcoSampleSourceAdapter` path may remain covered by tests, but it is not
+the active `ApplicationBootstrap` runtime path.
+
 ### 9.3 Rules
 
 * simulator must not require special UI paths;

@@ -309,8 +309,8 @@ void testDiagnosticRules(TestRunner& test)
 
     publish(diagnostics,
             infrastructure::DiagnosticSeverity::Info,
-            "SimulatorBcoControl",
-            "BCO simulator applied BandConfig for band 1");
+            "HighLoadSimulatorBcoControl",
+            "high-load BCO simulator applied BandConfig for band 1");
     waitUntil([&model] { return model.bcoControlValue() == QStringLiteral("применено"); });
     test.require(model.bcoControlLevel() == app::StatusModel::StatusLevel::Good,
                  "BCO control applied event is good");
