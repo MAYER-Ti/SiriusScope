@@ -14,7 +14,13 @@ DataIngestPipeline::DataIngestPipeline(DataIngestPipelineConfig config,
           m_config.diagnosticsPublishInterval,
           "DataIngestPipeline",
       })
-    , m_engine(&m_queue, &m_metrics, &m_diagnostics, &m_waterfallSnapshots, m_config.waterfall)
+    , m_engine(&m_queue,
+               &m_metrics,
+               &m_diagnostics,
+               &m_waterfallSnapshots,
+               m_config.waterfall,
+               &m_spectrumSnapshots,
+               m_config.spectrum)
 {
 }
 
@@ -32,6 +38,7 @@ core::OperationResult DataIngestPipeline::start()
     m_queue.reset();
     m_metrics.reset();
     m_waterfallSnapshots.reset();
+    m_spectrumSnapshots.reset();
     m_accepting.store(m_config.acceptingOnStart, std::memory_order_release);
     const auto started = m_engine.start();
     if (!started) {
@@ -138,11 +145,23 @@ std::shared_ptr<const WaterfallSnapshot> DataIngestPipeline::latestWaterfallSnap
     return m_waterfallSnapshots.latest();
 }
 
+std::shared_ptr<const SpectrumSnapshot> DataIngestPipeline::latestSpectrumSnapshot() const
+{
+    return m_spectrumSnapshots.latest();
+}
+
 void DataIngestPipeline::configureWaterfall(WaterfallAggregatorConfig config)
 {
     m_config.waterfall = config;
     m_waterfallSnapshots.reset();
     m_engine.setWaterfallConfig(std::move(config));
+}
+
+void DataIngestPipeline::configureSpectrum(SpectrumAggregatorConfig config)
+{
+    m_config.spectrum = config;
+    m_spectrumSnapshots.reset();
+    m_engine.setSpectrumConfig(std::move(config));
 }
 
 void DataIngestPipeline::clearQueuedBlocks()

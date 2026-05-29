@@ -2,6 +2,7 @@
 
 #include "appstate.h"
 #include "diagnosticsservice.h"
+#include "pipeline/data_ingest_pipeline.h"
 #include "recordingcontroller.h"
 #include "scancontroller.h"
 #include "waterfallcontroller.h"
@@ -30,7 +31,9 @@ bool isBcoSubsystem(const QString& subsystem)
         || subsystem == QStringLiteral("WaterfallProcessing")
         || subsystem == QStringLiteral("DataIngestPipeline")
         || subsystem == QStringLiteral("ProcessingEngine")
-        || subsystem == QStringLiteral("PipelineDiagnostics");
+        || subsystem == QStringLiteral("PipelineDiagnostics")
+        || subsystem == QStringLiteral("SpectrumAggregator")
+        || subsystem == QStringLiteral("SpectrumSnapshotAdapter");
 }
 
 bool isBcoControlSubsystem(const QString& subsystem)
@@ -60,6 +63,7 @@ StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
                          WaterfallController* waterfallController,
                          RecordingController* recordingController,
                          ScanController* scanController,
+                         pipeline::DataIngestPipeline* dataIngestPipeline,
                          QObject* parent)
     : QObject(parent)
     , m_diagnosticsService(diagnosticsService)
@@ -67,6 +71,7 @@ StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
     , m_waterfallController(waterfallController)
     , m_recordingController(recordingController)
     , m_scanController(scanController)
+    , m_dataIngestPipeline(dataIngestPipeline)
 {
     updateModeStatus();
     if (!m_recordingController) {
@@ -119,6 +124,16 @@ StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
                         setAntennaStatus(QStringLiteral("scan active"), StatusLevel::Good);
                     }
                 });
+    }
+
+    if (m_dataIngestPipeline) {
+        m_pipelineMetricsTimer.setInterval(1000);
+        connect(&m_pipelineMetricsTimer,
+                &QTimer::timeout,
+                this,
+                &StatusModel::updatePipelineMetrics);
+        m_pipelineMetricsTimer.start();
+        updatePipelineMetrics();
     }
 }
 
@@ -174,6 +189,40 @@ void StatusModel::updateAzimuthStatus()
     }
 
     setAzimuthStatus(formattedAzimuth(m_scanController->currentAzimuthDeg()), StatusLevel::Good);
+}
+
+void StatusModel::updatePipelineMetrics()
+{
+    if (!m_dataIngestPipeline) {
+        return;
+    }
+
+    const auto metrics = m_dataIngestPipeline->metricsSnapshot();
+    const auto producedSpectrumSnapshots =
+        static_cast<qulonglong>(metrics.producedSpectrumSnapshots);
+    const auto latestSpectrumSnapshotSequence =
+        static_cast<qulonglong>(metrics.latestSpectrumSnapshotSequence);
+    const auto spectrumInvalidSamples =
+        static_cast<qulonglong>(metrics.spectrumInvalidSamples);
+    const auto spectrumOutOfRangeSamples =
+        static_cast<qulonglong>(metrics.spectrumOutOfRangeSamples);
+    const double spectrumAggregationLatencyMaxMs =
+        metrics.spectrumAggregationLatencyMaxMs;
+
+    if (m_producedSpectrumSnapshots == producedSpectrumSnapshots
+        && m_latestSpectrumSnapshotSequence == latestSpectrumSnapshotSequence
+        && m_spectrumInvalidSamples == spectrumInvalidSamples
+        && m_spectrumOutOfRangeSamples == spectrumOutOfRangeSamples
+        && m_spectrumAggregationLatencyMaxMs == spectrumAggregationLatencyMaxMs) {
+        return;
+    }
+
+    m_producedSpectrumSnapshots = producedSpectrumSnapshots;
+    m_latestSpectrumSnapshotSequence = latestSpectrumSnapshotSequence;
+    m_spectrumInvalidSamples = spectrumInvalidSamples;
+    m_spectrumOutOfRangeSamples = spectrumOutOfRangeSamples;
+    m_spectrumAggregationLatencyMaxMs = spectrumAggregationLatencyMaxMs;
+    emit pipelineMetricsChanged();
 }
 
 void StatusModel::onDiagnosticEvent(const QString& subsystem,

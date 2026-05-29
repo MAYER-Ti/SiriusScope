@@ -6,6 +6,7 @@
 #include "pipeline/processing_engine.h"
 #include "pipeline/signal_block_pool.h"
 #include "pipeline/snapshot_exchange.h"
+#include "pipeline/spectrum_snapshot.h"
 #include "pipeline/waterfall_snapshot.h"
 
 #include <chrono>
@@ -142,8 +143,14 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     pipeline::PipelineMetrics metrics;
     pipeline::PipelineDiagnostics diagnostics(
         pipeline::PipelineDiagnosticsConfig{std::chrono::milliseconds{1}, "ProcessingEngine"});
-    pipeline::SnapshotExchange<pipeline::WaterfallSnapshot> snapshots;
-    pipeline::ProcessingEngine engine(&queue, &metrics, &diagnostics, &snapshots);
+    pipeline::SnapshotExchange<pipeline::WaterfallSnapshot> waterfallSnapshots;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      &diagnostics,
+                                      &waterfallSnapshots,
+                                      {},
+                                      &spectrumSnapshots);
 
     const auto started = engine.start();
     auto block = pool.acquire();
@@ -158,7 +165,8 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     const bool queued = queue.tryPush(std::move(block));
     const auto flushed = engine.flush(std::chrono::milliseconds{1500});
     const auto summary = engine.lastSummary();
-    const auto snapshot = snapshots.latest();
+    const auto waterfallSnapshot = waterfallSnapshots.latest();
+    const auto spectrumSnapshot = spectrumSnapshots.latest();
     const auto metricsSnapshot = metrics.snapshot(queue.metrics(), pool.counters());
     engine.stop();
 
@@ -169,12 +177,20 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     test.require(summary.processedSamples == 3, "processing engine counts processed samples");
     test.require(summary.firstSampleIndex == 10 && summary.lastSampleIndex == 11,
                  "processing engine tracks sample index range");
-    test.require(snapshot && !snapshot->rows.empty(),
+    test.require(waterfallSnapshot && !waterfallSnapshot->rows.empty(),
                  "processing engine publishes waterfall snapshot after flush");
+    test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
+                 "processing engine publishes spectrum snapshot after flush");
     test.require(metricsSnapshot.producedWaterfallRows > 0,
                  "pipeline metrics count produced waterfall rows");
     test.require(metricsSnapshot.producedWaterfallSnapshots > 0,
                  "pipeline metrics count produced waterfall snapshots");
+    test.require(metricsSnapshot.producedSpectrumSnapshots > 0,
+                 "pipeline metrics count produced spectrum snapshots");
+    test.require(spectrumSnapshot
+                     && metricsSnapshot.latestSpectrumSnapshotSequence
+                         == spectrumSnapshot->sequenceId,
+                 "pipeline metrics expose latest spectrum snapshot sequence");
 
     bool sawBeam1 = false;
     for (const auto& item : summary.bandBeamSummaries) {
@@ -257,7 +273,8 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
     source.stop();
     const auto flushed = dataPipeline.flushProcessing(std::chrono::milliseconds{1500});
     const auto summary = dataPipeline.lastSummary();
-    const auto snapshot = dataPipeline.latestWaterfallSnapshot();
+    const auto waterfallSnapshot = dataPipeline.latestWaterfallSnapshot();
+    const auto spectrumSnapshot = dataPipeline.latestSpectrumSnapshot();
     dataPipeline.stop();
 
     test.require(configured.success, "high-load simulator accepts stream config");
@@ -268,10 +285,14 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
     test.require(summary.processedBlocks > 0, "data ingest pipeline processes simulator blocks");
     test.require(summary.metrics.processedSamples > 0,
                  "pipeline metrics count processed simulator samples");
-    test.require(snapshot && !snapshot->rows.empty(),
+    test.require(waterfallSnapshot && !waterfallSnapshot->rows.empty(),
                  "data ingest pipeline publishes waterfall snapshot");
+    test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
+                 "data ingest pipeline publishes spectrum snapshot");
     test.require(summary.metrics.producedWaterfallSnapshots > 0,
                  "data ingest metrics count produced waterfall snapshots");
+    test.require(summary.metrics.producedSpectrumSnapshots > 0,
+                 "data ingest metrics count produced spectrum snapshots");
 }
 
 } // namespace

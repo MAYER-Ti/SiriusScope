@@ -21,7 +21,7 @@
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "spectrumenvelopecontroller.h"
-#include "spectrumenvelopeworker.h"
+#include "spectrumsnapshotadapter.h"
 #include "statusmodel.h"
 #include "waterfallcontroller.h"
 #include "waterfallscanrecordingadapter.h"
@@ -44,8 +44,6 @@
 
 #include <memory>
 
-#include <QThread>
-
 namespace siriusscope::app {
 
 class ApplicationBootstrap
@@ -63,6 +61,10 @@ public:
     SpectrumEnvelopeController* spectrumEnvelopeController() noexcept
     {
         return &m_spectrumEnvelopeController;
+    }
+    SpectrumSnapshotAdapter* spectrumSnapshotAdapter() noexcept
+    {
+        return m_spectrumSnapshotAdapter.get();
     }
     WaterfallController* waterfallController() noexcept { return m_waterfallController.get(); }
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
@@ -141,8 +143,7 @@ private:
     SpectrumControllerStub m_spectrumController;
     SpectrumDecimator m_spectrumDecimator;
     SpectrumEnvelopeController m_spectrumEnvelopeController;
-    QThread m_spectrumEnvelopeThread;
-    SpectrumEnvelopeWorker* m_spectrumEnvelopeWorker = nullptr;
+    std::unique_ptr<SpectrumSnapshotAdapter> m_spectrumSnapshotAdapter;
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::DiagnosticLogWriter> m_diagnosticLogWriter;
     std::unique_ptr<DiagnosticsService> m_diagnosticsService;

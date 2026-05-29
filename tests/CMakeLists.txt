@@ -97,6 +97,22 @@ target_include_directories(tst_waterfall_aggregator
 
 add_test(NAME tst_waterfall_aggregator COMMAND tst_waterfall_aggregator)
 
+add_executable(tst_spectrum_aggregator
+    pipeline/tst_spectrum_aggregator.cpp
+)
+
+target_link_libraries(tst_spectrum_aggregator
+    PRIVATE
+        siriusscope_pipeline
+)
+
+target_include_directories(tst_spectrum_aggregator
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_spectrum_aggregator COMMAND tst_spectrum_aggregator)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )
@@ -468,6 +484,23 @@ target_include_directories(tst_spectrum_envelope_controller
 
 add_test(NAME tst_spectrum_envelope_controller COMMAND tst_spectrum_envelope_controller)
 
+add_executable(tst_spectrum_snapshot_adapter
+    app/tst_spectrum_snapshot_adapter.cpp
+)
+
+target_link_libraries(tst_spectrum_snapshot_adapter
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_spectrum_snapshot_adapter
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_spectrum_snapshot_adapter COMMAND tst_spectrum_snapshot_adapter)
+
 add_executable(tst_diagnostics_service
     app/tst_diagnostics_service.cpp
 )
@@ -709,6 +742,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_spectrum_envelope_controller PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_spectrum_snapshot_adapter PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_diagnostics_service PROPERTIES

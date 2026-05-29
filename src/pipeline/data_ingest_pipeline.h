@@ -9,6 +9,8 @@
 #include "pipeline/processing_engine.h"
 #include "pipeline/signal_block_pool.h"
 #include "pipeline/snapshot_exchange.h"
+#include "pipeline/spectrum_aggregator.h"
+#include "pipeline/spectrum_snapshot.h"
 #include "pipeline/waterfall_snapshot.h"
 
 #include <atomic>
@@ -26,6 +28,7 @@ struct DataIngestPipelineConfig
     std::chrono::milliseconds diagnosticsPublishInterval{1000};
     bool acceptingOnStart = false;
     WaterfallAggregatorConfig waterfall;
+    SpectrumAggregatorConfig spectrum;
 };
 
 class DataIngestPipeline
@@ -51,7 +54,9 @@ public:
     PipelineMetricsSnapshot metricsSnapshot() const;
     ProcessingEngineSummary lastSummary() const;
     std::shared_ptr<const WaterfallSnapshot> latestWaterfallSnapshot() const;
+    std::shared_ptr<const SpectrumSnapshot> latestSpectrumSnapshot() const;
     void configureWaterfall(WaterfallAggregatorConfig config);
+    void configureSpectrum(SpectrumAggregatorConfig config);
     void clearQueuedBlocks();
 
 private:
@@ -64,6 +69,7 @@ private:
     PipelineMetrics m_metrics;
     PipelineDiagnostics m_diagnostics;
     SnapshotExchange<WaterfallSnapshot> m_waterfallSnapshots;
+    SnapshotExchange<SpectrumSnapshot> m_spectrumSnapshots;
     ProcessingEngine m_engine;
     std::atomic_bool m_accepting{false};
     std::atomic_bool m_running{false};

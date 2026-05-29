@@ -10,7 +10,9 @@ bool PipelineDiagnosticCounters::empty() const noexcept
     return incompleteBearingCandidates == 0 && missingBeam0 == 0 && missingBeam1 == 0
         && droppedBlocks == 0 && droppedSamples == 0 && queueOverflows == 0
         && processingLatencyMaxMs <= 0.0 && invalidFrequencySamples == 0
-        && outOfRangeSamples == 0 && emptyBlocks == 0 && aggregationLatencyMaxMs <= 0.0;
+        && outOfRangeSamples == 0 && emptyBlocks == 0 && aggregationLatencyMaxMs <= 0.0
+        && spectrumInvalidSamples == 0 && spectrumOutOfRangeSamples == 0
+        && spectrumAggregationLatencyMaxMs <= 0.0;
 }
 
 PipelineDiagnostics::PipelineDiagnostics(PipelineDiagnosticsConfig config)
@@ -74,6 +76,21 @@ void PipelineDiagnostics::recordWaterfallAggregation(
     m_counters.producedSnapshots += producedSnapshots;
     m_counters.aggregationLatencyMaxMs =
         std::max(m_counters.aggregationLatencyMaxMs,
+                 static_cast<double>(aggregationLatency.count()));
+}
+
+void PipelineDiagnostics::recordSpectrumAggregation(
+    std::uint64_t invalidSamples,
+    std::uint64_t outOfRangeSamples,
+    std::uint64_t producedSnapshots,
+    std::chrono::milliseconds aggregationLatency)
+{
+    std::lock_guard lock(m_mutex);
+    m_counters.spectrumInvalidSamples += invalidSamples;
+    m_counters.spectrumOutOfRangeSamples += outOfRangeSamples;
+    m_counters.producedSpectrumSnapshots += producedSnapshots;
+    m_counters.spectrumAggregationLatencyMaxMs =
+        std::max(m_counters.spectrumAggregationLatencyMaxMs,
                  static_cast<double>(aggregationLatency.count()));
 }
 
@@ -158,6 +175,19 @@ std::string PipelineDiagnostics::buildMessage(
     }
     if (counters.aggregationLatencyMaxMs > 0.0) {
         stream << " aggregationLatencyMaxMs=" << counters.aggregationLatencyMaxMs;
+    }
+    if (counters.spectrumInvalidSamples > 0) {
+        stream << " spectrumInvalidSamples=" << counters.spectrumInvalidSamples;
+    }
+    if (counters.spectrumOutOfRangeSamples > 0) {
+        stream << " spectrumOutOfRangeSamples=" << counters.spectrumOutOfRangeSamples;
+    }
+    if (counters.producedSpectrumSnapshots > 0) {
+        stream << " producedSpectrumSnapshots=" << counters.producedSpectrumSnapshots;
+    }
+    if (counters.spectrumAggregationLatencyMaxMs > 0.0) {
+        stream << " spectrumAggregationLatencyMaxMs="
+               << counters.spectrumAggregationLatencyMaxMs;
     }
     return stream.str();
 }

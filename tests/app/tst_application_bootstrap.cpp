@@ -46,6 +46,8 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides spectrum decimator");
     test.require(bootstrap.spectrumEnvelopeController() != nullptr,
                  "bootstrap provides spectrum envelope controller");
+    test.require(bootstrap.spectrumSnapshotAdapter() != nullptr,
+                 "bootstrap provides spectrum snapshot adapter");
     test.require(bootstrap.waterfallController() != nullptr,
                  "bootstrap provides waterfall controller");
     test.require(bootstrap.antennaController() != nullptr,

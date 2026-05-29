@@ -30,6 +30,10 @@ struct PipelineDiagnosticCounters
     std::uint64_t producedRows = 0;
     std::uint64_t producedSnapshots = 0;
     double aggregationLatencyMaxMs = 0.0;
+    std::uint64_t spectrumInvalidSamples = 0;
+    std::uint64_t spectrumOutOfRangeSamples = 0;
+    std::uint64_t producedSpectrumSnapshots = 0;
+    double spectrumAggregationLatencyMaxMs = 0.0;
 
     bool empty() const noexcept;
 };
@@ -50,6 +54,10 @@ public:
                                     std::uint64_t producedRows,
                                     std::uint64_t producedSnapshots,
                                     std::chrono::milliseconds aggregationLatency);
+    void recordSpectrumAggregation(std::uint64_t invalidSamples,
+                                   std::uint64_t outOfRangeSamples,
+                                   std::uint64_t producedSnapshots,
+                                   std::chrono::milliseconds aggregationLatency);
 
     PipelineDiagnosticCounters counters() const;
     bool publishIfDue(infrastructure::IDiagnosticsSink* sink, bool force = false);

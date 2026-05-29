@@ -21,9 +21,14 @@ void PipelineMetrics::reset()
     m_waterfallInvalidFrequencySamples = 0;
     m_waterfallOutOfRangeSamples = 0;
     m_waterfallEmptyBlocks = 0;
+    m_producedSpectrumSnapshots = 0;
+    m_latestSpectrumSnapshotSequence = 0;
+    m_spectrumInvalidSamples = 0;
+    m_spectrumOutOfRangeSamples = 0;
     m_rxLatencyMax = std::chrono::milliseconds{0};
     m_processingLatencyMax = std::chrono::milliseconds{0};
     m_aggregationLatencyMax = std::chrono::milliseconds{0};
+    m_spectrumAggregationLatencyMax = std::chrono::milliseconds{0};
     m_maxBlockAge = std::chrono::milliseconds{0};
 }
 
@@ -76,6 +81,24 @@ void PipelineMetrics::recordWaterfallAggregation(
     m_aggregationLatencyMax = std::max(m_aggregationLatencyMax, aggregationLatency);
 }
 
+void PipelineMetrics::recordSpectrumAggregation(
+    std::uint64_t producedSnapshots,
+    std::uint64_t latestSnapshotSequence,
+    std::uint64_t invalidSamples,
+    std::uint64_t outOfRangeSamples,
+    std::chrono::milliseconds aggregationLatency)
+{
+    std::lock_guard lock(m_mutex);
+    m_producedSpectrumSnapshots += producedSnapshots;
+    if (latestSnapshotSequence > 0) {
+        m_latestSpectrumSnapshotSequence = latestSnapshotSequence;
+    }
+    m_spectrumInvalidSamples += invalidSamples;
+    m_spectrumOutOfRangeSamples += outOfRangeSamples;
+    m_spectrumAggregationLatencyMax =
+        std::max(m_spectrumAggregationLatencyMax, aggregationLatency);
+}
+
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters) const
@@ -105,6 +128,12 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.waterfallInvalidFrequencySamples = m_waterfallInvalidFrequencySamples;
     snapshot.waterfallOutOfRangeSamples = m_waterfallOutOfRangeSamples;
     snapshot.waterfallEmptyBlocks = m_waterfallEmptyBlocks;
+    snapshot.producedSpectrumSnapshots = m_producedSpectrumSnapshots;
+    snapshot.latestSpectrumSnapshotSequence = m_latestSpectrumSnapshotSequence;
+    snapshot.spectrumInvalidSamples = m_spectrumInvalidSamples;
+    snapshot.spectrumOutOfRangeSamples = m_spectrumOutOfRangeSamples;
+    snapshot.spectrumAggregationLatencyMaxMs =
+        static_cast<double>(m_spectrumAggregationLatencyMax.count());
     snapshot.queueDepth = queueMetrics.depth;
     snapshot.queueCapacity = queueMetrics.capacity;
     snapshot.queuePushedBlocks = queueMetrics.pushedBlocks;

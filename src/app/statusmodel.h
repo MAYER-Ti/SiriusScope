@@ -2,8 +2,13 @@
 
 #include <QObject>
 #include <QString>
+#include <QTimer>
 
 class AppState;
+
+namespace siriusscope::pipeline {
+class DataIngestPipeline;
+}
 
 namespace siriusscope::app {
 
@@ -31,6 +36,11 @@ class StatusModel final : public QObject
     Q_PROPERTY(StatusLevel recordingLevel READ recordingLevel NOTIFY recordingStatusChanged)
     Q_PROPERTY(QString diagnosticsValue READ diagnosticsValue NOTIFY diagnosticsStatusChanged)
     Q_PROPERTY(StatusLevel diagnosticsLevel READ diagnosticsLevel NOTIFY diagnosticsStatusChanged)
+    Q_PROPERTY(qulonglong producedSpectrumSnapshots READ producedSpectrumSnapshots NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong latestSpectrumSnapshotSequence READ latestSpectrumSnapshotSequence NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong spectrumInvalidSamples READ spectrumInvalidSamples NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong spectrumOutOfRangeSamples READ spectrumOutOfRangeSamples NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(double spectrumAggregationLatencyMaxMs READ spectrumAggregationLatencyMaxMs NOTIFY pipelineMetricsChanged)
 
 public:
     enum class StatusLevel : int {
@@ -46,6 +56,7 @@ public:
                          WaterfallController* waterfallController,
                          RecordingController* recordingController,
                          ScanController* scanController,
+                         pipeline::DataIngestPipeline* dataIngestPipeline = nullptr,
                          QObject* parent = nullptr);
 
     QString programValue() const { return m_programValue; }
@@ -64,6 +75,17 @@ public:
     StatusLevel recordingLevel() const noexcept { return m_recordingLevel; }
     QString diagnosticsValue() const { return m_diagnosticsValue; }
     StatusLevel diagnosticsLevel() const noexcept { return m_diagnosticsLevel; }
+    qulonglong producedSpectrumSnapshots() const noexcept { return m_producedSpectrumSnapshots; }
+    qulonglong latestSpectrumSnapshotSequence() const noexcept
+    {
+        return m_latestSpectrumSnapshotSequence;
+    }
+    qulonglong spectrumInvalidSamples() const noexcept { return m_spectrumInvalidSamples; }
+    qulonglong spectrumOutOfRangeSamples() const noexcept { return m_spectrumOutOfRangeSamples; }
+    double spectrumAggregationLatencyMaxMs() const noexcept
+    {
+        return m_spectrumAggregationLatencyMaxMs;
+    }
 
 signals:
     void programStatusChanged();
@@ -74,12 +96,14 @@ signals:
     void azimuthChanged();
     void recordingStatusChanged();
     void diagnosticsStatusChanged();
+    void pipelineMetricsChanged();
 
 private:
     void updateModeStatus();
     void updateBcoSourceStatus();
     void updateRecordingStatus();
     void updateAzimuthStatus();
+    void updatePipelineMetrics();
     void onDiagnosticEvent(const QString& subsystem,
                            int severity,
                            const QString& message,
@@ -107,6 +131,8 @@ private:
     WaterfallController* m_waterfallController = nullptr;
     RecordingController* m_recordingController = nullptr;
     ScanController* m_scanController = nullptr;
+    pipeline::DataIngestPipeline* m_dataIngestPipeline = nullptr;
+    QTimer m_pipelineMetricsTimer;
 
     QString m_programValue = QStringLiteral("работает");
     StatusLevel m_programLevel = StatusLevel::Good;
@@ -124,6 +150,11 @@ private:
     StatusLevel m_recordingLevel = StatusLevel::Neutral;
     QString m_diagnosticsValue = QStringLiteral("ошибок нет");
     StatusLevel m_diagnosticsLevel = StatusLevel::Good;
+    qulonglong m_producedSpectrumSnapshots = 0;
+    qulonglong m_latestSpectrumSnapshotSequence = 0;
+    qulonglong m_spectrumInvalidSamples = 0;
+    qulonglong m_spectrumOutOfRangeSamples = 0;
+    double m_spectrumAggregationLatencyMaxMs = 0.0;
     bool m_programHasError = false;
 };
 

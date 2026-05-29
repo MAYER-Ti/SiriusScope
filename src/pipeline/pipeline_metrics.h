@@ -31,6 +31,11 @@ struct PipelineMetricsSnapshot
     std::uint64_t waterfallInvalidFrequencySamples = 0;
     std::uint64_t waterfallOutOfRangeSamples = 0;
     std::uint64_t waterfallEmptyBlocks = 0;
+    std::uint64_t producedSpectrumSnapshots = 0;
+    std::uint64_t latestSpectrumSnapshotSequence = 0;
+    std::uint64_t spectrumInvalidSamples = 0;
+    std::uint64_t spectrumOutOfRangeSamples = 0;
+    double spectrumAggregationLatencyMaxMs = 0.0;
     std::size_t queueDepth = 0;
     std::size_t queueCapacity = 0;
     std::uint64_t queuePushedBlocks = 0;
@@ -61,6 +66,11 @@ public:
                                     std::uint64_t outOfRangeSamples,
                                     std::uint64_t emptyBlocks,
                                     std::chrono::milliseconds aggregationLatency);
+    void recordSpectrumAggregation(std::uint64_t producedSnapshots,
+                                   std::uint64_t latestSnapshotSequence,
+                                   std::uint64_t invalidSamples,
+                                   std::uint64_t outOfRangeSamples,
+                                   std::chrono::milliseconds aggregationLatency);
 
     PipelineMetricsSnapshot snapshot(const BoundedBlockQueueMetrics& queueMetrics,
                                      const SignalBlockPoolCounters& poolCounters) const;
@@ -81,9 +91,14 @@ private:
     std::uint64_t m_waterfallInvalidFrequencySamples = 0;
     std::uint64_t m_waterfallOutOfRangeSamples = 0;
     std::uint64_t m_waterfallEmptyBlocks = 0;
+    std::uint64_t m_producedSpectrumSnapshots = 0;
+    std::uint64_t m_latestSpectrumSnapshotSequence = 0;
+    std::uint64_t m_spectrumInvalidSamples = 0;
+    std::uint64_t m_spectrumOutOfRangeSamples = 0;
     std::chrono::milliseconds m_rxLatencyMax{0};
     std::chrono::milliseconds m_processingLatencyMax{0};
     std::chrono::milliseconds m_aggregationLatencyMax{0};
+    std::chrono::milliseconds m_spectrumAggregationLatencyMax{0};
     std::chrono::milliseconds m_maxBlockAge{0};
 };
 

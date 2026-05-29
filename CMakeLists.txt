@@ -67,6 +67,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/spectrumenvelopecontroller.cpp
     src/app/spectrumenvelopeworker.h
     src/app/spectrumenvelopeworker.cpp
+    src/app/spectrumsnapshotadapter.h
+    src/app/spectrumsnapshotadapter.cpp
     src/app/statusmodel.h
     src/app/statusmodel.cpp
     src/app/syntheticwaterfalldatasource.h
@@ -134,6 +136,10 @@ set(SIRIUSSCOPE_PIPELINE_SOURCES
     src/pipeline/signal_block_pool.h
     src/pipeline/signal_block_pool.cpp
     src/pipeline/snapshot_exchange.h
+    src/pipeline/spectrum_aggregator.h
+    src/pipeline/spectrum_aggregator.cpp
+    src/pipeline/spectrum_snapshot.h
+    src/pipeline/spectrum_snapshot.cpp
     src/pipeline/waterfall_aggregator.h
     src/pipeline/waterfall_aggregator.cpp
     src/pipeline/waterfall_snapshot.h

@@ -170,6 +170,22 @@ Target outputs are low-rate spectrum snapshots:
 - snapshot timestamp and source latency;
 - quality/overload flags.
 
+Current v1 implementation:
+
+- `ProcessingEngine` feeds `SpectrumAggregator` with the same `SignalBlock` stream as the
+  waterfall path.
+- `SpectrumAggregator` maps absolute frequency to fixed render bins, stores beam 0 / beam
+  1 peaks, total peak, hit count, and compact per-band summaries.
+- Invalid and out-of-range samples are counted in aggregate metrics/diagnostics and are
+  not logged per sample.
+- `SpectrumSnapshot` is immutable after publication and is exposed through
+  `SnapshotExchange<SpectrumSnapshot>`.
+- `SpectrumSnapshotAdapter` polls the latest snapshot at a bounded Qt cadence, adapts bins
+  to the current `FrequencyViewportModel`, and updates `SpectrumEnvelopeController`.
+- `SpectrumEnvelopeWorker` is retained only as legacy/low-volume compatibility code. The
+  production high-load bootstrap does not construct it, connect `ingestBatch`, or copy
+  high-load blocks into it.
+
 ## 8. Bearing Aggregation
 
 Bearing candidates must not require exact `sampleIndex` pairing in the target high-load
