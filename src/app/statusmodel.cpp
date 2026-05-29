@@ -33,7 +33,9 @@ bool isBcoSubsystem(const QString& subsystem)
         || subsystem == QStringLiteral("ProcessingEngine")
         || subsystem == QStringLiteral("PipelineDiagnostics")
         || subsystem == QStringLiteral("SpectrumAggregator")
-        || subsystem == QStringLiteral("SpectrumSnapshotAdapter");
+        || subsystem == QStringLiteral("SpectrumSnapshotAdapter")
+        || subsystem == QStringLiteral("BearingAggregator")
+        || subsystem == QStringLiteral("BearingSnapshotAdapter");
 }
 
 bool isBcoControlSubsystem(const QString& subsystem)
@@ -208,12 +210,33 @@ void StatusModel::updatePipelineMetrics()
         static_cast<qulonglong>(metrics.spectrumOutOfRangeSamples);
     const double spectrumAggregationLatencyMaxMs =
         metrics.spectrumAggregationLatencyMaxMs;
+    const auto producedBearingSnapshots =
+        static_cast<qulonglong>(metrics.producedBearingSnapshots);
+    const auto producedBearingEstimates =
+        static_cast<qulonglong>(metrics.producedBearingEstimates);
+    const auto completeBearingCandidates =
+        static_cast<qulonglong>(metrics.completeBearingCandidates);
+    const auto incompleteBearingCandidates =
+        static_cast<qulonglong>(metrics.incompleteBearingCandidates);
+    const auto missingBeam0Candidates =
+        static_cast<qulonglong>(metrics.missingBeam0Candidates);
+    const auto missingBeam1Candidates =
+        static_cast<qulonglong>(metrics.missingBeam1Candidates);
+    const double bearingAggregationLatencyMaxMs =
+        metrics.bearingAggregationLatencyMaxMs;
 
     if (m_producedSpectrumSnapshots == producedSpectrumSnapshots
         && m_latestSpectrumSnapshotSequence == latestSpectrumSnapshotSequence
         && m_spectrumInvalidSamples == spectrumInvalidSamples
         && m_spectrumOutOfRangeSamples == spectrumOutOfRangeSamples
-        && m_spectrumAggregationLatencyMaxMs == spectrumAggregationLatencyMaxMs) {
+        && m_spectrumAggregationLatencyMaxMs == spectrumAggregationLatencyMaxMs
+        && m_producedBearingSnapshots == producedBearingSnapshots
+        && m_producedBearingEstimates == producedBearingEstimates
+        && m_completeBearingCandidates == completeBearingCandidates
+        && m_incompleteBearingCandidates == incompleteBearingCandidates
+        && m_missingBeam0Candidates == missingBeam0Candidates
+        && m_missingBeam1Candidates == missingBeam1Candidates
+        && m_bearingAggregationLatencyMaxMs == bearingAggregationLatencyMaxMs) {
         return;
     }
 
@@ -222,6 +245,13 @@ void StatusModel::updatePipelineMetrics()
     m_spectrumInvalidSamples = spectrumInvalidSamples;
     m_spectrumOutOfRangeSamples = spectrumOutOfRangeSamples;
     m_spectrumAggregationLatencyMaxMs = spectrumAggregationLatencyMaxMs;
+    m_producedBearingSnapshots = producedBearingSnapshots;
+    m_producedBearingEstimates = producedBearingEstimates;
+    m_completeBearingCandidates = completeBearingCandidates;
+    m_incompleteBearingCandidates = incompleteBearingCandidates;
+    m_missingBeam0Candidates = missingBeam0Candidates;
+    m_missingBeam1Candidates = missingBeam1Candidates;
+    m_bearingAggregationLatencyMaxMs = bearingAggregationLatencyMaxMs;
     emit pipelineMetricsChanged();
 }
 

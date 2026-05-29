@@ -124,6 +124,31 @@ void testBeamPeaksAndHitCount(TestRunner& test)
     test.require(cell.hitCount == 3, "hitCount counts samples in the aggregate cell");
 }
 
+void testDirectionalBalanceChangesAcrossBuckets(TestRunner& test)
+{
+    pipeline::WaterfallAggregator aggregator(makeConfig());
+
+    auto consumed = aggregator.consume(
+        std::vector<core::SignalSample>{sample(0, 150, 0, 100),
+                                        sample(0, 150, 1, 30),
+                                        sample(20, 150, 0, 25),
+                                        sample(20, 150, 1, 95)});
+    auto flushed = aggregator.flush();
+
+    test.require(consumed.rows.size() == 1 && flushed.rows.size() == 1,
+                 "directional samples produce one row per time bucket");
+    if (consumed.rows.empty() || flushed.rows.empty()) {
+        return;
+    }
+
+    const auto& firstCell = consumed.rows.front().cells[5];
+    const auto& secondCell = flushed.rows.front().cells[5];
+    test.require(firstCell.beam0Peak > firstCell.beam1Peak,
+                 "first waterfall bucket preserves beam0-dominant direction");
+    test.require(secondCell.beam1Peak > secondCell.beam0Peak,
+                 "second waterfall bucket preserves beam1-dominant direction");
+}
+
 void testAggregatorDoesNotCreateRowPerSampleIndex(TestRunner& test)
 {
     pipeline::WaterfallAggregator aggregator(makeConfig());
@@ -181,6 +206,7 @@ int main()
     testOneTimeBucketProducesOneRow(test);
     testDifferentTimeBucketsProduceMultipleRows(test);
     testBeamPeaksAndHitCount(test);
+    testDirectionalBalanceChangesAcrossBuckets(test);
     testAggregatorDoesNotCreateRowPerSampleIndex(test);
     testSnapshotIsConstAndSequenceIncreases(test);
     testCountersForOutOfRangeAndEmptyBlocks(test);

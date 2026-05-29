@@ -36,6 +36,7 @@ struct SimulatorBcoLoadConfig
     std::chrono::milliseconds burstDuration{0};
     std::chrono::milliseconds calmDuration{0};
 
+    int minVisibleAmplitude = 0;
     std::vector<SimulatorPulseBandConfig> pulseBandConfigs;
 };
 

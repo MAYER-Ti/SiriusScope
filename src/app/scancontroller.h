@@ -20,11 +20,16 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
 namespace siriusscope::infrastructure {
 class IDiagnosticsSink;
+}
+
+namespace siriusscope::pipeline {
+struct BearingSnapshot;
 }
 
 namespace siriusscope::app {
@@ -96,6 +101,7 @@ public:
     {
         return m_collectedSignalSampleCount;
     }
+    void acceptBearingSnapshotSummary(std::shared_ptr<const pipeline::BearingSnapshot> snapshot);
 
     Q_INVOKABLE void selectSector(double leftAngleDeg, double rightAngleDeg);
     Q_INVOKABLE void clearSector();
@@ -151,6 +157,7 @@ private:
     void failScan(const QString& reason);
     void onBearingFrames(std::vector<processing::BearingInputFrame> frames);
     void onSignalSamples(std::vector<core::SignalSample> samples);
+    void mergeBearingResult(core::BearingResult result);
     void closeActiveAcquisitionWithoutCalculation(std::uint64_t sessionId);
     void endScanRecording(std::uint64_t sessionId);
     void clearBearingResults();
@@ -192,6 +199,7 @@ private:
     double m_antennaSpeedDegPerSec = 10.0;
     std::uint64_t m_nextSessionId = 1;
     std::vector<core::BearingResult> m_lastBearingResults;
+    std::uint64_t m_lastBearingSnapshotSequenceId = 0;
     processing::SignalParameterAccumulator m_signalParameterAccumulator;
     std::size_t m_collectedSignalSampleCount = 0;
     std::vector<processing::SignalParameters> m_lastSignalParameters;

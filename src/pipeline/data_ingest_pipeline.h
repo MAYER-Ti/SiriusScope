@@ -3,6 +3,8 @@
 #include "core/domain_models.h"
 #include "core/operation_result.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
+#include "pipeline/bearing_aggregator.h"
+#include "pipeline/bearing_snapshot.h"
 #include "pipeline/bounded_block_queue.h"
 #include "pipeline/pipeline_diagnostics.h"
 #include "pipeline/pipeline_metrics.h"
@@ -29,6 +31,7 @@ struct DataIngestPipelineConfig
     bool acceptingOnStart = false;
     WaterfallAggregatorConfig waterfall;
     SpectrumAggregatorConfig spectrum;
+    BearingAggregatorConfig bearing;
 };
 
 class DataIngestPipeline
@@ -55,8 +58,10 @@ public:
     ProcessingEngineSummary lastSummary() const;
     std::shared_ptr<const WaterfallSnapshot> latestWaterfallSnapshot() const;
     std::shared_ptr<const SpectrumSnapshot> latestSpectrumSnapshot() const;
+    std::shared_ptr<const BearingSnapshot> latestBearingSnapshot() const;
     void configureWaterfall(WaterfallAggregatorConfig config);
     void configureSpectrum(SpectrumAggregatorConfig config);
+    void configureBearing(BearingAggregatorConfig config);
     void clearQueuedBlocks();
 
 private:
@@ -70,6 +75,7 @@ private:
     PipelineDiagnostics m_diagnostics;
     SnapshotExchange<WaterfallSnapshot> m_waterfallSnapshots;
     SnapshotExchange<SpectrumSnapshot> m_spectrumSnapshots;
+    SnapshotExchange<BearingSnapshot> m_bearingSnapshots;
     ProcessingEngine m_engine;
     std::atomic_bool m_accepting{false};
     std::atomic_bool m_running{false};

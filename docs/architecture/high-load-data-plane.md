@@ -201,6 +201,23 @@ Target rules:
   plane, not raw high-load vectors from the Qt event loop.
 - Future 8-beam support must remain possible in the aggregation model.
 
+Current v1 implementation:
+
+- `ProcessingEngine` feeds `BearingAggregator` beside the waterfall and spectrum
+  aggregators.
+- `BearingAggregator` groups samples by time window, frequency bin, and band. It stores
+  beam 0 / beam 1 peaks independently and creates estimates only when both beams are
+  present in the candidate window.
+- The v1 bearing estimate uses amplitude interpolation between two beam axes. Equal beam
+  amplitudes point near the current antenna azimuth; stronger beam 0 / beam 1 amplitude
+  shifts the estimate toward that beam axis.
+- Incomplete candidates, missing beam 0, and missing beam 1 are counters in
+  `BearingSnapshot` and pipeline diagnostics. They are not per-candidate warnings.
+- `BearingSnapshot` is immutable after publication and is exposed through
+  `SnapshotExchange<BearingSnapshot>`.
+- `BearingSnapshotAdapter` polls the latest snapshot at a bounded Qt cadence and passes
+  low-volume estimates to `ScanController` only while a scan is active.
+
 ## 9. Scan Architecture
 
 `ScanController` is a control-plane component. It coordinates:
@@ -216,6 +233,37 @@ Target rules:
 the processing engine receives a scan-session descriptor and produces scan summaries,
 bearing results, and signal parameter summaries. `ResultTable` receives domain-level
 results, not raw stream data.
+
+Current v1 scan flow:
+
+- Production bootstrap constructs `ScanController` with `nullptr` raw buses.
+- `BearingSnapshotAdapter` is the high-load scan handoff. It skips snapshots while scan
+  is inactive and passes only immutable summaries/estimates to
+  `ScanController::acceptBearingSnapshotSummary`.
+- `SignalSampleBus` and `BearingFrameBus` remain only legacy/low-volume compatibility
+  paths for tests and explicitly constructed demo flows. They are not production
+  high-load transports.
+
+## 9.1 Antenna-Aware High-Load Simulator
+
+The high-load simulator must preserve the same physical meaning as real BCO beams:
+antenna azimuth changes beam visibility and therefore the directional waterfall and
+bearing candidates.
+
+Current v1 implementation:
+
+- `HighLoadSimulatorBcoStreamSource` reads current antenna azimuth through the Qt-free
+  `IAntennaAzimuthProvider` interface. `SimulatorAntennaState` implements this provider
+  in the app bootstrap.
+- The source uses the shared `SimulatorRadioScene` model. Each radio source has an
+  azimuth, absolute frequency, peak amplitude, and beam sigma.
+- Beam axes are `antennaAzimuthDeg - 30` and `antennaAzimuthDeg + 30`.
+- Beam amplitude is `peakAmplitude * exp(-0.5 * (delta / sigma)^2)`.
+- Samples below the visible/domain amplitude threshold are not emitted.
+- When both beams see the same source, the source may emit two samples with the same
+  `sampleIndex` and frequency window, one per beam. This is expected and valid.
+- `BcoBatchStats` and `SignalBlockMetadata` carry the antenna azimuth used for the block,
+  so aggregators can compute direction without consulting Qt or UI state.
 
 ## 10. Storage Pipeline
 
@@ -267,8 +315,9 @@ Simulator profiles must be used consistently:
   slots/s with 10 ms batches.
 - `Stress150Percent` - overload/stress profile.
 
-`RealBcoEquivalent` must not become the ordinary default until the high-load data plane
-is implemented, bounded, and covered by performance tests.
+The current production simulator path uses `RealBcoEquivalent` by default through the
+bounded `DataIngestPipeline`. It remains an engineering load profile, not a selectable UI
+profile.
 
 ## 13. Acceptance Criteria
 

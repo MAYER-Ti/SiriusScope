@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -16,6 +17,7 @@ struct SignalBlockMetadata
     std::uint64_t firstSampleIndex = 0;
     std::uint64_t lastSampleIndex = 0;
     std::chrono::steady_clock::time_point producedAt{};
+    std::optional<double> antennaAzimuthDeg;
 };
 
 class SignalBlock
@@ -32,6 +34,10 @@ public:
     std::chrono::steady_clock::time_point producedAt() const noexcept
     {
         return m_metadata.producedAt;
+    }
+    std::optional<double> antennaAzimuthDeg() const noexcept
+    {
+        return m_metadata.antennaAzimuthDeg;
     }
 
     std::size_t sampleCount() const noexcept { return m_samples.size(); }

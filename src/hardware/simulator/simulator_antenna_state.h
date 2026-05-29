@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hardware/interfaces/antenna_azimuth_provider.h"
 #include "hardware/interfaces/antenna_control.h"
 
 #include <mutex>
@@ -7,12 +8,12 @@
 
 namespace siriusscope::hardware {
 
-class SimulatorAntennaState
+class SimulatorAntennaState final : public IAntennaAzimuthProvider
 {
 public:
     explicit SimulatorAntennaState(double initialAzimuthDeg = 0.0);
 
-    double currentAzimuthDeg() const;
+    double currentAzimuthDeg() const override;
     void setCurrentAzimuthDeg(double value);
 
     double targetAzimuthDeg() const;

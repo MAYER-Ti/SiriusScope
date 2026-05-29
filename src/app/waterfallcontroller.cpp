@@ -598,6 +598,7 @@ void WaterfallController::enqueueSampleBlock(hardware::IBcoStreamSource::SampleB
     metadata.firstSampleIndex = block->stats.firstSampleIndex;
     metadata.lastSampleIndex = block->stats.lastSampleIndex;
     metadata.producedAt = block->stats.producedAt;
+    metadata.antennaAzimuthDeg = block->stats.antennaAzimuthDeg;
 
     const auto result = m_dataIngestPipeline->ingestSamples(block->samples, metadata);
     if (!result && m_acceptingLiveSamples) {
@@ -742,6 +743,20 @@ void WaterfallController::configureDataPlaneWaterfall(core::TimeBase timeBase)
     config.amplitudeFloor = 0;
     config.timeBase = timeBase;
     m_dataIngestPipeline->configureWaterfall(config);
+
+    pipeline::BearingAggregatorConfig bearingConfig;
+    bearingConfig.frequencyBinCount = m_controllerConfig.renderBinCount;
+    bearingConfig.sourceMinHz = static_cast<std::int64_t>(m_sourceMinHz);
+    bearingConfig.sourceMaxHz = static_cast<std::int64_t>(m_sourceMaxHz);
+    bearingConfig.windowPeriodNs =
+        static_cast<std::uint64_t>(std::max<qint64>(1, m_controllerConfig.rowPeriodMs))
+        * 1'000'000ULL;
+    bearingConfig.amplitudeFloor = 1;
+    bearingConfig.beamHalfSeparationDeg = 30.0;
+    bearingConfig.minQuality = 0.05;
+    bearingConfig.fallbackAntennaAzimuthDeg = 0.0;
+    bearingConfig.timeBase = timeBase;
+    m_dataIngestPipeline->configureBearing(bearingConfig);
 }
 
 core::TimeBase WaterfallController::fallbackWaterfallTimeBase() const

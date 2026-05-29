@@ -1,4 +1,5 @@
 #include "hardware/data_source_factory.h"
+#include "hardware/interfaces/antenna_azimuth_provider.h"
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
 
 #include <cmath>
@@ -36,11 +37,25 @@ private:
     int m_failed = 0;
 };
 
+class FakeAntennaAzimuthProvider final : public hardware::IAntennaAzimuthProvider
+{
+public:
+    explicit FakeAntennaAzimuthProvider(double azimuthDeg)
+        : m_azimuthDeg(azimuthDeg)
+    {
+    }
+
+    double currentAzimuthDeg() const override { return m_azimuthDeg; }
+
+private:
+    double m_azimuthDeg = 0.0;
+};
+
 core::BandConfig makeBandConfig(bool enabled = true)
 {
     const auto created = core::BandConfig::create(0,
                                                   3'000'000'000LL,
-                                                  100'000'000LL,
+                                                  500'000'000LL,
                                                   enabled);
     return *created.value();
 }
@@ -51,7 +66,7 @@ core::BandConfig makeBandConfig(int bandIndex,
 {
     const auto created = core::BandConfig::create(bandIndex,
                                                   centerFrequencyHz,
-                                                  100'000'000LL,
+                                                  500'000'000LL,
                                                   enabled);
     return *created.value();
 }
@@ -128,6 +143,17 @@ bool isInsidePulseWindow(const core::SignalSample& sample,
     return phaseNs >= 0.0L && phaseNs < widthNs;
 }
 
+int peakForBeam(const hardware::BcoSampleBlock& block, int beamIndex)
+{
+    int peak = 0;
+    for (const auto& sample : block.samples) {
+        if (sample.beamIndex == beamIndex) {
+            peak = std::max(peak, sample.amplitude);
+        }
+    }
+    return peak;
+}
+
 void testConfigureRejectsEmptyBands(TestRunner& test)
 {
     hardware::HighLoadSimulatorBcoStreamSource source;
@@ -195,8 +221,8 @@ void testSourceGeneratesBlocks(TestRunner& test)
     test.require(loadConfig.pulseBandConfigs.empty(),
                  "continuous high-load test uses empty pulse configs");
     test.require(!firstBlock->samples.empty(), "generated block has samples");
-    test.require(firstBlock->samples.size() == 10,
-                 "continuous generation keeps requested samples per batch");
+    test.require(firstBlock->samples.size() <= 10,
+                 "continuous generation respects requested emitted sample budget");
     test.require(firstBlock->stats.sampleCount == firstBlock->samples.size(),
                  "block stats sample count matches samples");
     test.require(firstBlock->stats.firstSampleIndex <= firstBlock->stats.lastSampleIndex,
@@ -209,22 +235,19 @@ void testSourceGeneratesBlocks(TestRunner& test)
     const auto& band = config.bandConfigs.front();
     std::uint64_t previousSampleIndex = 0;
     bool hasPreviousSample = false;
-    std::uint64_t expectedSampleIndex = config.timeBase.firstSampleIndex;
     for (const auto& sample : firstBlock->samples) {
         test.require(!hasPreviousSample || sample.sampleIndex >= previousSampleIndex,
-                     "generated sampleIndex is monotonic");
-        test.require(sample.sampleIndex == expectedSampleIndex,
-                     "continuous generation keeps contiguous sampleIndex values");
+                     "generated sampleIndex is monotonic nondecreasing");
         previousSampleIndex = sample.sampleIndex;
         hasPreviousSample = true;
-        ++expectedSampleIndex;
 
         test.require(sample.bandIndex == band.bandIndex,
                      "generated sample uses configured bandIndex");
         test.require(sample.beamIndex == 0 || sample.beamIndex == 1,
                      "generated sample beamIndex is 0 or 1");
-        test.require(sample.amplitude >= 20 && sample.amplitude <= 119,
-                     "generated sample amplitude follows simulator range");
+        test.require(sample.amplitude >= core::DomainConstraints::minAmplitude
+                         && sample.amplitude <= core::DomainConstraints::maxAmplitude,
+                     "generated sample amplitude follows domain range");
         test.require(band.containsFrequency(sample.absoluteFrequencyHz),
                      "generated sample frequency is inside band");
         test.require(sample.absoluteFrequencyHz
@@ -240,6 +263,44 @@ void testSourceGeneratesBlocks(TestRunner& test)
                  "metrics expose sample rate");
     test.require(metrics.equivalentMegabytesPerSecond >= 0.0,
                  "metrics expose equivalent throughput");
+}
+
+void testAntennaAzimuthControlsBeamBalance(TestRunner& test)
+{
+    const auto collectForAzimuth = [](double azimuthDeg) {
+        FakeAntennaAzimuthProvider antenna(azimuthDeg);
+        hardware::HighLoadSimulatorBcoStreamSource source(makeShortLoadConfig(),
+                                                          nullptr,
+                                                          &antenna);
+        const auto configured = source.configure(makeValidConfig());
+        std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+        const bool arrived = configured.success && collectBlocks(source, 1, blocks);
+        if (!arrived || blocks.empty()) {
+            return hardware::IBcoStreamSource::SampleBlockPtr{};
+        }
+        return blocks.front();
+    };
+
+    const auto beam0Dominant = collectForAzimuth(75.0);
+    const auto beam1Dominant = collectForAzimuth(15.0);
+    const auto balanced = collectForAzimuth(45.0);
+
+    test.require(beam0Dominant != nullptr, "antenna-aware source emits beam0-dominant block");
+    test.require(beam1Dominant != nullptr, "antenna-aware source emits beam1-dominant block");
+    test.require(balanced != nullptr, "antenna-aware source emits balanced block");
+    if (!beam0Dominant || !beam1Dominant || !balanced) {
+        return;
+    }
+
+    test.require(beam0Dominant->stats.antennaAzimuthDeg
+                     && *beam0Dominant->stats.antennaAzimuthDeg == 75.0,
+                 "block stats carry antenna azimuth metadata");
+    test.require(peakForBeam(*beam0Dominant, 0) > peakForBeam(*beam0Dominant, 1),
+                 "antenna 75 deg makes default source stronger in beam 0");
+    test.require(peakForBeam(*beam1Dominant, 1) > peakForBeam(*beam1Dominant, 0),
+                 "antenna 15 deg makes default source stronger in beam 1");
+    test.require(std::abs(peakForBeam(*balanced, 0) - peakForBeam(*balanced, 1)) <= 1,
+                 "antenna 45 deg balances beam 0 and beam 1 peaks");
 }
 
 void testPulseConfigGatesSamples(TestRunner& test)
@@ -320,7 +381,7 @@ void testDifferentBandsUseIndependentPulseConfigs(TestRunner& test)
     hardware::BcoStreamConfig config;
     config.bandConfigs = {
         makeBandConfig(0, 3'000'000'000LL),
-        makeBandConfig(1, 3'200'000'000LL),
+        makeBandConfig(1, 5'795'000'000LL),
     };
     config.timeBase.firstSampleIndex = 42;
     config.timeBase.samplePeriodNs = 1000;
@@ -521,6 +582,7 @@ int main()
     testConfigureRejectsEmptyBands(test);
     testConfigureRejectsAllDisabledBands(test);
     testSourceGeneratesBlocks(test);
+    testAntennaAzimuthControlsBeamBalance(test);
     testPulseConfigGatesSamples(test);
     testDisabledPulseConfigSuppressesBand(test);
     testDifferentBandsUseIndependentPulseConfigs(test);

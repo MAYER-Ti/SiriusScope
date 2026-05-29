@@ -12,6 +12,8 @@ class IDiagnosticsSink;
 
 namespace siriusscope::hardware {
 
+class IAntennaAzimuthProvider;
+
 class DataSourceFactory
 {
 public:
@@ -24,7 +26,8 @@ public:
 
     static std::unique_ptr<IBcoStreamSource> createHighLoadSimulatorBcoStreamSource(
         const HardwareProfile& profile,
-        infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr);
+        infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr,
+        IAntennaAzimuthProvider* antennaAzimuthProvider = nullptr);
 };
 
 } // namespace siriusscope::hardware

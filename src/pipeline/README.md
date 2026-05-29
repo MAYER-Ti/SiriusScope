@@ -3,7 +3,7 @@
 `src/pipeline` is the first non-Qt high-load data plane scaffold. It owns
 block-oriented transport, a fixed block pool, bounded queues, basic metrics,
 rate-limited diagnostics, a minimal processing worker, v1 waterfall time-bucket
-aggregation, and v1 spectrum snapshot aggregation.
+aggregation, v1 spectrum snapshot aggregation, and v1 bearing aggregation.
 
 Waterfall output is published as immutable `WaterfallSnapshot` objects through
 `SnapshotExchange`. The GUI polls the latest snapshot and adapts aggregated rows to its
@@ -16,8 +16,19 @@ per-band summaries from `SignalBlock` data. The Qt layer adapts the latest snaps
 `SpectrumEnvelopeController`; `SpectrumEnvelopeWorker` remains legacy compatibility code
 and is not production high-load transport.
 
+Bearing output is published as immutable `BearingSnapshot` objects through the same
+latest-value exchange model. `BearingAggregator` groups samples by time window,
+frequency bin, and band, pairs beam 0 / beam 1 peaks inside the window, and counts
+incomplete candidates instead of producing per-candidate diagnostics. The Qt layer polls
+snapshots and passes low-volume summaries to `ScanController` only while a scan is active.
+
+`HighLoadSimulatorBcoStreamSource` is antenna-aware: it reads the current azimuth through
+a Qt-free provider interface, evaluates the shared simulator radio scene against two beam
+axes, and emits beam samples only when the source is visible to that beam. Duplicate
+`sampleIndex` values across beam 0 / beam 1 are expected.
+
 The current implementation intentionally does not contain production DSP,
-`BearingAggregator`, `StoragePipeline`, lock-free queues, SIMD, or direct source fill
-into pooled buffers. Those stages must be added as follow-up data-plane components. The
-temporary copy from `BcoSampleBlock::samples` into `SignalBlock` is a migration step; the
-target source path should fill pooled contiguous blocks directly.
+`StoragePipeline`, lock-free queues, SIMD, or direct source fill into pooled buffers.
+Those stages must be added as follow-up data-plane components. The temporary copy from
+`BcoSampleBlock::samples` into `SignalBlock` is a migration step; the target source path
+should fill pooled contiguous blocks directly.

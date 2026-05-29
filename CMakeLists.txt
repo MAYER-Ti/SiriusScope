@@ -25,6 +25,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/antennacontrollerstub.cpp
     src/app/appstate.h
     src/app/appstate.cpp
+    src/app/bearingsnapshotadapter.h
+    src/app/bearingsnapshotadapter.cpp
     src/app/bearingframebus.h
     src/app/bearingframebus.cpp
     src/app/bandconfigcontroller.h
@@ -122,6 +124,10 @@ set(SIRIUSSCOPE_PROCESSING_SOURCES
 
 set(SIRIUSSCOPE_PIPELINE_SOURCES
     src/pipeline/README.md
+    src/pipeline/bearing_aggregator.h
+    src/pipeline/bearing_aggregator.cpp
+    src/pipeline/bearing_snapshot.h
+    src/pipeline/bearing_snapshot.cpp
     src/pipeline/bounded_block_queue.h
     src/pipeline/data_ingest_pipeline.h
     src/pipeline/data_ingest_pipeline.cpp
@@ -149,6 +155,7 @@ set(SIRIUSSCOPE_PIPELINE_SOURCES
 set(SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES
     src/hardware/hardware_profile.h
     src/hardware/interfaces/antenna_azimuth_source.h
+    src/hardware/interfaces/antenna_azimuth_provider.h
     src/hardware/interfaces/antenna_control.h
     src/hardware/interfaces/bco_control.h
     src/hardware/interfaces/bco_sample_source.h

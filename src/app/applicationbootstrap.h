@@ -3,6 +3,7 @@
 #include "antennacontrollerstub.h"
 #include "bandconfigcontroller.h"
 #include "bandlistmodel.h"
+#include "bearingsnapshotadapter.h"
 #include "bearingframebus.h"
 #include "diagnosticsservice.h"
 #include "frequencygridmodel.h"
@@ -65,6 +66,10 @@ public:
     SpectrumSnapshotAdapter* spectrumSnapshotAdapter() noexcept
     {
         return m_spectrumSnapshotAdapter.get();
+    }
+    BearingSnapshotAdapter* bearingSnapshotAdapter() noexcept
+    {
+        return m_bearingSnapshotAdapter.get();
     }
     WaterfallController* waterfallController() noexcept { return m_waterfallController.get(); }
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
@@ -144,6 +149,7 @@ private:
     SpectrumDecimator m_spectrumDecimator;
     SpectrumEnvelopeController m_spectrumEnvelopeController;
     std::unique_ptr<SpectrumSnapshotAdapter> m_spectrumSnapshotAdapter;
+    std::unique_ptr<BearingSnapshotAdapter> m_bearingSnapshotAdapter;
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::DiagnosticLogWriter> m_diagnosticLogWriter;
     std::unique_ptr<DiagnosticsService> m_diagnosticsService;

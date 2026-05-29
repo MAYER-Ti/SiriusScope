@@ -25,10 +25,17 @@ void PipelineMetrics::reset()
     m_latestSpectrumSnapshotSequence = 0;
     m_spectrumInvalidSamples = 0;
     m_spectrumOutOfRangeSamples = 0;
+    m_producedBearingSnapshots = 0;
+    m_producedBearingEstimates = 0;
+    m_completeBearingCandidates = 0;
+    m_incompleteBearingCandidates = 0;
+    m_missingBeam0Candidates = 0;
+    m_missingBeam1Candidates = 0;
     m_rxLatencyMax = std::chrono::milliseconds{0};
     m_processingLatencyMax = std::chrono::milliseconds{0};
     m_aggregationLatencyMax = std::chrono::milliseconds{0};
     m_spectrumAggregationLatencyMax = std::chrono::milliseconds{0};
+    m_bearingAggregationLatencyMax = std::chrono::milliseconds{0};
     m_maxBlockAge = std::chrono::milliseconds{0};
 }
 
@@ -99,6 +106,26 @@ void PipelineMetrics::recordSpectrumAggregation(
         std::max(m_spectrumAggregationLatencyMax, aggregationLatency);
 }
 
+void PipelineMetrics::recordBearingAggregation(
+    std::uint64_t producedSnapshots,
+    std::uint64_t producedEstimates,
+    std::uint64_t completeCandidates,
+    std::uint64_t incompleteCandidates,
+    std::uint64_t missingBeam0Candidates,
+    std::uint64_t missingBeam1Candidates,
+    std::chrono::milliseconds aggregationLatency)
+{
+    std::lock_guard lock(m_mutex);
+    m_producedBearingSnapshots += producedSnapshots;
+    m_producedBearingEstimates += producedEstimates;
+    m_completeBearingCandidates += completeCandidates;
+    m_incompleteBearingCandidates += incompleteCandidates;
+    m_missingBeam0Candidates += missingBeam0Candidates;
+    m_missingBeam1Candidates += missingBeam1Candidates;
+    m_bearingAggregationLatencyMax =
+        std::max(m_bearingAggregationLatencyMax, aggregationLatency);
+}
+
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters) const
@@ -134,6 +161,14 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.spectrumOutOfRangeSamples = m_spectrumOutOfRangeSamples;
     snapshot.spectrumAggregationLatencyMaxMs =
         static_cast<double>(m_spectrumAggregationLatencyMax.count());
+    snapshot.producedBearingSnapshots = m_producedBearingSnapshots;
+    snapshot.producedBearingEstimates = m_producedBearingEstimates;
+    snapshot.completeBearingCandidates = m_completeBearingCandidates;
+    snapshot.incompleteBearingCandidates = m_incompleteBearingCandidates;
+    snapshot.missingBeam0Candidates = m_missingBeam0Candidates;
+    snapshot.missingBeam1Candidates = m_missingBeam1Candidates;
+    snapshot.bearingAggregationLatencyMaxMs =
+        static_cast<double>(m_bearingAggregationLatencyMax.count());
     snapshot.queueDepth = queueMetrics.depth;
     snapshot.queueCapacity = queueMetrics.capacity;
     snapshot.queuePushedBlocks = queueMetrics.pushedBlocks;

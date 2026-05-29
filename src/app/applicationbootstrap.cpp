@@ -149,6 +149,10 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                         m_scanRecordingControl.get(),
                                                         m_resultTableController.get(),
                                                         m_diagnosticsService.get());
+    m_bearingSnapshotAdapter =
+        std::make_unique<BearingSnapshotAdapter>(m_scanController.get(),
+                                                 m_dataIngestPipeline.get(),
+                                                 m_diagnosticsService.get());
 
     m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),
                                                   &AppState::instance(),
@@ -199,6 +203,9 @@ ApplicationBootstrap::ApplicationBootstrap()
     if (m_spectrumSnapshotAdapter) {
         m_spectrumSnapshotAdapter->start();
     }
+    if (m_bearingSnapshotAdapter) {
+        m_bearingSnapshotAdapter->start();
+    }
     m_resultTableController->reload();
 
     m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
@@ -213,6 +220,9 @@ ApplicationBootstrap::~ApplicationBootstrap()
 {
     if (m_spectrumSnapshotAdapter) {
         m_spectrumSnapshotAdapter->stop();
+    }
+    if (m_bearingSnapshotAdapter) {
+        m_bearingSnapshotAdapter->stop();
     }
     if (m_waterfallController) {
         m_waterfallController->stop();
@@ -250,7 +260,8 @@ void ApplicationBootstrap::createBcoStreamSource()
     m_bcoStreamSource =
         hardware::DataSourceFactory::createHighLoadSimulatorBcoStreamSource(
             m_hardwareProfile,
-            m_diagnosticsService.get());
+            m_diagnosticsService.get(),
+            m_antennaState.get());
 
     if (!m_bcoStreamSource && m_diagnosticsService) {
         m_diagnosticsService->publish(infrastructure::DiagnosticEvent{

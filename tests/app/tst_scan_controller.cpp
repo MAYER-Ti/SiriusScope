@@ -5,6 +5,7 @@
 #include "app/interfaces/scan_recording_control.h"
 #include "app/scancontroller.h"
 #include "app/signalsamplebus.h"
+#include "pipeline/bearing_snapshot.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -461,6 +463,31 @@ core::SignalSample makeSignalSample(std::uint64_t sampleIndex)
     sample.amplitude = 80;
     sample.beamIndex = 0;
     return sample;
+}
+
+std::shared_ptr<const pipeline::BearingSnapshot> makeBearingSnapshot(
+    std::uint64_t sequenceId,
+    double bearingAzimuthDeg,
+    double quality)
+{
+    auto snapshot = std::make_shared<pipeline::BearingSnapshot>();
+    snapshot->sequenceId = sequenceId;
+    snapshot->createdUtcNs = 1'000'000'000;
+    snapshot->estimates.push_back(pipeline::BearingEstimate{
+        0,
+        1'001'000'000LL,
+        10,
+        12,
+        1'000'000'000,
+        45.0,
+        bearingAzimuthDeg,
+        quality,
+        80,
+        80,
+    });
+    snapshot->counters.completeCandidates = 1;
+    snapshot->counters.producedEstimates = 1;
+    return snapshot;
 }
 
 const processing::SignalParameters* findSignalParameters(
@@ -1026,6 +1053,46 @@ void testAzimuthSampleUpdatesCurrentValue(TestRunner& test)
     test.require(updated, "azimuth samples update currentAzimuthDeg");
 }
 
+void testBearingSnapshotSummaryIgnoredWhenInactive(TestRunner& test)
+{
+    ControllerFixture fixture;
+
+    fixture.controller.acceptBearingSnapshotSummary(makeBearingSnapshot(1, 42.0, 0.8));
+
+    test.require(fixture.controller.targetBearings().empty(),
+                 "inactive scan ignores bearing snapshot summaries");
+    test.require(fixture.recorder.appendCalls == 0,
+                 "inactive snapshot path does not append raw bearing frames");
+}
+
+void testBearingSnapshotSummaryFeedsActiveScan(TestRunner& test)
+{
+    ControllerFixture fixture;
+    fixture.azimuthSource.emitAzimuth(0.0);
+    waitUntil([&fixture] {
+        return std::abs(fixture.controller.currentAzimuthDeg()) < 0.001;
+    });
+
+    fixture.controller.startScan(0.0, 20.0, 10.0);
+    test.require(fixture.controller.scanActive(),
+                 "scan is active before accepting bearing snapshot summary");
+
+    fixture.controller.acceptBearingSnapshotSummary(makeBearingSnapshot(1, 42.0, 0.8));
+
+    test.require(fixture.controller.targetBearings().size() == 1,
+                 "active scan accepts low-volume bearing snapshot estimate");
+    test.require(fixture.controller.collectedSignalSampleCount() == 0,
+                 "bearing snapshot path does not deliver raw signal samples");
+    test.require(fixture.recorder.appendCalls == 0,
+                 "bearing snapshot path does not use legacy bearing frame recorder");
+
+    fixture.controller.acceptBearingSnapshotSummary(makeBearingSnapshot(1, 50.0, 0.9));
+    test.require(fixture.controller.targetBearings().size() == 1,
+                 "duplicate bearing snapshot sequence is ignored");
+
+    fixture.controller.stopScan();
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -1050,6 +1117,8 @@ int main(int argc, char *argv[])
     testSpeedChangeRejectedDuringScan(test);
     testDiagnosticsOnFailure(test);
     testAzimuthSampleUpdatesCurrentValue(test);
+    testBearingSnapshotSummaryIgnoredWhenInactive(test);
+    testBearingSnapshotSummaryFeedsActiveScan(test);
 
     return test.result();
 }

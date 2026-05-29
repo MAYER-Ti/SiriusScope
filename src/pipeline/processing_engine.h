@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/operation_result.h"
+#include "pipeline/bearing_aggregator.h"
+#include "pipeline/bearing_snapshot.h"
 #include "pipeline/bounded_block_queue.h"
 #include "pipeline/pipeline_diagnostics.h"
 #include "pipeline/pipeline_metrics.h"
@@ -47,7 +49,9 @@ public:
                      SnapshotExchange<WaterfallSnapshot>* waterfallSnapshots = nullptr,
                      WaterfallAggregatorConfig waterfallConfig = {},
                      SnapshotExchange<SpectrumSnapshot>* spectrumSnapshots = nullptr,
-                     SpectrumAggregatorConfig spectrumConfig = {});
+                     SpectrumAggregatorConfig spectrumConfig = {},
+                     SnapshotExchange<BearingSnapshot>* bearingSnapshots = nullptr,
+                     BearingAggregatorConfig bearingConfig = {});
     ~ProcessingEngine();
 
     ProcessingEngine(const ProcessingEngine&) = delete;
@@ -60,6 +64,7 @@ public:
     bool running() const noexcept;
     void setWaterfallConfig(WaterfallAggregatorConfig config);
     void setSpectrumConfig(SpectrumAggregatorConfig config);
+    void setBearingConfig(BearingAggregatorConfig config);
 
 private:
     void workerLoop();
@@ -68,23 +73,29 @@ private:
                               std::chrono::milliseconds aggregationLatency);
     void publishSpectrumSnapshots(SpectrumAggregationResult result,
                                   std::chrono::milliseconds aggregationLatency);
+    void publishBearingSnapshots(BearingAggregationResult result,
+                                 std::chrono::milliseconds aggregationLatency);
     void flushWaterfallRows();
     void flushSpectrumSnapshots();
+    void flushBearingSnapshots();
 
     BoundedBlockQueue* m_queue = nullptr;
     PipelineMetrics* m_metrics = nullptr;
     PipelineDiagnostics* m_diagnostics = nullptr;
     SnapshotExchange<WaterfallSnapshot>* m_waterfallSnapshots = nullptr;
     SnapshotExchange<SpectrumSnapshot>* m_spectrumSnapshots = nullptr;
+    SnapshotExchange<BearingSnapshot>* m_bearingSnapshots = nullptr;
 
     mutable std::mutex m_mutex;
     mutable std::mutex m_waterfallMutex;
     mutable std::mutex m_spectrumMutex;
+    mutable std::mutex m_bearingMutex;
     std::condition_variable m_flushCondition;
     std::thread m_worker;
     ProcessingEngineSummary m_summary;
     WaterfallAggregator m_waterfallAggregator;
     SpectrumAggregator m_spectrumAggregator;
+    BearingAggregator m_bearingAggregator;
     bool m_running = false;
     bool m_processingBlock = false;
 };

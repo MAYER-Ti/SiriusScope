@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace siriusscope::hardware {
@@ -27,6 +28,7 @@ struct BcoBatchStats
     std::uint64_t lostPacketCount = 0;
     std::uint64_t malformedPacketCount = 0;
     std::chrono::steady_clock::time_point producedAt{};
+    std::optional<double> antennaAzimuthDeg;
 };
 
 struct BcoSourceMetrics

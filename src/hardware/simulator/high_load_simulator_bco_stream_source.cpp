@@ -1,6 +1,7 @@
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -12,8 +13,10 @@ namespace siriusscope::hardware {
 namespace {
 
 constexpr std::chrono::milliseconds kMinBatchPeriod{1};
-constexpr std::size_t kFrequencyBinCount = 128;
 constexpr std::uint64_t kSamplesPerPacket = 256;
+constexpr double kPi = 3.141592653589793238462643383279502884;
+constexpr double kBeamHalfSeparationDeg = 30.0;
+constexpr std::size_t kBeamCount = 2;
 
 SimulatorBcoLoadConfig makeSimulatorBcoLoadConfig(SimulatorLoadProfile profile)
 {
@@ -52,6 +55,7 @@ SimulatorBcoLoadConfig makeSimulatorBcoLoadConfig(SimulatorLoadProfile profile)
 SimulatorBcoLoadConfig normalizeLoadConfig(SimulatorBcoLoadConfig config)
 {
     auto requestedPulseConfigs = std::move(config.pulseBandConfigs);
+    const int requestedMinVisibleAmplitude = config.minVisibleAmplitude;
 
     if (config.profile == SimulatorLoadProfile::UiDemo) {
         const auto requestedSamplesPerSecond = config.samplesPerSecond;
@@ -73,6 +77,9 @@ SimulatorBcoLoadConfig normalizeLoadConfig(SimulatorBcoLoadConfig config)
     if (!std::isfinite(config.burstMultiplier) || config.burstMultiplier < 1.0) {
         config.burstMultiplier = 1.0;
     }
+    config.minVisibleAmplitude = std::clamp(requestedMinVisibleAmplitude,
+                                            0,
+                                            core::DomainConstraints::maxAmplitude);
     config.pulseBandConfigs = std::move(requestedPulseConfigs);
 
     return config;
@@ -225,6 +232,114 @@ bool enabledBandsContain(const std::vector<core::BandConfig>& bands, int bandInd
     });
 }
 
+const core::BandConfig* findBandContainingFrequency(
+    const std::vector<core::BandConfig>& configs,
+    std::int64_t absoluteFrequencyHz)
+{
+    const auto found =
+        std::find_if(configs.begin(), configs.end(), [absoluteFrequencyHz](const auto& config) {
+            return config.enabled && config.containsFrequency(absoluteFrequencyHz);
+        });
+    return found == configs.end() ? nullptr : &(*found);
+}
+
+double normalize360(double value)
+{
+    if (!std::isfinite(value)) {
+        return 0.0;
+    }
+
+    auto normalized = std::fmod(value, core::DomainConstraints::maxAzimuthDeg);
+    if (normalized < core::DomainConstraints::minAzimuthDeg) {
+        normalized += core::DomainConstraints::maxAzimuthDeg;
+    }
+    if (normalized >= core::DomainConstraints::maxAzimuthDeg) {
+        normalized = core::DomainConstraints::minAzimuthDeg;
+    }
+
+    return normalized;
+}
+
+double signedAngularDeltaDeg(double fromDeg, double toDeg)
+{
+    double delta = normalize360(toDeg) - normalize360(fromDeg);
+    if (delta > 180.0) {
+        delta -= 360.0;
+    }
+    if (delta < -180.0) {
+        delta += 360.0;
+    }
+
+    return delta;
+}
+
+double beamGain(double deltaDeg, double sigmaDeg)
+{
+    if (!std::isfinite(sigmaDeg) || sigmaDeg <= 0.0) {
+        return 0.0;
+    }
+
+    const double x = deltaDeg / sigmaDeg;
+    return std::exp(-0.5 * x * x);
+}
+
+std::optional<int> toVisibleBcoAmplitude(double value, int minVisibleAmplitude)
+{
+    if (!std::isfinite(value)) {
+        return std::nullopt;
+    }
+
+    const int amplitude = static_cast<int>(std::lround(value));
+    if (amplitude < core::DomainConstraints::minAmplitude) {
+        return std::nullopt;
+    }
+
+    const int configuredThreshold = std::clamp(minVisibleAmplitude,
+                                               0,
+                                               core::DomainConstraints::maxAmplitude);
+    if (configuredThreshold > 0 && amplitude < configuredThreshold) {
+        return std::nullopt;
+    }
+
+    return std::clamp(amplitude,
+                      core::DomainConstraints::minAmplitude,
+                      core::DomainConstraints::maxAmplitude);
+}
+
+std::array<std::optional<int>, kBeamCount> sourceBeamAmplitudes(
+    const SimulatedRadioSource& source,
+    double antennaAzimuthDeg,
+    int minVisibleAmplitude)
+{
+    const double beam0Axis = antennaAzimuthDeg - kBeamHalfSeparationDeg;
+    const double beam1Axis = antennaAzimuthDeg + kBeamHalfSeparationDeg;
+    const double delta0 = signedAngularDeltaDeg(beam0Axis, source.azimuthDeg);
+    const double delta1 = signedAngularDeltaDeg(beam1Axis, source.azimuthDeg);
+    const double peakAmplitude = static_cast<double>(source.peakAmplitude);
+
+    return {
+        toVisibleBcoAmplitude(peakAmplitude * beamGain(delta0, source.beamSigmaDeg),
+                              minVisibleAmplitude),
+        toVisibleBcoAmplitude(peakAmplitude * beamGain(delta1, source.beamSigmaDeg),
+                              minVisibleAmplitude),
+    };
+}
+
+std::int64_t sourceAbsoluteFrequency(const SimulatedRadioSource& source,
+                                     std::uint64_t signalStep)
+{
+    if (!source.frequencyDriftEnabled || source.driftPeriodSteps == 0) {
+        return source.absoluteFrequencyHz;
+    }
+
+    const double phase =
+        2.0 * kPi * static_cast<double>(signalStep % source.driftPeriodSteps)
+        / static_cast<double>(source.driftPeriodSteps);
+    return source.absoluteFrequencyHz
+        + static_cast<std::int64_t>(
+            std::llround(std::sin(phase) * static_cast<double>(source.driftSpanHz)));
+}
+
 std::uint64_t alignToBandSlot(std::uint64_t sampleIndex,
                               std::uint64_t batchStartSampleIndex,
                               std::size_t bandSlot,
@@ -315,42 +430,76 @@ std::optional<std::uint64_t> nextGeneratablePulseSampleIndex(
     return nearest;
 }
 
-void appendGeneratedSample(BcoSampleBlock& block,
-                           const core::BandConfig& band,
-                           std::uint64_t sampleIndex,
-                           std::uint64_t sequenceIndex)
+bool pulseAllowsBandSample(std::uint64_t sampleIndex,
+                           std::uint64_t timeBaseFirstSampleIndex,
+                           std::uint64_t samplePeriodNs,
+                           int bandIndex,
+                           const std::vector<SimulatorPulseBandConfig>& pulseConfigs)
 {
-    const auto maxOffsetHz = std::max<std::int64_t>(0, band.widthHz / 2);
-    const auto binOffset = static_cast<std::int64_t>(sequenceIndex % kFrequencyBinCount);
-    const auto offsetStepHz =
-        maxOffsetHz == 0
-            ? 0
-            : std::max<std::int64_t>(
-                1,
-                (maxOffsetHz * 2) / static_cast<std::int64_t>(kFrequencyBinCount));
-    auto frequencyOffsetHz = -maxOffsetHz + binOffset * offsetStepHz;
-    frequencyOffsetHz = std::clamp(frequencyOffsetHz, -maxOffsetHz, maxOffsetHz);
-
-    const core::BeamSample beamSample{
-        sampleIndex,
-        frequencyOffsetHz,
-        20 + static_cast<int>(sequenceIndex % 100),
-        static_cast<int>(sequenceIndex % core::DomainConstraints::currentBeamCount),
-    };
-
-    const auto sample = core::SignalSample::create(beamSample, band);
-    if (sample) {
-        block.samples.push_back(*sample.value());
+    const auto* pulseConfig = pulseConfigForBand(pulseConfigs, bandIndex);
+    if (!pulseConfig) {
+        return true;
     }
+    if (!pulseConfig->enabled) {
+        return false;
+    }
+    if (!hasValidPulseTiming(*pulseConfig)) {
+        return true;
+    }
+
+    return isInsidePulse(sampleIndex,
+                         timeBaseFirstSampleIndex,
+                         samplePeriodNs,
+                         *pulseConfig);
+}
+
+std::size_t appendSourceSamples(BcoSampleBlock& block,
+                                std::size_t maxSampleCount,
+                                const core::BandConfig& band,
+                                const SimulatedRadioSource& source,
+                                std::int64_t absoluteFrequencyHz,
+                                std::uint64_t sampleIndex,
+                                double antennaAzimuthDeg,
+                                int minVisibleAmplitude)
+{
+    const auto offsetHz = absoluteFrequencyHz - band.centerFrequencyHz;
+    const auto amplitudes =
+        sourceBeamAmplitudes(source, antennaAzimuthDeg, minVisibleAmplitude);
+
+    std::size_t appended = 0;
+    for (int beamIndex = 0; beamIndex < static_cast<int>(kBeamCount); ++beamIndex) {
+        if (block.samples.size() >= maxSampleCount) {
+            break;
+        }
+
+        const auto amplitude = amplitudes[static_cast<std::size_t>(beamIndex)];
+        if (!amplitude) {
+            continue;
+        }
+
+        const core::BeamSample beamSample{sampleIndex,
+                                          offsetHz,
+                                          *amplitude,
+                                          beamIndex};
+        const auto sample = core::SignalSample::create(beamSample, band);
+        if (sample) {
+            block.samples.push_back(*sample.value());
+            ++appended;
+        }
+    }
+    return appended;
 }
 
 } // namespace
 
 HighLoadSimulatorBcoStreamSource::HighLoadSimulatorBcoStreamSource(
     SimulatorBcoLoadConfig loadConfig,
-    infrastructure::IDiagnosticsSink* diagnosticsSink)
+    infrastructure::IDiagnosticsSink* diagnosticsSink,
+    IAntennaAzimuthProvider* antennaAzimuthProvider)
     : m_loadConfig(normalizeLoadConfig(loadConfig))
     , m_diagnosticsSink(diagnosticsSink)
+    , m_antennaAzimuthProvider(antennaAzimuthProvider)
+    , m_scene(makeDefaultSimulatorRadioScene())
 {
 }
 
@@ -508,6 +657,18 @@ std::vector<SimulatorPulseBandConfig> HighLoadSimulatorBcoStreamSource::pulseBan
     return m_loadConfig.pulseBandConfigs;
 }
 
+void HighLoadSimulatorBcoStreamSource::setRadioScene(SimulatorRadioScene scene)
+{
+    std::lock_guard lock(m_mutex);
+    m_scene = std::move(scene);
+}
+
+SimulatorRadioScene HighLoadSimulatorBcoStreamSource::radioScene() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_scene;
+}
+
 void HighLoadSimulatorBcoStreamSource::generationLoop(SampleBlockCallback callback)
 {
     for (;;) {
@@ -550,6 +711,9 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     std::uint64_t timeBaseFirstSampleIndex = 0;
     std::uint64_t samplePeriodNs = 1;
     std::vector<SimulatorPulseBandConfig> pulseConfigs;
+    SimulatorRadioScene scene;
+    double antennaAzimuthDeg = 0.0;
+    int minVisibleAmplitude = 0;
 
     {
         std::lock_guard lock(m_mutex);
@@ -558,6 +722,11 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
         timeBaseFirstSampleIndex = m_streamConfig.timeBase.firstSampleIndex;
         samplePeriodNs = std::max<std::uint64_t>(1, m_streamConfig.timeBase.samplePeriodNs);
         pulseConfigs = m_loadConfig.pulseBandConfigs;
+        scene = m_scene;
+        minVisibleAmplitude = m_loadConfig.minVisibleAmplitude;
+    }
+    if (m_antennaAzimuthProvider) {
+        antennaAzimuthDeg = m_antennaAzimuthProvider->currentAzimuthDeg();
     }
 
     const auto sampleSlotsInBatch =
@@ -570,19 +739,10 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     auto block = std::make_shared<BcoSampleBlock>();
     block->samples.reserve(sampleCount);
 
-    if (!enabledBands.empty() && sampleSlotsInBatch > 0) {
-        if (pulseConfigs.empty()) {
-            for (std::uint64_t i = 0; i < sampleSlotsInBatch; ++i) {
-                const auto& band =
-                    enabledBands[static_cast<std::size_t>(i % enabledBands.size())];
-                appendGeneratedSample(*block,
-                                      band,
-                                      saturatedAdd(batchStartSampleIndex, i),
-                                      i);
-            }
-        } else {
-            auto sampleIndex = batchStartSampleIndex;
-            while (sampleIndex < batchEndSampleIndex) {
+    if (!enabledBands.empty() && !scene.sources.empty() && sampleSlotsInBatch > 0) {
+        auto sampleIndex = batchStartSampleIndex;
+        while (sampleIndex < batchEndSampleIndex && block->samples.size() < sampleCount) {
+            if (!pulseConfigs.empty()) {
                 const auto nextSampleIndex = nextGeneratablePulseSampleIndex(
                     sampleIndex,
                     batchStartSampleIndex,
@@ -594,14 +754,46 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
                 if (!nextSampleIndex) {
                     break;
                 }
-
                 sampleIndex = *nextSampleIndex;
-                const auto sequenceIndex = sampleIndex - batchStartSampleIndex;
-                const auto& band =
-                    enabledBands[static_cast<std::size_t>(sequenceIndex
-                                                          % enabledBands.size())];
-                appendGeneratedSample(*block, band, sampleIndex, sequenceIndex);
-                sampleIndex = saturatedAdd(sampleIndex, 1);
+            }
+
+            bool generatedAtSampleIndex = false;
+            const auto signalStep = sampleIndex >= timeBaseFirstSampleIndex
+                ? sampleIndex - timeBaseFirstSampleIndex
+                : 0;
+            for (const auto& source : scene.sources) {
+                if (block->samples.size() >= sampleCount) {
+                    break;
+                }
+
+                const auto absoluteFrequencyHz = sourceAbsoluteFrequency(source, signalStep);
+                const auto* band =
+                    findBandContainingFrequency(enabledBands, absoluteFrequencyHz);
+                if (!band) {
+                    continue;
+                }
+                if (!pulseAllowsBandSample(sampleIndex,
+                                           timeBaseFirstSampleIndex,
+                                           samplePeriodNs,
+                                           band->bandIndex,
+                                           pulseConfigs)) {
+                    continue;
+                }
+
+                const auto appended = appendSourceSamples(*block,
+                                                          sampleCount,
+                                                          *band,
+                                                          source,
+                                                          absoluteFrequencyHz,
+                                                          sampleIndex,
+                                                          antennaAzimuthDeg,
+                                                          minVisibleAmplitude);
+                generatedAtSampleIndex = generatedAtSampleIndex || appended > 0;
+            }
+
+            sampleIndex = saturatedAdd(sampleIndex, 1);
+            if (!generatedAtSampleIndex && sampleIndex == std::numeric_limits<std::uint64_t>::max()) {
+                break;
             }
         }
     }
@@ -617,6 +809,7 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     block->stats.lostPacketCount = 0;
     block->stats.malformedPacketCount = 0;
     block->stats.producedAt = std::chrono::steady_clock::now();
+    block->stats.antennaAzimuthDeg = antennaAzimuthDeg;
 
     if (!block->samples.empty()) {
         block->stats.firstSampleIndex = block->samples.front().sampleIndex;

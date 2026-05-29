@@ -12,7 +12,9 @@ bool PipelineDiagnosticCounters::empty() const noexcept
         && processingLatencyMaxMs <= 0.0 && invalidFrequencySamples == 0
         && outOfRangeSamples == 0 && emptyBlocks == 0 && aggregationLatencyMaxMs <= 0.0
         && spectrumInvalidSamples == 0 && spectrumOutOfRangeSamples == 0
-        && spectrumAggregationLatencyMaxMs <= 0.0;
+        && spectrumAggregationLatencyMaxMs <= 0.0 && incompleteBearingCandidates == 0
+        && missingBeam0Candidates == 0 && missingBeam1Candidates == 0
+        && bearingAggregationLatencyMaxMs <= 0.0;
 }
 
 PipelineDiagnostics::PipelineDiagnostics(PipelineDiagnosticsConfig config)
@@ -91,6 +93,27 @@ void PipelineDiagnostics::recordSpectrumAggregation(
     m_counters.producedSpectrumSnapshots += producedSnapshots;
     m_counters.spectrumAggregationLatencyMaxMs =
         std::max(m_counters.spectrumAggregationLatencyMaxMs,
+                 static_cast<double>(aggregationLatency.count()));
+}
+
+void PipelineDiagnostics::recordBearingAggregation(
+    std::uint64_t completeCandidates,
+    std::uint64_t incompleteCandidates,
+    std::uint64_t missingBeam0Candidates,
+    std::uint64_t missingBeam1Candidates,
+    std::uint64_t producedSnapshots,
+    std::uint64_t producedEstimates,
+    std::chrono::milliseconds aggregationLatency)
+{
+    std::lock_guard lock(m_mutex);
+    m_counters.completeBearingCandidates += completeCandidates;
+    m_counters.incompleteBearingCandidates += incompleteCandidates;
+    m_counters.missingBeam0Candidates += missingBeam0Candidates;
+    m_counters.missingBeam1Candidates += missingBeam1Candidates;
+    m_counters.bearingSnapshotsProduced += producedSnapshots;
+    m_counters.bearingEstimatesProduced += producedEstimates;
+    m_counters.bearingAggregationLatencyMaxMs =
+        std::max(m_counters.bearingAggregationLatencyMaxMs,
                  static_cast<double>(aggregationLatency.count()));
 }
 
@@ -188,6 +211,25 @@ std::string PipelineDiagnostics::buildMessage(
     if (counters.spectrumAggregationLatencyMaxMs > 0.0) {
         stream << " spectrumAggregationLatencyMaxMs="
                << counters.spectrumAggregationLatencyMaxMs;
+    }
+    if (counters.completeBearingCandidates > 0) {
+        stream << " completeBearingCandidates=" << counters.completeBearingCandidates;
+    }
+    if (counters.missingBeam0Candidates > 0) {
+        stream << " missingBeam0Candidates=" << counters.missingBeam0Candidates;
+    }
+    if (counters.missingBeam1Candidates > 0) {
+        stream << " missingBeam1Candidates=" << counters.missingBeam1Candidates;
+    }
+    if (counters.bearingSnapshotsProduced > 0) {
+        stream << " bearingSnapshotsProduced=" << counters.bearingSnapshotsProduced;
+    }
+    if (counters.bearingEstimatesProduced > 0) {
+        stream << " bearingEstimatesProduced=" << counters.bearingEstimatesProduced;
+    }
+    if (counters.bearingAggregationLatencyMaxMs > 0.0) {
+        stream << " bearingAggregationLatencyMaxMs="
+               << counters.bearingAggregationLatencyMaxMs;
     }
     return stream.str();
 }

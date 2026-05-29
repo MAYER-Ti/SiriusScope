@@ -2,6 +2,7 @@
 
 #include "bearingframebus.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
+#include "pipeline/bearing_snapshot.h"
 #include "signalsamplebus.h"
 
 #include <QMetaObject>
@@ -22,6 +23,7 @@ namespace {
 
 constexpr double kMinScanSpeedDegPerSec = 1.0;
 constexpr double kMaxScanSpeedDegPerSec = 60.0;
+constexpr std::size_t kMaxStreamingBearingResults = 128;
 
 bool isActiveState(ScanController::ScanState state)
 {
@@ -514,6 +516,47 @@ void ScanController::updateAzimuth(const hardware::AntennaAzimuthSample& sample)
     }
 }
 
+void ScanController::acceptBearingSnapshotSummary(
+    std::shared_ptr<const pipeline::BearingSnapshot> snapshot)
+{
+    if (!snapshot || snapshot->sequenceId == m_lastBearingSnapshotSequenceId) {
+        return;
+    }
+    m_lastBearingSnapshotSequenceId = snapshot->sequenceId;
+
+    const bool acceptsSummaries =
+        m_state == ScanState::Scanning || m_state == ScanState::Completing;
+    if (!m_activeSession || !acceptsSummaries || snapshot->estimates.empty()) {
+        return;
+    }
+
+    bool changed = false;
+    for (const auto& estimate : snapshot->estimates) {
+        auto created = core::BearingResult::create(
+            estimate.sampleIndex,
+            estimate.resultUtcNs,
+            estimate.bandIndex,
+            estimate.bearingAzimuthDeg,
+            std::vector<std::int64_t>{estimate.frequencyHz},
+            estimate.quality);
+        if (!created) {
+            continue;
+        }
+
+        mergeBearingResult(std::move(*created.value()));
+        changed = true;
+    }
+
+    if (!changed) {
+        return;
+    }
+
+    rebuildBearingPresentation();
+    emit bearingResultsChanged();
+    emit bearingResultsCalculated(static_cast<qulonglong>(m_activeSession->id),
+                                  m_targetBearings);
+}
+
 void ScanController::beginSectorScan()
 {
     if (!m_activeSession || m_state != ScanState::MovingToStart || !m_antennaControl) {
@@ -661,7 +704,12 @@ void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
                     + std::to_string(frameCount));
     }
 
-    if (m_bearingService) {
+    if (!m_lastBearingResults.empty()) {
+        rebuildBearingPresentation();
+        publish(infrastructure::DiagnosticSeverity::Info,
+                "ScanController: bearing snapshot summaries accepted, results="
+                    + std::to_string(m_lastBearingResults.size()));
+    } else if (m_bearingService) {
         publish(infrastructure::DiagnosticSeverity::Info,
                 "ScanController: bearing calculation started");
         const auto calculation = m_bearingService->calculate(
@@ -720,7 +768,7 @@ void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
     setProgress(1.0);
     setState(ScanState::Completed);
 
-    if (frameCount == 0) {
+    if (frameCount == 0 && m_lastBearingResults.empty()) {
         publish(infrastructure::DiagnosticSeverity::Warning,
                 "ScanController: scan acquisition has no observations");
     }
@@ -847,8 +895,49 @@ void ScanController::onSignalSamples(std::vector<core::SignalSample> samples)
     m_collectedSignalSampleCount = m_signalParameterAccumulator.acceptedSampleCount();
 }
 
+void ScanController::mergeBearingResult(core::BearingResult result)
+{
+    const auto resultFrequency =
+        result.frequenciesHz.empty() ? 0 : result.frequenciesHz.front();
+    auto existing = std::find_if(
+        m_lastBearingResults.begin(),
+        m_lastBearingResults.end(),
+        [bandIndex = result.bandIndex, resultFrequency](const auto& current) {
+            return current.bandIndex == bandIndex && !current.frequenciesHz.empty()
+                && current.frequenciesHz.front() == resultFrequency;
+        });
+
+    if (existing == m_lastBearingResults.end()) {
+        m_lastBearingResults.push_back(std::move(result));
+    } else {
+        const double currentQuality = existing->quality.value_or(0.0);
+        const double newQuality = result.quality.value_or(0.0);
+        if (newQuality > currentQuality
+            || (std::abs(newQuality - currentQuality) <= 0.000001
+                && result.sampleIndex >= existing->sampleIndex)) {
+            *existing = std::move(result);
+        }
+    }
+
+    if (m_lastBearingResults.size() <= kMaxStreamingBearingResults) {
+        return;
+    }
+
+    std::sort(m_lastBearingResults.begin(), m_lastBearingResults.end(), [](const auto& lhs,
+                                                                           const auto& rhs) {
+        const double lhsQuality = lhs.quality.value_or(0.0);
+        const double rhsQuality = rhs.quality.value_or(0.0);
+        if (std::abs(lhsQuality - rhsQuality) > 0.000001) {
+            return lhsQuality > rhsQuality;
+        }
+        return lhs.sampleIndex > rhs.sampleIndex;
+    });
+    m_lastBearingResults.resize(kMaxStreamingBearingResults);
+}
+
 void ScanController::clearBearingResults()
 {
+    m_lastBearingSnapshotSequenceId = 0;
     if (m_lastBearingResults.empty() && m_targetBearings.empty()
         && m_targetAzimuthsDeg.empty()) {
         return;

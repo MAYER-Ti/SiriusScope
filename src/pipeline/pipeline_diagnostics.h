@@ -34,6 +34,12 @@ struct PipelineDiagnosticCounters
     std::uint64_t spectrumOutOfRangeSamples = 0;
     std::uint64_t producedSpectrumSnapshots = 0;
     double spectrumAggregationLatencyMaxMs = 0.0;
+    std::uint64_t completeBearingCandidates = 0;
+    std::uint64_t missingBeam0Candidates = 0;
+    std::uint64_t missingBeam1Candidates = 0;
+    std::uint64_t bearingSnapshotsProduced = 0;
+    std::uint64_t bearingEstimatesProduced = 0;
+    double bearingAggregationLatencyMaxMs = 0.0;
 
     bool empty() const noexcept;
 };
@@ -58,6 +64,13 @@ public:
                                    std::uint64_t outOfRangeSamples,
                                    std::uint64_t producedSnapshots,
                                    std::chrono::milliseconds aggregationLatency);
+    void recordBearingAggregation(std::uint64_t completeCandidates,
+                                  std::uint64_t incompleteCandidates,
+                                  std::uint64_t missingBeam0Candidates,
+                                  std::uint64_t missingBeam1Candidates,
+                                  std::uint64_t producedSnapshots,
+                                  std::uint64_t producedEstimates,
+                                  std::chrono::milliseconds aggregationLatency);
 
     PipelineDiagnosticCounters counters() const;
     bool publishIfDue(infrastructure::IDiagnosticsSink* sink, bool force = false);

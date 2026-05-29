@@ -43,7 +43,8 @@ std::unique_ptr<IBcoStreamSource> DataSourceFactory::createRealBcoStreamSourceSt
 std::unique_ptr<IBcoStreamSource>
 DataSourceFactory::createHighLoadSimulatorBcoStreamSource(
     const HardwareProfile& profile,
-    infrastructure::IDiagnosticsSink* diagnosticsSink)
+    infrastructure::IDiagnosticsSink* diagnosticsSink,
+    IAntennaAzimuthProvider* antennaAzimuthProvider)
 {
     if (profile.dataSourceMode != DataSourceMode::Simulator) {
         return nullptr;
@@ -51,7 +52,8 @@ DataSourceFactory::createHighLoadSimulatorBcoStreamSource(
 
     auto source = std::make_unique<HighLoadSimulatorBcoStreamSource>(
         profile.simulatorLoadConfig,
-        diagnosticsSink);
+        diagnosticsSink,
+        antennaAzimuthProvider);
     const auto configureResult = source->configure(profile.bcoStreamConfig);
     if (!configureResult) {
         return nullptr;

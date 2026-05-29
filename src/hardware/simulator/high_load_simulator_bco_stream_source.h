@@ -1,6 +1,8 @@
 #pragma once
 
 #include "hardware/hardware_profile.h"
+#include "hardware/interfaces/antenna_azimuth_provider.h"
+#include "hardware/simulator/simulator_radio_scene.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 
 #include <chrono>
@@ -19,7 +21,8 @@ class HighLoadSimulatorBcoStreamSource final : public IBcoStreamSource
 public:
     explicit HighLoadSimulatorBcoStreamSource(
         SimulatorBcoLoadConfig loadConfig = {},
-        infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr);
+        infrastructure::IDiagnosticsSink* diagnosticsSink = nullptr,
+        IAntennaAzimuthProvider* antennaAzimuthProvider = nullptr);
 
     ~HighLoadSimulatorBcoStreamSource() override;
 
@@ -30,6 +33,8 @@ public:
 
     void setPulseBandConfigs(std::vector<SimulatorPulseBandConfig> configs);
     std::vector<SimulatorPulseBandConfig> pulseBandConfigs() const;
+    void setRadioScene(SimulatorRadioScene scene);
+    SimulatorRadioScene radioScene() const;
 
 private:
     void generationLoop(SampleBlockCallback callback);
@@ -43,6 +48,8 @@ private:
 private:
     SimulatorBcoLoadConfig m_loadConfig;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
+    IAntennaAzimuthProvider* m_antennaAzimuthProvider = nullptr;
+    SimulatorRadioScene m_scene;
 
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;

@@ -41,6 +41,13 @@ class StatusModel final : public QObject
     Q_PROPERTY(qulonglong spectrumInvalidSamples READ spectrumInvalidSamples NOTIFY pipelineMetricsChanged)
     Q_PROPERTY(qulonglong spectrumOutOfRangeSamples READ spectrumOutOfRangeSamples NOTIFY pipelineMetricsChanged)
     Q_PROPERTY(double spectrumAggregationLatencyMaxMs READ spectrumAggregationLatencyMaxMs NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong producedBearingSnapshots READ producedBearingSnapshots NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong producedBearingEstimates READ producedBearingEstimates NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong completeBearingCandidates READ completeBearingCandidates NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong incompleteBearingCandidates READ incompleteBearingCandidates NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong missingBeam0Candidates READ missingBeam0Candidates NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(qulonglong missingBeam1Candidates READ missingBeam1Candidates NOTIFY pipelineMetricsChanged)
+    Q_PROPERTY(double bearingAggregationLatencyMaxMs READ bearingAggregationLatencyMaxMs NOTIFY pipelineMetricsChanged)
 
 public:
     enum class StatusLevel : int {
@@ -85,6 +92,19 @@ public:
     double spectrumAggregationLatencyMaxMs() const noexcept
     {
         return m_spectrumAggregationLatencyMaxMs;
+    }
+    qulonglong producedBearingSnapshots() const noexcept { return m_producedBearingSnapshots; }
+    qulonglong producedBearingEstimates() const noexcept { return m_producedBearingEstimates; }
+    qulonglong completeBearingCandidates() const noexcept { return m_completeBearingCandidates; }
+    qulonglong incompleteBearingCandidates() const noexcept
+    {
+        return m_incompleteBearingCandidates;
+    }
+    qulonglong missingBeam0Candidates() const noexcept { return m_missingBeam0Candidates; }
+    qulonglong missingBeam1Candidates() const noexcept { return m_missingBeam1Candidates; }
+    double bearingAggregationLatencyMaxMs() const noexcept
+    {
+        return m_bearingAggregationLatencyMaxMs;
     }
 
 signals:
@@ -155,6 +175,13 @@ private:
     qulonglong m_spectrumInvalidSamples = 0;
     qulonglong m_spectrumOutOfRangeSamples = 0;
     double m_spectrumAggregationLatencyMaxMs = 0.0;
+    qulonglong m_producedBearingSnapshots = 0;
+    qulonglong m_producedBearingEstimates = 0;
+    qulonglong m_completeBearingCandidates = 0;
+    qulonglong m_incompleteBearingCandidates = 0;
+    qulonglong m_missingBeam0Candidates = 0;
+    qulonglong m_missingBeam1Candidates = 0;
+    double m_bearingAggregationLatencyMaxMs = 0.0;
     bool m_programHasError = false;
 };
 

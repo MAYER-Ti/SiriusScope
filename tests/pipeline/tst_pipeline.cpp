@@ -1,4 +1,6 @@
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
+#include "hardware/interfaces/antenna_azimuth_provider.h"
+#include "pipeline/bearing_snapshot.h"
 #include "pipeline/bounded_block_queue.h"
 #include "pipeline/data_ingest_pipeline.h"
 #include "pipeline/pipeline_diagnostics.h"
@@ -13,6 +15,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <iostream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -52,12 +55,37 @@ public:
     std::vector<infrastructure::DiagnosticEvent> events;
 };
 
+class FakeAntennaAzimuthProvider final : public hardware::IAntennaAzimuthProvider
+{
+public:
+    explicit FakeAntennaAzimuthProvider(double azimuthDeg)
+        : m_azimuthDeg(azimuthDeg)
+    {
+    }
+
+    double currentAzimuthDeg() const override { return m_azimuthDeg; }
+
+private:
+    double m_azimuthDeg = 0.0;
+};
+
 core::BandConfig makeBand(int bandIndex = 0)
 {
+    constexpr std::int64_t centersHz[] = {
+        3'000'000'000LL,
+        5'795'000'000LL,
+        8'250'000'000LL,
+        9'550'000'000LL,
+        14'250'000'000LL,
+    };
+    const auto centerHz = bandIndex >= 0
+            && static_cast<std::size_t>(bandIndex) < std::size(centersHz)
+        ? centersHz[static_cast<std::size_t>(bandIndex)]
+        : 3'000'000'000LL + static_cast<std::int64_t>(bandIndex) * 500'000'000LL;
     const auto created = core::BandConfig::create(
         bandIndex,
-        3'000'000'000LL + static_cast<std::int64_t>(bandIndex) * 100'000'000LL,
-        100'000'000LL);
+        centerHz,
+        500'000'000LL);
     return *created.value();
 }
 
@@ -145,16 +173,21 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
         pipeline::PipelineDiagnosticsConfig{std::chrono::milliseconds{1}, "ProcessingEngine"});
     pipeline::SnapshotExchange<pipeline::WaterfallSnapshot> waterfallSnapshots;
     pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
     pipeline::ProcessingEngine engine(&queue,
                                       &metrics,
                                       &diagnostics,
                                       &waterfallSnapshots,
                                       {},
-                                      &spectrumSnapshots);
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots);
 
     const auto started = engine.start();
     auto block = pool.acquire();
-    block->reset(pipeline::SignalBlockMetadata{0, 10, 10, std::chrono::steady_clock::now()});
+    pipeline::SignalBlockMetadata metadata{0, 10, 11, std::chrono::steady_clock::now()};
+    metadata.antennaAzimuthDeg = 45.0;
+    block->reset(metadata);
     const std::vector<core::SignalSample> samples{
         makeSample(band, 10, 0, 40),
         makeSample(band, 10, 1, 90),
@@ -167,6 +200,7 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     const auto summary = engine.lastSummary();
     const auto waterfallSnapshot = waterfallSnapshots.latest();
     const auto spectrumSnapshot = spectrumSnapshots.latest();
+    const auto bearingSnapshot = bearingSnapshots.latest();
     const auto metricsSnapshot = metrics.snapshot(queue.metrics(), pool.counters());
     engine.stop();
 
@@ -181,12 +215,20 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
                  "processing engine publishes waterfall snapshot after flush");
     test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
                  "processing engine publishes spectrum snapshot after flush");
+    test.require(bearingSnapshot && !bearingSnapshot->estimates.empty(),
+                 "processing engine publishes bearing snapshot after flush");
     test.require(metricsSnapshot.producedWaterfallRows > 0,
                  "pipeline metrics count produced waterfall rows");
     test.require(metricsSnapshot.producedWaterfallSnapshots > 0,
                  "pipeline metrics count produced waterfall snapshots");
     test.require(metricsSnapshot.producedSpectrumSnapshots > 0,
                  "pipeline metrics count produced spectrum snapshots");
+    test.require(metricsSnapshot.producedBearingSnapshots > 0,
+                 "pipeline metrics count produced bearing snapshots");
+    test.require(metricsSnapshot.producedBearingEstimates > 0,
+                 "pipeline metrics count produced bearing estimates");
+    test.require(metricsSnapshot.completeBearingCandidates > 0,
+                 "pipeline metrics count complete bearing candidates");
     test.require(spectrumSnapshot
                      && metricsSnapshot.latestSpectrumSnapshotSequence
                          == spectrumSnapshot->sequenceId,
@@ -239,7 +281,8 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
 
     hardware::SimulatorBcoLoadConfig loadConfig;
     loadConfig.profile = hardware::SimulatorLoadProfile::RealBcoEquivalent;
-    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig, &diagnostics);
+    FakeAntennaAzimuthProvider antenna(45.0);
+    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig, &diagnostics, &antenna);
     const auto configured = source.configure(makeStreamConfig());
     const auto pipelineStarted = dataPipeline.start();
 
@@ -255,6 +298,7 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
         metadata.firstSampleIndex = block->stats.firstSampleIndex;
         metadata.lastSampleIndex = block->stats.lastSampleIndex;
         metadata.producedAt = block->stats.producedAt;
+        metadata.antennaAzimuthDeg = block->stats.antennaAzimuthDeg;
         dataPipeline.ingestSamples(block->samples, metadata);
 
         {
@@ -275,6 +319,7 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
     const auto summary = dataPipeline.lastSummary();
     const auto waterfallSnapshot = dataPipeline.latestWaterfallSnapshot();
     const auto spectrumSnapshot = dataPipeline.latestSpectrumSnapshot();
+    const auto bearingSnapshot = dataPipeline.latestBearingSnapshot();
     dataPipeline.stop();
 
     test.require(configured.success, "high-load simulator accepts stream config");
@@ -289,10 +334,16 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
                  "data ingest pipeline publishes waterfall snapshot");
     test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
                  "data ingest pipeline publishes spectrum snapshot");
+    test.require(bearingSnapshot && !bearingSnapshot->estimates.empty(),
+                 "data ingest pipeline publishes bearing snapshot");
     test.require(summary.metrics.producedWaterfallSnapshots > 0,
                  "data ingest metrics count produced waterfall snapshots");
     test.require(summary.metrics.producedSpectrumSnapshots > 0,
                  "data ingest metrics count produced spectrum snapshots");
+    test.require(summary.metrics.producedBearingSnapshots > 0,
+                 "data ingest metrics count produced bearing snapshots");
+    test.require(summary.metrics.producedBearingEstimates > 0,
+                 "data ingest metrics count produced bearing estimates");
 }
 
 } // namespace
