@@ -4,10 +4,14 @@
 #include "pipeline/bounded_block_queue.h"
 #include "pipeline/pipeline_diagnostics.h"
 #include "pipeline/pipeline_metrics.h"
+#include "pipeline/snapshot_exchange.h"
+#include "pipeline/waterfall_aggregator.h"
+#include "pipeline/waterfall_snapshot.h"
 
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -37,7 +41,9 @@ class ProcessingEngine
 public:
     ProcessingEngine(BoundedBlockQueue* queue,
                      PipelineMetrics* metrics,
-                     PipelineDiagnostics* diagnostics = nullptr);
+                     PipelineDiagnostics* diagnostics = nullptr,
+                     SnapshotExchange<WaterfallSnapshot>* waterfallSnapshots = nullptr,
+                     WaterfallAggregatorConfig waterfallConfig = {});
     ~ProcessingEngine();
 
     ProcessingEngine(const ProcessingEngine&) = delete;
@@ -48,19 +54,26 @@ public:
     core::OperationResult flush(std::chrono::milliseconds timeout);
     ProcessingEngineSummary lastSummary() const;
     bool running() const noexcept;
+    void setWaterfallConfig(WaterfallAggregatorConfig config);
 
 private:
     void workerLoop();
     void processBlock(const SignalBlock& block);
+    void publishWaterfallRows(WaterfallAggregationResult result,
+                              std::chrono::milliseconds aggregationLatency);
+    void flushWaterfallRows();
 
     BoundedBlockQueue* m_queue = nullptr;
     PipelineMetrics* m_metrics = nullptr;
     PipelineDiagnostics* m_diagnostics = nullptr;
+    SnapshotExchange<WaterfallSnapshot>* m_waterfallSnapshots = nullptr;
 
     mutable std::mutex m_mutex;
+    mutable std::mutex m_waterfallMutex;
     std::condition_variable m_flushCondition;
     std::thread m_worker;
     ProcessingEngineSummary m_summary;
+    WaterfallAggregator m_waterfallAggregator;
     bool m_running = false;
     bool m_processingBlock = false;
 };

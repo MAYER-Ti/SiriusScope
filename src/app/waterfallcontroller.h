@@ -38,6 +38,8 @@ struct WaterfallControllerConfig
     int renderBinCount = 1024;
     int visibleRowCount = 360;
     int sourceFlushIntervalMs = 1000;
+    int snapshotPollIntervalMs = 33;
+    qint64 rowPeriodMs = 20;
     std::size_t maxQueuedBatches = 32;
 };
 
@@ -105,6 +107,7 @@ public:
     void setAcceptingLiveSamples(bool accepting);
     void clearQueuedBatches();
     void setBandConfigs(std::vector<core::BandConfig> bandConfigs);
+    void setWaterfallTimeBase(core::TimeBase timeBase);
     core::OperationResult flushProcessing(std::chrono::milliseconds timeout) override;
     void flushProcessingAsync(std::chrono::milliseconds timeout,
                               FlushCallback callback) override;
@@ -128,6 +131,7 @@ signals:
 private slots:
     void onViewportChanged(double minHz, double maxHz, const QString& sourceTag);
     void commitViewport();
+    void pollWaterfallSnapshot();
 
 private:
     struct HistoryLoadRequest
@@ -163,6 +167,8 @@ private:
                                    const QString& previousUtcText,
                                    bool viewportDidChange);
     void appendRenderRow(WaterfallRenderBufferAdapterResult result);
+    void configureDataPlaneWaterfall(core::TimeBase timeBase);
+    core::TimeBase fallbackWaterfallTimeBase() const;
     bool selectLatestSession();
     bool switchToSession(const WaterfallSessionMetadata& metadata,
                          WaterfallTimelineViewport::Mode mode);
@@ -185,8 +191,11 @@ private:
     WaterfallSessionId m_activeSessionId;
     WaterfallControllerConfig m_controllerConfig;
     QTimer m_retuneTimer;
+    QTimer m_snapshotTimer;
+    std::optional<core::TimeBase> m_waterfallTimeBase;
     qulonglong m_timeTicksVersion = 0;
     uint64_t m_generationId = 0;
+    std::uint64_t m_lastWaterfallSnapshotSequenceId = 0;
     double m_viewMinHz = 0.0;
     double m_viewMaxHz = 0.0;
     double m_sourceMinHz = 300e6;

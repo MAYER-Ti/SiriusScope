@@ -145,6 +145,18 @@ The current `WaterfallController` path is a transition/MVP implementation. It ca
 while the high-load data plane is introduced, but it is not the production owner of
 high-load processing.
 
+Current v1 implementation:
+
+- `ProcessingEngine` feeds `WaterfallAggregator` with `SignalBlock` data.
+- `WaterfallAggregator` builds rows by fixed time buckets (`rowPeriodNs`) and fixed
+  frequency bins, with separate beam 0 / beam 1 peak amplitudes.
+- `WaterfallSnapshot` is immutable after publication and is handed to the Qt layer by a
+  latest-value `SnapshotExchange`.
+- `WaterfallController` polls snapshots at a bounded UI cadence and adapts aggregated
+  rows to the existing render buffer/session row format.
+- Raw `SignalSample` vectors still do not enter Qt, QML, `SignalSampleBus`,
+  `BearingFrameBus`, or `ScanController` in the production high-load bootstrap.
+
 ## 7. Spectrum Aggregation
 
 The spectrum path must consume aggregated or downsampled information from the data plane.

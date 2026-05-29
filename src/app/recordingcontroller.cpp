@@ -178,6 +178,7 @@ core::OperationResult RecordingController::startRecordingCommand()
     }
 
     resetSpectrumEnvelope();
+    m_waterfallController->setWaterfallTimeBase(timeBase);
     m_waterfallController->startRecording();
     const auto sourceStarted = m_waterfallController->startLiveSource();
     if (!sourceStarted) {

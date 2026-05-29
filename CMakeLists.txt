@@ -133,6 +133,11 @@ set(SIRIUSSCOPE_PIPELINE_SOURCES
     src/pipeline/signal_block.cpp
     src/pipeline/signal_block_pool.h
     src/pipeline/signal_block_pool.cpp
+    src/pipeline/snapshot_exchange.h
+    src/pipeline/waterfall_aggregator.h
+    src/pipeline/waterfall_aggregator.cpp
+    src/pipeline/waterfall_snapshot.h
+    src/pipeline/waterfall_snapshot.cpp
 )
 
 set(SIRIUSSCOPE_HARDWARE_INTERFACE_SOURCES

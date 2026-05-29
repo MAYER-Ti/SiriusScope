@@ -1,5 +1,7 @@
 #include "waterfallrenderbufferadapter.h"
 
+#include "waterfallrowresampler.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -114,6 +116,52 @@ WaterfallRenderBufferAdapterResult WaterfallRenderBufferAdapter::adaptFrame(
     if (hasSampleIndex) {
         result.row.firstSampleIndex = firstSampleIndex;
         result.row.lastSampleIndex = lastSampleIndex;
+    }
+
+    return result;
+}
+
+WaterfallRenderBufferAdapterResult WaterfallRenderBufferAdapter::adaptSnapshotRow(
+    const pipeline::WaterfallSnapshot& snapshot,
+    const pipeline::WaterfallSnapshotRow& sourceRow,
+    double viewMinHz,
+    double viewMaxHz,
+    int binCount)
+{
+    WaterfallRenderBufferAdapterResult result;
+    result.row.utcMs = static_cast<qint64>(sourceRow.utcNs / 1'000'000);
+    result.row.firstSampleIndex = sourceRow.firstSampleIndex;
+    result.row.lastSampleIndex = sourceRow.lastSampleIndex;
+    result.row.viewMinHz = static_cast<double>(snapshot.sourceMinHz);
+    result.row.viewMaxHz = static_cast<double>(snapshot.sourceMaxHz);
+    result.row.bins = QVector<WaterfallBeamBin>(std::max(0, snapshot.renderBinCount),
+                                                WaterfallBeamBin{});
+
+    const int sourceBinCount =
+        std::min(static_cast<int>(result.row.bins.size()),
+                 static_cast<int>(sourceRow.cells.size()));
+    for (int index = 0; index < sourceBinCount; ++index) {
+        const auto& cell = sourceRow.cells[static_cast<std::size_t>(index)];
+        auto& bin = result.row.bins[index];
+        bin.left = domainAmplitude(cell.beam0Peak);
+        bin.right = domainAmplitude(cell.beam1Peak);
+        result.hasVisibleCells = result.hasVisibleCells || bin.left > 0 || bin.right > 0;
+    }
+
+    if (binCount != result.row.bins.size()
+        || viewMinHz != result.row.viewMinHz
+        || viewMaxHz != result.row.viewMaxHz) {
+        result.row.bins = WaterfallRowResampler::resample(result.row,
+                                                          viewMinHz,
+                                                          viewMaxHz,
+                                                          binCount);
+        result.row.viewMinHz = viewMinHz;
+        result.row.viewMaxHz = viewMaxHz;
+        result.hasVisibleCells = std::any_of(result.row.bins.cbegin(),
+                                             result.row.bins.cend(),
+                                             [](const auto& bin) {
+                                                 return bin.left > 0 || bin.right > 0;
+                                             });
     }
 
     return result;

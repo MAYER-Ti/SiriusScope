@@ -21,6 +21,12 @@ namespace {
 constexpr int kRetuneDelayMs = 160;
 constexpr int kRowsPerWheelStep = 5;
 
+std::int64_t nowUtcNs()
+{
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+}
+
 QString utcText(qint64 utcMs)
 {
     if (utcMs <= 0) {
@@ -100,6 +106,13 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
     m_retuneTimer.setInterval(kRetuneDelayMs);
     m_retuneTimer.setSingleShot(true);
     connect(&m_retuneTimer, &QTimer::timeout, this, &WaterfallController::commitViewport);
+
+    m_snapshotTimer.setInterval(std::max(1, m_controllerConfig.snapshotPollIntervalMs));
+    connect(&m_snapshotTimer,
+            &QTimer::timeout,
+            this,
+            &WaterfallController::pollWaterfallSnapshot);
+    configureDataPlaneWaterfall(fallbackWaterfallTimeBase());
 }
 
 WaterfallController::~WaterfallController()
@@ -151,10 +164,14 @@ QString WaterfallController::viewportModeText() const
 void WaterfallController::start()
 {
     startWorkers();
+    if (!m_snapshotTimer.isActive()) {
+        m_snapshotTimer.start();
+    }
 }
 
 void WaterfallController::stop()
 {
+    m_snapshotTimer.stop();
     stopLiveSource();
     stopWorkers();
 }
@@ -251,6 +268,12 @@ void WaterfallController::setBandConfigs(std::vector<core::BandConfig> bandConfi
     m_bandConfigs = std::move(bandConfigs);
 }
 
+void WaterfallController::setWaterfallTimeBase(core::TimeBase timeBase)
+{
+    m_waterfallTimeBase = timeBase;
+    configureDataPlaneWaterfall(timeBase);
+}
+
 core::OperationResult WaterfallController::flushProcessing(std::chrono::milliseconds timeout)
 {
     if (timeout.count() < 0) {
@@ -260,7 +283,11 @@ core::OperationResult WaterfallController::flushProcessing(std::chrono::millisec
         return core::OperationResult::ok();
     }
 
-    return m_dataIngestPipeline->flushProcessing(timeout);
+    const auto result = m_dataIngestPipeline->flushProcessing(timeout);
+    if (result) {
+        pollWaterfallSnapshot();
+    }
+    return result;
 }
 
 void WaterfallController::flushProcessingAsync(std::chrono::milliseconds timeout,
@@ -471,18 +498,23 @@ void WaterfallController::startRecording()
 
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
-    const qint64 nowUtcMs = QDateTime::currentMSecsSinceEpoch();
+    if (!m_waterfallTimeBase) {
+        setWaterfallTimeBase(fallbackWaterfallTimeBase());
+    }
+    const qint64 nowUtcMs = static_cast<qint64>(
+        m_waterfallTimeBase->recordingStartUtcNs / 1'000'000);
 
     WaterfallSessionMetadata metadata;
     metadata.id = WaterfallSessionId{QStringLiteral("session-%1").arg(nowUtcMs)};
     metadata.startUtcMs = nowUtcMs;
     metadata.endUtcMs = nowUtcMs;
-    metadata.rowPeriodMs = std::max<qint64>(1, m_controllerConfig.sourceFlushIntervalMs);
+    metadata.rowPeriodMs = std::max<qint64>(1, m_controllerConfig.rowPeriodMs);
     metadata.binCount = m_controllerConfig.renderBinCount;
     metadata.bandCount = static_cast<int>(m_bandConfigs.size());
     metadata.beamCount = 2;
     metadata.sourceName = QStringLiteral("BCO");
 
+    m_lastWaterfallSnapshotSequenceId = 0;
     metadata = m_sessionStorage->startSession(metadata);
     m_activeSessionId = metadata.id;
     m_sessionActive = true;
@@ -513,6 +545,7 @@ void WaterfallController::stopRecording()
     clearQueuedBatches();
     m_sessionStorage->closeSession(m_activeSessionId, endUtcMs);
     m_sessionActive = false;
+    m_waterfallTimeBase.reset();
     m_timelineViewport.setMode(WaterfallTimelineViewport::Mode::History);
 
     emit recordingStateChanged();
@@ -530,6 +563,29 @@ void WaterfallController::commitViewport()
     ++m_generationId;
     m_retuning = false;
     updateRenderBuffer();
+}
+
+void WaterfallController::pollWaterfallSnapshot()
+{
+    if (!m_sessionActive || !m_dataIngestPipeline) {
+        return;
+    }
+
+    const auto snapshot = m_dataIngestPipeline->latestWaterfallSnapshot();
+    if (!snapshot || snapshot->sequenceId <= m_lastWaterfallSnapshotSequenceId) {
+        return;
+    }
+    m_lastWaterfallSnapshotSequenceId = snapshot->sequenceId;
+
+    for (const auto& row : snapshot->rows) {
+        auto adapted = WaterfallRenderBufferAdapter::adaptSnapshotRow(
+            *snapshot,
+            row,
+            static_cast<double>(snapshot->sourceMinHz),
+            static_cast<double>(snapshot->sourceMaxHz),
+            m_controllerConfig.renderBinCount);
+        appendRenderRow(std::move(adapted));
+    }
 }
 
 void WaterfallController::enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block)
@@ -668,6 +724,35 @@ void WaterfallController::appendRenderRow(WaterfallRenderBufferAdapterResult res
     }
 
     notifyPresentationChanged(previousLiveMode, previousUtcText, isLive);
+}
+
+void WaterfallController::configureDataPlaneWaterfall(core::TimeBase timeBase)
+{
+    if (!m_dataIngestPipeline) {
+        return;
+    }
+
+    pipeline::WaterfallAggregatorConfig config;
+    config.renderBinCount = m_controllerConfig.renderBinCount;
+    config.sourceMinHz = static_cast<std::int64_t>(m_sourceMinHz);
+    config.sourceMaxHz = static_cast<std::int64_t>(m_sourceMaxHz);
+    config.rowPeriodNs =
+        static_cast<std::uint64_t>(std::max<qint64>(1, m_controllerConfig.rowPeriodMs))
+        * 1'000'000ULL;
+    config.amplitudeFloor = 0;
+    config.timeBase = timeBase;
+    m_dataIngestPipeline->configureWaterfall(config);
+}
+
+core::TimeBase WaterfallController::fallbackWaterfallTimeBase() const
+{
+    const auto created = core::TimeBase::create(nowUtcNs(),
+                                                0,
+                                                core::DomainConstraints::defaultSamplePeriodNs);
+    if (created) {
+        return *created.value();
+    }
+    return core::TimeBase{};
 }
 
 bool WaterfallController::selectLatestSession()

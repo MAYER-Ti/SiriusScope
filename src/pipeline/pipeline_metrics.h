@@ -25,6 +25,12 @@ struct PipelineMetricsSnapshot
     double storageLatencyMaxMs = 0.0;
     double guiSnapshotFps = 0.0;
     double maxBlockAgeMs = 0.0;
+    std::uint64_t producedWaterfallRows = 0;
+    std::uint64_t producedWaterfallSnapshots = 0;
+    double aggregationLatencyMaxMs = 0.0;
+    std::uint64_t waterfallInvalidFrequencySamples = 0;
+    std::uint64_t waterfallOutOfRangeSamples = 0;
+    std::uint64_t waterfallEmptyBlocks = 0;
     std::size_t queueDepth = 0;
     std::size_t queueCapacity = 0;
     std::uint64_t queuePushedBlocks = 0;
@@ -49,6 +55,12 @@ public:
     void recordProcessedBlock(std::size_t sampleCount,
                               std::chrono::milliseconds blockAge,
                               std::chrono::milliseconds processingLatency);
+    void recordWaterfallAggregation(std::uint64_t producedRows,
+                                    std::uint64_t producedSnapshots,
+                                    std::uint64_t invalidFrequencySamples,
+                                    std::uint64_t outOfRangeSamples,
+                                    std::uint64_t emptyBlocks,
+                                    std::chrono::milliseconds aggregationLatency);
 
     PipelineMetricsSnapshot snapshot(const BoundedBlockQueueMetrics& queueMetrics,
                                      const SignalBlockPoolCounters& poolCounters) const;
@@ -64,8 +76,14 @@ private:
     std::uint64_t m_processedSamples = 0;
     std::uint64_t m_droppedBlocks = 0;
     std::uint64_t m_droppedSamples = 0;
+    std::uint64_t m_producedWaterfallRows = 0;
+    std::uint64_t m_producedWaterfallSnapshots = 0;
+    std::uint64_t m_waterfallInvalidFrequencySamples = 0;
+    std::uint64_t m_waterfallOutOfRangeSamples = 0;
+    std::uint64_t m_waterfallEmptyBlocks = 0;
     std::chrono::milliseconds m_rxLatencyMax{0};
     std::chrono::milliseconds m_processingLatencyMax{0};
+    std::chrono::milliseconds m_aggregationLatencyMax{0};
     std::chrono::milliseconds m_maxBlockAge{0};
 };
 

@@ -24,6 +24,12 @@ struct PipelineDiagnosticCounters
     std::uint64_t droppedSamples = 0;
     std::uint64_t queueOverflows = 0;
     double processingLatencyMaxMs = 0.0;
+    std::uint64_t invalidFrequencySamples = 0;
+    std::uint64_t outOfRangeSamples = 0;
+    std::uint64_t emptyBlocks = 0;
+    std::uint64_t producedRows = 0;
+    std::uint64_t producedSnapshots = 0;
+    double aggregationLatencyMaxMs = 0.0;
 
     bool empty() const noexcept;
 };
@@ -38,6 +44,12 @@ public:
     void recordDroppedBlock(std::uint64_t sampleCount);
     void recordQueueOverflow();
     void recordProcessingLatency(std::chrono::milliseconds latency);
+    void recordWaterfallAggregation(std::uint64_t invalidFrequencySamples,
+                                    std::uint64_t outOfRangeSamples,
+                                    std::uint64_t emptyBlocks,
+                                    std::uint64_t producedRows,
+                                    std::uint64_t producedSnapshots,
+                                    std::chrono::milliseconds aggregationLatency);
 
     PipelineDiagnosticCounters counters() const;
     bool publishIfDue(infrastructure::IDiagnosticsSink* sink, bool force = false);

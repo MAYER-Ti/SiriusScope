@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pipeline/waterfall_snapshot.h"
 #include "processing/sample_processor.h"
 #include "waterfallstorage.h"
 
@@ -23,6 +24,12 @@ public:
         qint64 utcMs,
         double sourceMinHz,
         double sourceMaxHz,
+        int binCount);
+    static WaterfallRenderBufferAdapterResult adaptSnapshotRow(
+        const pipeline::WaterfallSnapshot& snapshot,
+        const pipeline::WaterfallSnapshotRow& row,
+        double viewMinHz,
+        double viewMaxHz,
         int binCount);
 };
 

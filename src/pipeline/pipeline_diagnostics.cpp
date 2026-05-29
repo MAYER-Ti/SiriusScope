@@ -9,7 +9,8 @@ bool PipelineDiagnosticCounters::empty() const noexcept
 {
     return incompleteBearingCandidates == 0 && missingBeam0 == 0 && missingBeam1 == 0
         && droppedBlocks == 0 && droppedSamples == 0 && queueOverflows == 0
-        && processingLatencyMaxMs <= 0.0;
+        && processingLatencyMaxMs <= 0.0 && invalidFrequencySamples == 0
+        && outOfRangeSamples == 0 && emptyBlocks == 0 && aggregationLatencyMaxMs <= 0.0;
 }
 
 PipelineDiagnostics::PipelineDiagnostics(PipelineDiagnosticsConfig config)
@@ -55,6 +56,25 @@ void PipelineDiagnostics::recordProcessingLatency(std::chrono::milliseconds late
     std::lock_guard lock(m_mutex);
     m_counters.processingLatencyMaxMs =
         std::max(m_counters.processingLatencyMaxMs, static_cast<double>(latency.count()));
+}
+
+void PipelineDiagnostics::recordWaterfallAggregation(
+    std::uint64_t invalidFrequencySamples,
+    std::uint64_t outOfRangeSamples,
+    std::uint64_t emptyBlocks,
+    std::uint64_t producedRows,
+    std::uint64_t producedSnapshots,
+    std::chrono::milliseconds aggregationLatency)
+{
+    std::lock_guard lock(m_mutex);
+    m_counters.invalidFrequencySamples += invalidFrequencySamples;
+    m_counters.outOfRangeSamples += outOfRangeSamples;
+    m_counters.emptyBlocks += emptyBlocks;
+    m_counters.producedRows += producedRows;
+    m_counters.producedSnapshots += producedSnapshots;
+    m_counters.aggregationLatencyMaxMs =
+        std::max(m_counters.aggregationLatencyMaxMs,
+                 static_cast<double>(aggregationLatency.count()));
 }
 
 PipelineDiagnosticCounters PipelineDiagnostics::counters() const
@@ -120,6 +140,24 @@ std::string PipelineDiagnostics::buildMessage(
     }
     if (counters.processingLatencyMaxMs > 0.0) {
         stream << " processingLatencyMaxMs=" << counters.processingLatencyMaxMs;
+    }
+    if (counters.invalidFrequencySamples > 0) {
+        stream << " invalidFrequencySamples=" << counters.invalidFrequencySamples;
+    }
+    if (counters.outOfRangeSamples > 0) {
+        stream << " outOfRangeSamples=" << counters.outOfRangeSamples;
+    }
+    if (counters.emptyBlocks > 0) {
+        stream << " emptyBlocks=" << counters.emptyBlocks;
+    }
+    if (counters.producedRows > 0) {
+        stream << " producedRows=" << counters.producedRows;
+    }
+    if (counters.producedSnapshots > 0) {
+        stream << " producedSnapshots=" << counters.producedSnapshots;
+    }
+    if (counters.aggregationLatencyMaxMs > 0.0) {
+        stream << " aggregationLatencyMaxMs=" << counters.aggregationLatencyMaxMs;
     }
     return stream.str();
 }

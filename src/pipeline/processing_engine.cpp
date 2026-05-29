@@ -9,10 +9,14 @@ namespace siriusscope::pipeline {
 
 ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
                                    PipelineMetrics* metrics,
-                                   PipelineDiagnostics* diagnostics)
+                                   PipelineDiagnostics* diagnostics,
+                                   SnapshotExchange<WaterfallSnapshot>* waterfallSnapshots,
+                                   WaterfallAggregatorConfig waterfallConfig)
     : m_queue(queue)
     , m_metrics(metrics)
     , m_diagnostics(diagnostics)
+    , m_waterfallSnapshots(waterfallSnapshots)
+    , m_waterfallAggregator(std::move(waterfallConfig))
 {
 }
 
@@ -34,6 +38,10 @@ core::OperationResult ProcessingEngine::start()
     m_running = true;
     m_processingBlock = false;
     m_summary = {};
+    {
+        std::lock_guard waterfallLock(m_waterfallMutex);
+        m_waterfallAggregator.reset();
+    }
     m_worker = std::thread(&ProcessingEngine::workerLoop, this);
     return core::OperationResult::ok();
 }
@@ -57,6 +65,8 @@ void ProcessingEngine::stop()
         m_worker.join();
     }
 
+    flushWaterfallRows();
+
     {
         std::lock_guard lock(m_mutex);
         m_processingBlock = false;
@@ -70,18 +80,22 @@ core::OperationResult ProcessingEngine::flush(std::chrono::milliseconds timeout)
         return core::OperationResult::failure("processing flush timeout is invalid");
     }
 
-    std::unique_lock lock(m_mutex);
-    const auto isDrained = [this] {
-        return (!m_queue || m_queue->metrics().depth == 0) && !m_processingBlock;
-    };
+    bool completed = false;
+    {
+        std::unique_lock lock(m_mutex);
+        const auto isDrained = [this] {
+            return (!m_queue || m_queue->metrics().depth == 0) && !m_processingBlock;
+        };
 
-    if (isDrained()) {
-        return core::OperationResult::ok();
+        completed = isDrained() || m_flushCondition.wait_for(lock, timeout, isDrained);
     }
 
-    const bool completed = m_flushCondition.wait_for(lock, timeout, isDrained);
-    return completed ? core::OperationResult::ok()
-                     : core::OperationResult::failure("processing flush timed out");
+    if (!completed) {
+        return core::OperationResult::failure("processing flush timed out");
+    }
+
+    flushWaterfallRows();
+    return core::OperationResult::ok();
 }
 
 ProcessingEngineSummary ProcessingEngine::lastSummary() const
@@ -94,6 +108,12 @@ bool ProcessingEngine::running() const noexcept
 {
     std::lock_guard lock(m_mutex);
     return m_running;
+}
+
+void ProcessingEngine::setWaterfallConfig(WaterfallAggregatorConfig config)
+{
+    std::lock_guard lock(m_waterfallMutex);
+    m_waterfallAggregator.setConfig(std::move(config));
 }
 
 void ProcessingEngine::workerLoop()
@@ -157,6 +177,16 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
         summary.maxAmplitude = std::max(summary.maxAmplitude, sample.amplitude);
     }
 
+    WaterfallAggregationResult waterfallResult;
+    const auto aggregationStartedAt = std::chrono::steady_clock::now();
+    {
+        std::lock_guard waterfallLock(m_waterfallMutex);
+        waterfallResult = m_waterfallAggregator.consume(block);
+    }
+    const auto aggregationLatency =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - aggregationStartedAt);
+
     const auto finishedAt = std::chrono::steady_clock::now();
     const auto processingLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(finishedAt - startedAt);
@@ -166,6 +196,7 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
     if (m_diagnostics) {
         m_diagnostics->recordProcessingLatency(processingLatency);
     }
+    publishWaterfallRows(std::move(waterfallResult), aggregationLatency);
 
     std::lock_guard lock(m_mutex);
     ++m_summary.processedBlocks;
@@ -197,6 +228,56 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             found->maxAmplitude = std::max(found->maxAmplitude, value.maxAmplitude);
         }
     }
+}
+
+void ProcessingEngine::publishWaterfallRows(WaterfallAggregationResult result,
+                                            std::chrono::milliseconds aggregationLatency)
+{
+    std::uint64_t producedSnapshots = 0;
+    std::shared_ptr<const WaterfallSnapshot> snapshot;
+    if (!result.rows.empty()) {
+        std::lock_guard waterfallLock(m_waterfallMutex);
+        snapshot = m_waterfallAggregator.makeSnapshot(std::move(result.rows));
+    }
+
+    if (snapshot) {
+        producedSnapshots = 1;
+        if (m_waterfallSnapshots) {
+            m_waterfallSnapshots->publish(snapshot);
+        }
+    }
+
+    if (m_metrics) {
+        m_metrics->recordWaterfallAggregation(result.deltaCounters.producedRows,
+                                              producedSnapshots,
+                                              result.deltaCounters.invalidFrequencySamples,
+                                              result.deltaCounters.outOfRangeSamples,
+                                              result.deltaCounters.emptyBlocks,
+                                              aggregationLatency);
+    }
+    if (m_diagnostics) {
+        m_diagnostics->recordWaterfallAggregation(
+            result.deltaCounters.invalidFrequencySamples,
+            result.deltaCounters.outOfRangeSamples,
+            result.deltaCounters.emptyBlocks,
+            result.deltaCounters.producedRows,
+            producedSnapshots,
+            aggregationLatency);
+    }
+}
+
+void ProcessingEngine::flushWaterfallRows()
+{
+    WaterfallAggregationResult result;
+    const auto aggregationStartedAt = std::chrono::steady_clock::now();
+    {
+        std::lock_guard waterfallLock(m_waterfallMutex);
+        result = m_waterfallAggregator.flush();
+    }
+    const auto aggregationLatency =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - aggregationStartedAt);
+    publishWaterfallRows(std::move(result), aggregationLatency);
 }
 
 } // namespace siriusscope::pipeline

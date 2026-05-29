@@ -14,7 +14,7 @@ DataIngestPipeline::DataIngestPipeline(DataIngestPipelineConfig config,
           m_config.diagnosticsPublishInterval,
           "DataIngestPipeline",
       })
-    , m_engine(&m_queue, &m_metrics, &m_diagnostics)
+    , m_engine(&m_queue, &m_metrics, &m_diagnostics, &m_waterfallSnapshots, m_config.waterfall)
 {
 }
 
@@ -31,6 +31,7 @@ core::OperationResult DataIngestPipeline::start()
 
     m_queue.reset();
     m_metrics.reset();
+    m_waterfallSnapshots.reset();
     m_accepting.store(m_config.acceptingOnStart, std::memory_order_release);
     const auto started = m_engine.start();
     if (!started) {
@@ -130,6 +131,18 @@ ProcessingEngineSummary DataIngestPipeline::lastSummary() const
     auto summary = m_engine.lastSummary();
     summary.metrics = metricsSnapshot();
     return summary;
+}
+
+std::shared_ptr<const WaterfallSnapshot> DataIngestPipeline::latestWaterfallSnapshot() const
+{
+    return m_waterfallSnapshots.latest();
+}
+
+void DataIngestPipeline::configureWaterfall(WaterfallAggregatorConfig config)
+{
+    m_config.waterfall = config;
+    m_waterfallSnapshots.reset();
+    m_engine.setWaterfallConfig(std::move(config));
 }
 
 void DataIngestPipeline::clearQueuedBlocks()

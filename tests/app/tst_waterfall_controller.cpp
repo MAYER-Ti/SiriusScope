@@ -318,7 +318,7 @@ void testSourceBlocksGoToDataPlane(TestRunner& test)
     test.require(summary.processedSamples == 2, "data plane counts source samples");
 }
 
-void testSourceBlocksDoNotUpdateWaterfallRingBuffer(TestRunner& test)
+void testSourceBlocksUpdateWaterfallRingBufferThroughSnapshots(TestRunner& test)
 {
     FrequencyViewportModel viewport;
     FakeBcoStreamSource source;
@@ -353,13 +353,15 @@ void testSourceBlocksDoNotUpdateWaterfallRingBuffer(TestRunner& test)
     source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
                                 makeSample(bands, 1, 0, 1, 40)}));
     controller.flushProcessing(std::chrono::milliseconds{1500});
-    processEventsFor(80);
+    const bool snapshotApplied = waitUntil([&] {
+        return buffer && buffer->writeIndex() > initialWriteIndex;
+    });
 
     test.require(buffer != nullptr, "controller exposes a waterfall ring buffer");
-    test.require(buffer && buffer->writeIndex() == initialWriteIndex,
-                 "high-load source block does not append legacy live waterfall rows");
-    test.require(storage.rowCount(storage.latestSession()->id) == 0,
-                 "high-load source block does not write legacy waterfall rows");
+    test.require(snapshotApplied,
+                 "high-load source block appends waterfall rows through snapshot handoff");
+    test.require(storage.rowCount(storage.latestSession()->id) == 1,
+                 "snapshot row is stored as aggregated waterfall row");
 }
 
 void testHighLoadPathDoesNotPublishRawBuses(TestRunner& test)
@@ -502,7 +504,7 @@ int main(int argc, char *argv[])
     testStopLiveSourceStopsStreamSource(test);
     testNullStreamSourceReturnsFailure(test);
     testSourceBlocksGoToDataPlane(test);
-    testSourceBlocksDoNotUpdateWaterfallRingBuffer(test);
+    testSourceBlocksUpdateWaterfallRingBufferThroughSnapshots(test);
     testHighLoadPathDoesNotPublishRawBuses(test);
     testHighLoadPathDoesNotCopyBlocksToSpectrumWorker(test);
     testStopRecordingFreezesDataPlaneAcceptance(test);

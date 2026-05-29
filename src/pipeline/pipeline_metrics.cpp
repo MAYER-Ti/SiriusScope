@@ -16,8 +16,14 @@ void PipelineMetrics::reset()
     m_processedSamples = 0;
     m_droppedBlocks = 0;
     m_droppedSamples = 0;
+    m_producedWaterfallRows = 0;
+    m_producedWaterfallSnapshots = 0;
+    m_waterfallInvalidFrequencySamples = 0;
+    m_waterfallOutOfRangeSamples = 0;
+    m_waterfallEmptyBlocks = 0;
     m_rxLatencyMax = std::chrono::milliseconds{0};
     m_processingLatencyMax = std::chrono::milliseconds{0};
+    m_aggregationLatencyMax = std::chrono::milliseconds{0};
     m_maxBlockAge = std::chrono::milliseconds{0};
 }
 
@@ -53,6 +59,23 @@ void PipelineMetrics::recordProcessedBlock(std::size_t sampleCount,
     m_processingLatencyMax = std::max(m_processingLatencyMax, processingLatency);
 }
 
+void PipelineMetrics::recordWaterfallAggregation(
+    std::uint64_t producedRows,
+    std::uint64_t producedSnapshots,
+    std::uint64_t invalidFrequencySamples,
+    std::uint64_t outOfRangeSamples,
+    std::uint64_t emptyBlocks,
+    std::chrono::milliseconds aggregationLatency)
+{
+    std::lock_guard lock(m_mutex);
+    m_producedWaterfallRows += producedRows;
+    m_producedWaterfallSnapshots += producedSnapshots;
+    m_waterfallInvalidFrequencySamples += invalidFrequencySamples;
+    m_waterfallOutOfRangeSamples += outOfRangeSamples;
+    m_waterfallEmptyBlocks += emptyBlocks;
+    m_aggregationLatencyMax = std::max(m_aggregationLatencyMax, aggregationLatency);
+}
+
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters) const
@@ -76,6 +99,12 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.rxLatencyMaxMs = static_cast<double>(m_rxLatencyMax.count());
     snapshot.processingLatencyMaxMs = static_cast<double>(m_processingLatencyMax.count());
     snapshot.maxBlockAgeMs = static_cast<double>(m_maxBlockAge.count());
+    snapshot.producedWaterfallRows = m_producedWaterfallRows;
+    snapshot.producedWaterfallSnapshots = m_producedWaterfallSnapshots;
+    snapshot.aggregationLatencyMaxMs = static_cast<double>(m_aggregationLatencyMax.count());
+    snapshot.waterfallInvalidFrequencySamples = m_waterfallInvalidFrequencySamples;
+    snapshot.waterfallOutOfRangeSamples = m_waterfallOutOfRangeSamples;
+    snapshot.waterfallEmptyBlocks = m_waterfallEmptyBlocks;
     snapshot.queueDepth = queueMetrics.depth;
     snapshot.queueCapacity = queueMetrics.capacity;
     snapshot.queuePushedBlocks = queueMetrics.pushedBlocks;

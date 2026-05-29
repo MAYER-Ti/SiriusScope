@@ -8,10 +8,13 @@
 #include "pipeline/pipeline_metrics.h"
 #include "pipeline/processing_engine.h"
 #include "pipeline/signal_block_pool.h"
+#include "pipeline/snapshot_exchange.h"
+#include "pipeline/waterfall_snapshot.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <span>
 
 namespace siriusscope::pipeline {
@@ -22,6 +25,7 @@ struct DataIngestPipelineConfig
     std::size_t queueCapacity = 64;
     std::chrono::milliseconds diagnosticsPublishInterval{1000};
     bool acceptingOnStart = false;
+    WaterfallAggregatorConfig waterfall;
 };
 
 class DataIngestPipeline
@@ -46,6 +50,8 @@ public:
     core::OperationResult flushProcessing(std::chrono::milliseconds timeout);
     PipelineMetricsSnapshot metricsSnapshot() const;
     ProcessingEngineSummary lastSummary() const;
+    std::shared_ptr<const WaterfallSnapshot> latestWaterfallSnapshot() const;
+    void configureWaterfall(WaterfallAggregatorConfig config);
     void clearQueuedBlocks();
 
 private:
@@ -57,6 +63,7 @@ private:
     BoundedBlockQueue m_queue;
     PipelineMetrics m_metrics;
     PipelineDiagnostics m_diagnostics;
+    SnapshotExchange<WaterfallSnapshot> m_waterfallSnapshots;
     ProcessingEngine m_engine;
     std::atomic_bool m_accepting{false};
     std::atomic_bool m_running{false};

@@ -81,6 +81,22 @@ target_include_directories(tst_pipeline
 
 add_test(NAME tst_pipeline COMMAND tst_pipeline)
 
+add_executable(tst_waterfall_aggregator
+    pipeline/tst_waterfall_aggregator.cpp
+)
+
+target_link_libraries(tst_waterfall_aggregator
+    PRIVATE
+        siriusscope_pipeline
+)
+
+target_include_directories(tst_waterfall_aggregator
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_waterfall_aggregator COMMAND tst_waterfall_aggregator)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )
