@@ -166,6 +166,16 @@ pipeline::DataIngestPipelineConfig makePipelineConfig()
     };
 }
 
+app::WaterfallControllerConfig makeLiveGapControllerConfig(int visibleRowCount = 10)
+{
+    app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = visibleRowCount;
+    config.rowPeriodMs = 20;
+    config.maxWaterfallRowsPerUiTick = 256;
+    return config;
+}
+
 bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500)
 {
     QElapsedTimer timer;
@@ -199,6 +209,51 @@ double maxEnvelopeSample(const app::SpectrumEnvelopeController& controller)
         maxValue = std::max(maxValue, sample.toDouble());
     }
     return maxValue;
+}
+
+void startLiveWaterfall(app::WaterfallController& controller,
+                        FakeBcoStreamSource& source)
+{
+    controller.start();
+    controller.setWaterfallTimeBase(core::TimeBase{1'000'000'000, 0, 1'000'000});
+    controller.startRecording();
+    controller.startLiveSource();
+    waitUntil([&controller] {
+        return !controller.historyLoading();
+    });
+}
+
+void emitWaterfallRows(FakeBcoStreamSource& source,
+                       const std::vector<core::BandConfig>& bands,
+                       const std::vector<std::pair<std::uint64_t, int>>& rows)
+{
+    std::vector<core::SignalSample> samples;
+    samples.reserve(rows.size() * 2);
+    for (const auto& [sampleIndex, amplitude] : rows) {
+        samples.push_back(makeSample(bands, sampleIndex, 0, 0, amplitude));
+        samples.push_back(makeSample(bands, sampleIndex, 0, 1, std::max(1, amplitude / 2)));
+    }
+    source.emitBlock(makeBlock(std::move(samples)));
+}
+
+QVector<WaterfallBeamBin> copyBufferLine(WaterfallRingBuffer* buffer, int row)
+{
+    if (!buffer) {
+        return {};
+    }
+
+    QVector<WaterfallBeamBin> line(buffer->nbins());
+    if (!buffer->copyLine(row, line.data(), line.size())) {
+        return {};
+    }
+    return line;
+}
+
+bool lineHasSignal(const QVector<WaterfallBeamBin>& line)
+{
+    return std::any_of(line.cbegin(), line.cend(), [](const auto& bin) {
+        return bin.left > 0 || bin.right > 0;
+    });
 }
 
 void testStartLiveSourceStartsStreamSource(TestRunner& test)
@@ -397,6 +452,173 @@ void testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(TestRunner& test
     }
 }
 
+void testLiveInsertsEmptyRowsForTimeGaps(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
+    const auto bands = makeBandConfigs();
+    const auto config = makeLiveGapControllerConfig();
+
+    app::WaterfallController controller(&viewport,
+                                        &source,
+                                        bands,
+                                        &storage,
+                                        &diagnostics,
+                                        config,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        &dataPipeline);
+
+    startLiveWaterfall(controller, source);
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const auto initialWriteIndex = buffer ? buffer->writeIndex() : 0;
+
+    emitWaterfallRows(source, bands, {{0, 90}, {100, 70}});
+    const auto flushed = controller.flushProcessing(std::chrono::milliseconds{1500});
+    const bool rowsApplied = waitUntil([&] {
+        return buffer && buffer->writeIndex() >= initialWriteIndex + 6;
+    });
+
+    test.require(flushed.success, "live gap test flush succeeds");
+    test.require(buffer != nullptr, "live gap test has ring buffer");
+    test.require(rowsApplied, "live gap rows are inserted into ring buffer");
+    test.require(buffer && buffer->populatedRows() >= 6,
+                 "live gap rows populate visible waterfall slots");
+
+    if (buffer && rowsApplied) {
+        test.require(lineHasSignal(copyBufferLine(buffer, 0)),
+                     "newest live row remains at the top after gap filling");
+        for (int row = 1; row <= 4; ++row) {
+            test.require(!lineHasSignal(copyBufferLine(buffer, row)),
+                         "missing live time slot is rendered as an empty row");
+        }
+        test.require(lineHasSignal(copyBufferLine(buffer, 5)),
+                     "previous live row remains below inserted gap rows");
+    }
+}
+
+void testLiveAdjacentRowsDoNotInsertGaps(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
+    const auto bands = makeBandConfigs();
+    const auto config = makeLiveGapControllerConfig();
+
+    app::WaterfallController controller(&viewport,
+                                        &source,
+                                        bands,
+                                        &storage,
+                                        &diagnostics,
+                                        config,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        &dataPipeline);
+
+    startLiveWaterfall(controller, source);
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const auto initialWriteIndex = buffer ? buffer->writeIndex() : 0;
+
+    emitWaterfallRows(source, bands, {{0, 90}, {20, 70}});
+    const auto flushed = controller.flushProcessing(std::chrono::milliseconds{1500});
+    const bool rowsApplied = waitUntil([&] {
+        return buffer && buffer->writeIndex() >= initialWriteIndex + 2;
+    });
+
+    test.require(flushed.success, "adjacent live row flush succeeds");
+    test.require(rowsApplied, "adjacent live rows reach ring buffer");
+    test.require(buffer && buffer->writeIndex() == initialWriteIndex + 2,
+                 "adjacent live rows advance ring buffer by real row count only");
+}
+
+void testLiveGapRowsAreNotStored(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
+    const auto bands = makeBandConfigs();
+    const auto config = makeLiveGapControllerConfig();
+
+    app::WaterfallController controller(&viewport,
+                                        &source,
+                                        bands,
+                                        &storage,
+                                        &diagnostics,
+                                        config,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        &dataPipeline);
+
+    startLiveWaterfall(controller, source);
+    emitWaterfallRows(source, bands, {{0, 90}, {100, 70}});
+    controller.flushProcessing(std::chrono::milliseconds{1500});
+
+    const auto latestSession = storage.latestSession();
+    const auto storedRows = latestSession
+        ? storage.loadRows(latestSession->id, 0, std::numeric_limits<qint64>::max(), 10)
+        : QVector<WaterfallRow>{};
+
+    test.require(latestSession.has_value(), "live gap storage test creates a session");
+    test.require(latestSession && storage.rowCount(latestSession->id) == 2,
+                 "storage keeps only real waterfall rows across a live gap");
+    test.require(storedRows.size() == 2
+                     && storedRows[0].utcMs == 1000
+                     && storedRows[1].utcMs == 1100,
+                 "stored live gap rows keep original utc timing without artificial rows");
+}
+
+void testHugeLiveGapIsClamped(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
+    const auto bands = makeBandConfigs();
+    const auto config = makeLiveGapControllerConfig(10);
+
+    app::WaterfallController controller(&viewport,
+                                        &source,
+                                        bands,
+                                        &storage,
+                                        &diagnostics,
+                                        config,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        &dataPipeline);
+
+    startLiveWaterfall(controller, source);
+    auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
+    const auto initialWriteIndex = buffer ? buffer->writeIndex() : 0;
+    const auto maxExpectedAdvance =
+        buffer ? static_cast<std::uint64_t>(buffer->height() + 1) : 0;
+
+    emitWaterfallRows(source, bands, {{0, 90}, {100000, 70}});
+    const auto flushed = controller.flushProcessing(std::chrono::milliseconds{1500});
+    const bool rowsApplied = waitUntil([&] {
+        return buffer && buffer->writeIndex() >= initialWriteIndex + maxExpectedAdvance;
+    });
+    const auto latestSession = storage.latestSession();
+
+    test.require(flushed.success, "huge live gap flush succeeds");
+    test.require(rowsApplied, "huge live gap is rendered without an unbounded loop");
+    test.require(buffer && buffer->writeIndex() == initialWriteIndex + maxExpectedAdvance,
+                 "huge live gap insertion is clamped to ring buffer height");
+    test.require(latestSession && storage.rowCount(latestSession->id) == 2,
+                 "huge live gap does not create artificial stored rows");
+}
+
 void testHighLoadPathDoesNotPublishRawBuses(TestRunner& test)
 {
     FrequencyViewportModel viewport;
@@ -538,6 +760,10 @@ int main(int argc, char *argv[])
     testNullStreamSourceReturnsFailure(test);
     testSourceBlocksGoToDataPlane(test);
     testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(test);
+    testLiveInsertsEmptyRowsForTimeGaps(test);
+    testLiveAdjacentRowsDoNotInsertGaps(test);
+    testLiveGapRowsAreNotStored(test);
+    testHugeLiveGapIsClamped(test);
     testHighLoadPathDoesNotPublishRawBuses(test);
     testHighLoadPathDoesNotCopyBlocksToSpectrumWorker(test);
     testStopRecordingFreezesDataPlaneAcceptance(test);

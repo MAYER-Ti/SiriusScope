@@ -168,6 +168,9 @@ private:
                                    const QString& previousUtcText,
                                    bool viewportDidChange);
     void appendRenderRow(WaterfallRenderBufferAdapterResult result);
+    void resetLiveRowTimeState() noexcept;
+    WaterfallRow makeEmptyLiveRow(qint64 utcMs, const WaterfallRow& referenceRow) const;
+    bool pushLiveRowToRingBuffer(const WaterfallRow& row);
     void configureDataPlaneWaterfall(core::TimeBase timeBase);
     core::TimeBase fallbackWaterfallTimeBase() const;
     bool selectLatestSession();
@@ -194,6 +197,7 @@ private:
     QTimer m_retuneTimer;
     QTimer m_snapshotTimer;
     std::optional<core::TimeBase> m_waterfallTimeBase;
+    std::optional<qint64> m_lastLiveRowUtcMs;
     qulonglong m_timeTicksVersion = 0;
     uint64_t m_generationId = 0;
     double m_viewMinHz = 0.0;

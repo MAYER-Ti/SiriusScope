@@ -258,6 +258,7 @@ void WaterfallController::setAcceptingLiveSamples(bool accepting)
 
 void WaterfallController::clearQueuedBatches()
 {
+    resetLiveRowTimeState();
     if (m_dataIngestPipeline) {
         m_dataIngestPipeline->clearQueuedBlocks();
     }
@@ -486,6 +487,7 @@ void WaterfallController::jumpToLive()
         return;
     }
 
+    resetLiveRowTimeState();
     updateRenderBuffer();
     notifyPresentationChanged(previousLiveMode, previousUtcText, true);
 }
@@ -498,6 +500,7 @@ void WaterfallController::startRecording()
 
     const bool previousLiveMode = liveMode();
     const QString previousUtcText = currentUtcText();
+    resetLiveRowTimeState();
     if (!m_waterfallTimeBase) {
         setWaterfallTimeBase(fallbackWaterfallTimeBase());
     }
@@ -545,6 +548,7 @@ void WaterfallController::stopRecording()
     m_sessionStorage->closeSession(m_activeSessionId, endUtcMs);
     m_sessionActive = false;
     m_waterfallTimeBase.reset();
+    resetLiveRowTimeState();
     m_timelineViewport.setMode(WaterfallTimelineViewport::Mode::History);
 
     emit recordingStateChanged();
@@ -637,6 +641,8 @@ void WaterfallController::updateRenderBuffer()
         return;
     }
 
+    resetLiveRowTimeState();
+
     if (!m_sessionStorage || !m_timelineViewport.hasSession()) {
         m_ringBuffer->replaceSlots(QVector<WaterfallRowSlot>(m_timelineViewport.visibleRowCount()),
                                    ++m_generationId);
@@ -702,11 +708,28 @@ void WaterfallController::appendRenderRow(WaterfallRenderBufferAdapterResult res
     if (isLive && m_ringBuffer) {
         m_timelineViewport.jumpToLive(result.row.utcMs);
 
-        const int rowBinCount = static_cast<int>(result.row.bins.size());
-        if (!result.row.bins.isEmpty() && rowBinCount == m_ringBuffer->nbins()) {
-            m_ringBuffer->pushLine(result.row.bins.constData(),
-                                   rowBinCount,
-                                   ++m_generationId);
+        bool pushedLiveRows = true;
+        const qint64 rowPeriodMs = std::max<qint64>(1, m_timelineViewport.rowPeriodMs());
+        if (m_lastLiveRowUtcMs && result.row.utcMs > *m_lastLiveRowUtcMs) {
+            const qint64 deltaMs = result.row.utcMs - *m_lastLiveRowUtcMs;
+            qint64 missingRows = deltaMs / rowPeriodMs - 1;
+            const qint64 maxGapRows =
+                std::max<qint64>(0, static_cast<qint64>(m_ringBuffer->height()) - 1);
+            missingRows = std::clamp<qint64>(missingRows, 0, maxGapRows);
+
+            for (qint64 i = missingRows; i > 0; --i) {
+                const qint64 emptyUtcMs = result.row.utcMs - i * rowPeriodMs;
+                if (!pushLiveRowToRingBuffer(makeEmptyLiveRow(emptyUtcMs, result.row))) {
+                    pushedLiveRows = false;
+                    break;
+                }
+            }
+        }
+
+        if (pushedLiveRows && pushLiveRowToRingBuffer(result.row)) {
+            if (!m_lastLiveRowUtcMs || result.row.utcMs > *m_lastLiveRowUtcMs) {
+                m_lastLiveRowUtcMs = result.row.utcMs;
+            }
             ++m_timeTicksVersion;
             emit timeTicksChanged();
 
@@ -723,6 +746,43 @@ void WaterfallController::appendRenderRow(WaterfallRenderBufferAdapterResult res
     }
 
     notifyPresentationChanged(previousLiveMode, previousUtcText, isLive);
+}
+
+void WaterfallController::resetLiveRowTimeState() noexcept
+{
+    m_lastLiveRowUtcMs.reset();
+}
+
+WaterfallRow WaterfallController::makeEmptyLiveRow(qint64 utcMs,
+                                                   const WaterfallRow& referenceRow) const
+{
+    WaterfallRow row;
+    row.sessionId = referenceRow.sessionId;
+    row.utcMs = utcMs;
+    row.firstSampleIndex = 0;
+    row.lastSampleIndex = 0;
+    row.viewMinHz = referenceRow.viewMinHz;
+    row.viewMaxHz = referenceRow.viewMaxHz;
+    const int binCount = m_ringBuffer
+        ? m_ringBuffer->nbins()
+        : static_cast<int>(referenceRow.bins.size());
+    row.bins = QVector<WaterfallBeamBin>(std::max(0, binCount), WaterfallBeamBin{});
+    return row;
+}
+
+bool WaterfallController::pushLiveRowToRingBuffer(const WaterfallRow& row)
+{
+    if (!m_ringBuffer || m_ringBuffer->height() <= 0 || row.bins.isEmpty()) {
+        return false;
+    }
+
+    const int rowBinCount = static_cast<int>(row.bins.size());
+    if (rowBinCount != m_ringBuffer->nbins()) {
+        return false;
+    }
+
+    m_ringBuffer->pushLine(row.bins.constData(), rowBinCount, ++m_generationId);
+    return true;
 }
 
 void WaterfallController::configureDataPlaneWaterfall(core::TimeBase timeBase)
