@@ -34,6 +34,7 @@ Before changing code, read this file first.
 
 Then read only the documents relevant to the task:
 
+- `docs/dev_plan.md` - development plane;
 - `docs/README.md` - documentation map;
 - `docs/spec/scope.md` - current scope;
 - `docs/spec/glossary.md` - domain terms;
