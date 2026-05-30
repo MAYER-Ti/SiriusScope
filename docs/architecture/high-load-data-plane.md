@@ -150,12 +150,22 @@ Current v1 implementation:
 - `ProcessingEngine` feeds `WaterfallAggregator` with `SignalBlock` data.
 - `WaterfallAggregator` builds rows by fixed time buckets (`rowPeriodNs`) and fixed
   frequency bins, with separate beam 0 / beam 1 peak amplitudes.
-- `WaterfallSnapshot` is immutable after publication and is handed to the Qt layer by a
-  latest-value `SnapshotExchange`.
-- `WaterfallController` polls snapshots at a bounded UI cadence and adapts aggregated
-  rows to the existing render buffer/session row format.
+- Waterfall delivery uses a bounded FIFO `WaterfallRowQueue`, because waterfall is a
+  time line and intermediate rows must not be silently replaced by a latest-only value.
+- `ProcessingEngine` pushes every produced row into the queue with original `utcNs`,
+  `firstSampleIndex`, `lastSampleIndex`, `rowPeriodNs`, and source/view frequency
+  metadata. The UI must not synthesize row time on this path.
+- `WaterfallController` drains rows at a bounded UI cadence and adapts aggregated rows to
+  the existing render buffer/session row format in queue order.
+- Queue overload is explicit: dropped rows are counted in metrics and summarized by
+  rate-limited diagnostics. There is no silent latest-only row loss.
 - Raw `SignalSample` vectors still do not enter Qt, QML, `SignalSampleBus`,
   `BearingFrameBus`, or `ScanController` in the production high-load bootstrap.
+
+`SpectrumSnapshot` and `BearingSnapshot` remain latest-value exchanges. They represent
+current summaries where dropping intermediate UI states is acceptable. Waterfall rows are
+different: they are timeline data and must be drained or dropped with explicit overload
+accounting.
 
 ## 7. Spectrum Aggregation
 
@@ -293,6 +303,8 @@ Required pipeline metrics:
 - processed MB/s;
 - dropped blocks;
 - queue depth per stage;
+- produced/queued/drained/dropped waterfall rows;
+- waterfall row queue depth and capacity;
 - RX latency;
 - DSP latency;
 - storage latency;

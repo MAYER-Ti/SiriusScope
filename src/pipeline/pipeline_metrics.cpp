@@ -128,7 +128,8 @@ void PipelineMetrics::recordBearingAggregation(
 
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
-    const SignalBlockPoolCounters& poolCounters) const
+    const SignalBlockPoolCounters& poolCounters,
+    const WaterfallRowQueueMetrics& waterfallRowMetrics) const
 {
     std::lock_guard lock(m_mutex);
     const auto elapsedSeconds =
@@ -151,6 +152,12 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.maxBlockAgeMs = static_cast<double>(m_maxBlockAge.count());
     snapshot.producedWaterfallRows = m_producedWaterfallRows;
     snapshot.producedWaterfallSnapshots = m_producedWaterfallSnapshots;
+    snapshot.waterfallQueuedRows = waterfallRowMetrics.pushedRows;
+    snapshot.waterfallDrainedRows = waterfallRowMetrics.drainedRows;
+    snapshot.waterfallDroppedRows = waterfallRowMetrics.droppedRows;
+    snapshot.waterfallRowQueueDepth = waterfallRowMetrics.depth;
+    snapshot.waterfallRowQueueCapacity = waterfallRowMetrics.capacity;
+    snapshot.latestWaterfallRowSequenceId = waterfallRowMetrics.latestRowSequenceId;
     snapshot.aggregationLatencyMaxMs = static_cast<double>(m_aggregationLatencyMax.count());
     snapshot.waterfallInvalidFrequencySamples = m_waterfallInvalidFrequencySamples;
     snapshot.waterfallOutOfRangeSamples = m_waterfallOutOfRangeSamples;

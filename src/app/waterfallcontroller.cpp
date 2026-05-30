@@ -111,7 +111,7 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
     connect(&m_snapshotTimer,
             &QTimer::timeout,
             this,
-            &WaterfallController::pollWaterfallSnapshot);
+            &WaterfallController::pollWaterfallRows);
     configureDataPlaneWaterfall(fallbackWaterfallTimeBase());
 }
 
@@ -285,7 +285,7 @@ core::OperationResult WaterfallController::flushProcessing(std::chrono::millisec
 
     const auto result = m_dataIngestPipeline->flushProcessing(timeout);
     if (result) {
-        pollWaterfallSnapshot();
+        pollWaterfallRows();
     }
     return result;
 }
@@ -514,7 +514,6 @@ void WaterfallController::startRecording()
     metadata.beamCount = 2;
     metadata.sourceName = QStringLiteral("BCO");
 
-    m_lastWaterfallSnapshotSequenceId = 0;
     metadata = m_sessionStorage->startSession(metadata);
     m_activeSessionId = metadata.id;
     m_sessionActive = true;
@@ -565,24 +564,23 @@ void WaterfallController::commitViewport()
     updateRenderBuffer();
 }
 
-void WaterfallController::pollWaterfallSnapshot()
+void WaterfallController::pollWaterfallRows()
 {
     if (!m_sessionActive || !m_dataIngestPipeline) {
         return;
     }
 
-    const auto snapshot = m_dataIngestPipeline->latestWaterfallSnapshot();
-    if (!snapshot || snapshot->sequenceId <= m_lastWaterfallSnapshotSequenceId) {
+    const auto rows = m_dataIngestPipeline->drainWaterfallRows(
+        m_controllerConfig.maxWaterfallRowsPerUiTick);
+    if (rows.empty()) {
         return;
     }
-    m_lastWaterfallSnapshotSequenceId = snapshot->sequenceId;
 
-    for (const auto& row : snapshot->rows) {
-        auto adapted = WaterfallRenderBufferAdapter::adaptSnapshotRow(
-            *snapshot,
+    for (const auto& row : rows) {
+        auto adapted = WaterfallRenderBufferAdapter::adaptQueuedRow(
             row,
-            static_cast<double>(snapshot->sourceMinHz),
-            static_cast<double>(snapshot->sourceMaxHz),
+            m_viewMinHz,
+            m_viewMaxHz,
             m_controllerConfig.renderBinCount);
         appendRenderRow(std::move(adapted));
     }

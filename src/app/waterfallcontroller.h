@@ -41,6 +41,7 @@ struct WaterfallControllerConfig
     int snapshotPollIntervalMs = 33;
     qint64 rowPeriodMs = 20;
     std::size_t maxQueuedBatches = 32;
+    std::size_t maxWaterfallRowsPerUiTick = 256;
 };
 
 class WaterfallController final : public QObject, public IProcessingFlushControl
@@ -131,7 +132,7 @@ signals:
 private slots:
     void onViewportChanged(double minHz, double maxHz, const QString& sourceTag);
     void commitViewport();
-    void pollWaterfallSnapshot();
+    void pollWaterfallRows();
 
 private:
     struct HistoryLoadRequest
@@ -195,7 +196,6 @@ private:
     std::optional<core::TimeBase> m_waterfallTimeBase;
     qulonglong m_timeTicksVersion = 0;
     uint64_t m_generationId = 0;
-    std::uint64_t m_lastWaterfallSnapshotSequenceId = 0;
     double m_viewMinHz = 0.0;
     double m_viewMaxHz = 0.0;
     double m_sourceMinHz = 300e6;

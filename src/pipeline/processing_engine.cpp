@@ -10,7 +10,7 @@ namespace siriusscope::pipeline {
 ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
                                    PipelineMetrics* metrics,
                                    PipelineDiagnostics* diagnostics,
-                                   SnapshotExchange<WaterfallSnapshot>* waterfallSnapshots,
+                                   WaterfallRowQueue* waterfallRows,
                                    WaterfallAggregatorConfig waterfallConfig,
                                    SnapshotExchange<SpectrumSnapshot>* spectrumSnapshots,
                                    SpectrumAggregatorConfig spectrumConfig,
@@ -19,7 +19,7 @@ ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
     : m_queue(queue)
     , m_metrics(metrics)
     , m_diagnostics(diagnostics)
-    , m_waterfallSnapshots(waterfallSnapshots)
+    , m_waterfallRows(waterfallRows)
     , m_spectrumSnapshots(spectrumSnapshots)
     , m_bearingSnapshots(bearingSnapshots)
     , m_waterfallAggregator(std::move(waterfallConfig))
@@ -46,9 +46,11 @@ core::OperationResult ProcessingEngine::start()
     m_running = true;
     m_processingBlock = false;
     m_summary = {};
+    m_completedQueuePops = 0;
     {
         std::lock_guard waterfallLock(m_waterfallMutex);
         m_waterfallAggregator.reset();
+        m_nextWaterfallSourceSnapshotSequenceId = 1;
     }
     {
         std::lock_guard spectrumLock(m_spectrumMutex);
@@ -99,10 +101,13 @@ core::OperationResult ProcessingEngine::flush(std::chrono::milliseconds timeout)
     }
 
     bool completed = false;
+    const auto targetCompletedQueuePops = m_queue ? m_queue->metrics().pushedBlocks : 0;
     {
         std::unique_lock lock(m_mutex);
-        const auto isDrained = [this] {
-            return (!m_queue || m_queue->metrics().depth == 0) && !m_processingBlock;
+        const auto isDrained = [this, targetCompletedQueuePops] {
+            return (!m_queue || m_queue->metrics().depth == 0)
+                && m_completedQueuePops >= targetCompletedQueuePops
+                && !m_processingBlock;
         };
 
         completed = isDrained() || m_flushCondition.wait_for(lock, timeout, isDrained);
@@ -134,6 +139,7 @@ void ProcessingEngine::setWaterfallConfig(WaterfallAggregatorConfig config)
 {
     std::lock_guard lock(m_waterfallMutex);
     m_waterfallAggregator.setConfig(std::move(config));
+    m_nextWaterfallSourceSnapshotSequenceId = 1;
 }
 
 void ProcessingEngine::setSpectrumConfig(SpectrumAggregatorConfig config)
@@ -167,6 +173,7 @@ void ProcessingEngine::workerLoop()
         {
             std::lock_guard lock(m_mutex);
             m_processingBlock = false;
+            ++m_completedQueuePops;
         }
         m_flushCondition.notify_all();
     }
@@ -210,10 +217,12 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
     }
 
     WaterfallAggregationResult waterfallResult;
+    WaterfallAggregatorConfig waterfallConfig;
     const auto waterfallAggregationStartedAt = std::chrono::steady_clock::now();
     {
         std::lock_guard waterfallLock(m_waterfallMutex);
         waterfallResult = m_waterfallAggregator.consume(block);
+        waterfallConfig = m_waterfallAggregator.config();
     }
     const auto waterfallAggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -248,7 +257,9 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
     if (m_diagnostics) {
         m_diagnostics->recordProcessingLatency(processingLatency);
     }
-    publishWaterfallRows(std::move(waterfallResult), waterfallAggregationLatency);
+    publishWaterfallRows(std::move(waterfallResult),
+                         std::move(waterfallConfig),
+                         waterfallAggregationLatency);
     publishSpectrumSnapshots(std::move(spectrumResult), spectrumAggregationLatency);
     publishBearingSnapshots(std::move(bearingResult), bearingAggregationLatency);
 
@@ -285,22 +296,33 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
 }
 
 void ProcessingEngine::publishWaterfallRows(WaterfallAggregationResult result,
+                                            WaterfallAggregatorConfig config,
                                             std::chrono::milliseconds aggregationLatency)
 {
-    std::uint64_t producedSnapshots = 0;
-    std::shared_ptr<const WaterfallSnapshot> snapshot;
-    if (!result.rows.empty()) {
-        std::lock_guard waterfallLock(m_waterfallMutex);
-        snapshot = m_waterfallAggregator.makeSnapshot(std::move(result.rows));
-    }
-
-    if (snapshot) {
-        producedSnapshots = 1;
-        if (m_waterfallSnapshots) {
-            m_waterfallSnapshots->publish(snapshot);
+    WaterfallRowQueuePushResult pushResult;
+    const bool hasRows = !result.rows.empty();
+    if (hasRows && m_waterfallRows) {
+        std::uint64_t sourceSnapshotSequenceId = 0;
+        {
+            std::lock_guard waterfallLock(m_waterfallMutex);
+            sourceSnapshotSequenceId = m_nextWaterfallSourceSnapshotSequenceId++;
         }
+
+        WaterfallRowBatchMetadata metadata;
+        metadata.sourceSnapshotSequenceId = sourceSnapshotSequenceId;
+        metadata.sourceMinHz = config.sourceMinHz;
+        metadata.sourceMaxHz = config.sourceMaxHz;
+        metadata.viewMinHz = static_cast<double>(config.sourceMinHz);
+        metadata.viewMaxHz = static_cast<double>(config.sourceMaxHz);
+        metadata.renderBinCount = config.renderBinCount;
+        metadata.rowPeriodNs = config.rowPeriodNs;
+        pushResult = m_waterfallRows->pushRows(std::move(result.rows), metadata);
+    } else if (hasRows) {
+        std::lock_guard waterfallLock(m_waterfallMutex);
+        ++m_nextWaterfallSourceSnapshotSequenceId;
     }
 
+    const std::uint64_t producedSnapshots = hasRows ? 1 : 0;
     if (m_metrics) {
         m_metrics->recordWaterfallAggregation(result.deltaCounters.producedRows,
                                               producedSnapshots,
@@ -317,6 +339,9 @@ void ProcessingEngine::publishWaterfallRows(WaterfallAggregationResult result,
             result.deltaCounters.producedRows,
             producedSnapshots,
             aggregationLatency);
+        m_diagnostics->recordWaterfallRowQueueOverflow(pushResult.droppedRows,
+                                                       pushResult.depth,
+                                                       pushResult.capacity);
     }
 }
 
@@ -392,15 +417,17 @@ void ProcessingEngine::publishBearingSnapshots(
 void ProcessingEngine::flushWaterfallRows()
 {
     WaterfallAggregationResult result;
+    WaterfallAggregatorConfig config;
     const auto aggregationStartedAt = std::chrono::steady_clock::now();
     {
         std::lock_guard waterfallLock(m_waterfallMutex);
         result = m_waterfallAggregator.flush();
+        config = m_waterfallAggregator.config();
     }
     const auto aggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - aggregationStartedAt);
-    publishWaterfallRows(std::move(result), aggregationLatency);
+    publishWaterfallRows(std::move(result), std::move(config), aggregationLatency);
 }
 
 void ProcessingEngine::flushSpectrumSnapshots()

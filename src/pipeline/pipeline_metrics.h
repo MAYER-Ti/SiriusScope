@@ -2,6 +2,7 @@
 
 #include "pipeline/bounded_block_queue.h"
 #include "pipeline/signal_block_pool.h"
+#include "pipeline/waterfall_row_queue.h"
 
 #include <chrono>
 #include <cstddef>
@@ -27,6 +28,12 @@ struct PipelineMetricsSnapshot
     double maxBlockAgeMs = 0.0;
     std::uint64_t producedWaterfallRows = 0;
     std::uint64_t producedWaterfallSnapshots = 0;
+    std::uint64_t waterfallQueuedRows = 0;
+    std::uint64_t waterfallDrainedRows = 0;
+    std::uint64_t waterfallDroppedRows = 0;
+    std::size_t waterfallRowQueueDepth = 0;
+    std::size_t waterfallRowQueueCapacity = 0;
+    std::uint64_t latestWaterfallRowSequenceId = 0;
     double aggregationLatencyMaxMs = 0.0;
     std::uint64_t waterfallInvalidFrequencySamples = 0;
     std::uint64_t waterfallOutOfRangeSamples = 0;
@@ -86,8 +93,10 @@ public:
                                   std::uint64_t missingBeam1Candidates,
                                   std::chrono::milliseconds aggregationLatency);
 
-    PipelineMetricsSnapshot snapshot(const BoundedBlockQueueMetrics& queueMetrics,
-                                     const SignalBlockPoolCounters& poolCounters) const;
+    PipelineMetricsSnapshot snapshot(
+        const BoundedBlockQueueMetrics& queueMetrics,
+        const SignalBlockPoolCounters& poolCounters,
+        const WaterfallRowQueueMetrics& waterfallRowMetrics = {}) const;
 
 private:
     static double megabytesForSamples(std::uint64_t sampleCount);

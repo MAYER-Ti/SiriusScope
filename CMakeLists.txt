@@ -148,6 +148,8 @@ set(SIRIUSSCOPE_PIPELINE_SOURCES
     src/pipeline/spectrum_snapshot.cpp
     src/pipeline/waterfall_aggregator.h
     src/pipeline/waterfall_aggregator.cpp
+    src/pipeline/waterfall_row_queue.h
+    src/pipeline/waterfall_row_queue.cpp
     src/pipeline/waterfall_snapshot.h
     src/pipeline/waterfall_snapshot.cpp
 )

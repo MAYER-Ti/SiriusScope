@@ -167,4 +167,50 @@ WaterfallRenderBufferAdapterResult WaterfallRenderBufferAdapter::adaptSnapshotRo
     return result;
 }
 
+WaterfallRenderBufferAdapterResult WaterfallRenderBufferAdapter::adaptQueuedRow(
+    const pipeline::WaterfallQueuedRow& queuedRow,
+    double viewMinHz,
+    double viewMaxHz,
+    int binCount)
+{
+    WaterfallRenderBufferAdapterResult result;
+    const auto& sourceRow = queuedRow.row;
+    result.row.utcMs = static_cast<qint64>(sourceRow.utcNs / 1'000'000);
+    result.row.firstSampleIndex = sourceRow.firstSampleIndex;
+    result.row.lastSampleIndex = sourceRow.lastSampleIndex;
+    result.row.viewMinHz = static_cast<double>(queuedRow.sourceMinHz);
+    result.row.viewMaxHz = static_cast<double>(queuedRow.sourceMaxHz);
+    result.row.bins = QVector<WaterfallBeamBin>(std::max(0, queuedRow.renderBinCount),
+                                                WaterfallBeamBin{});
+
+    const int sourceBinCount =
+        std::min(static_cast<int>(result.row.bins.size()),
+                 static_cast<int>(sourceRow.cells.size()));
+    for (int index = 0; index < sourceBinCount; ++index) {
+        const auto& cell = sourceRow.cells[static_cast<std::size_t>(index)];
+        auto& bin = result.row.bins[index];
+        bin.left = domainAmplitude(cell.beam0Peak);
+        bin.right = domainAmplitude(cell.beam1Peak);
+        result.hasVisibleCells = result.hasVisibleCells || bin.left > 0 || bin.right > 0;
+    }
+
+    if (binCount != result.row.bins.size()
+        || viewMinHz != result.row.viewMinHz
+        || viewMaxHz != result.row.viewMaxHz) {
+        result.row.bins = WaterfallRowResampler::resample(result.row,
+                                                          viewMinHz,
+                                                          viewMaxHz,
+                                                          binCount);
+        result.row.viewMinHz = viewMinHz;
+        result.row.viewMaxHz = viewMaxHz;
+        result.hasVisibleCells = std::any_of(result.row.bins.cbegin(),
+                                             result.row.bins.cend(),
+                                             [](const auto& bin) {
+                                                 return bin.left > 0 || bin.right > 0;
+                                             });
+    }
+
+    return result;
+}
+
 } // namespace siriusscope::app

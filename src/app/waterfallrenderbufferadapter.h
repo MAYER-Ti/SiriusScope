@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline/waterfall_snapshot.h"
+#include "pipeline/waterfall_row_queue.h"
 #include "processing/sample_processor.h"
 #include "waterfallstorage.h"
 
@@ -28,6 +29,11 @@ public:
     static WaterfallRenderBufferAdapterResult adaptSnapshotRow(
         const pipeline::WaterfallSnapshot& snapshot,
         const pipeline::WaterfallSnapshotRow& row,
+        double viewMinHz,
+        double viewMaxHz,
+        int binCount);
+    static WaterfallRenderBufferAdapterResult adaptQueuedRow(
+        const pipeline::WaterfallQueuedRow& queuedRow,
         double viewMinHz,
         double viewMaxHz,
         int binCount);

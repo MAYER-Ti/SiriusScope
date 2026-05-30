@@ -10,6 +10,7 @@
 #include "pipeline/spectrum_aggregator.h"
 #include "pipeline/spectrum_snapshot.h"
 #include "pipeline/waterfall_aggregator.h"
+#include "pipeline/waterfall_row_queue.h"
 #include "pipeline/waterfall_snapshot.h"
 
 #include <chrono>
@@ -46,7 +47,7 @@ public:
     ProcessingEngine(BoundedBlockQueue* queue,
                      PipelineMetrics* metrics,
                      PipelineDiagnostics* diagnostics = nullptr,
-                     SnapshotExchange<WaterfallSnapshot>* waterfallSnapshots = nullptr,
+                     WaterfallRowQueue* waterfallRows = nullptr,
                      WaterfallAggregatorConfig waterfallConfig = {},
                      SnapshotExchange<SpectrumSnapshot>* spectrumSnapshots = nullptr,
                      SpectrumAggregatorConfig spectrumConfig = {},
@@ -70,6 +71,7 @@ private:
     void workerLoop();
     void processBlock(const SignalBlock& block);
     void publishWaterfallRows(WaterfallAggregationResult result,
+                              WaterfallAggregatorConfig config,
                               std::chrono::milliseconds aggregationLatency);
     void publishSpectrumSnapshots(SpectrumAggregationResult result,
                                   std::chrono::milliseconds aggregationLatency);
@@ -82,7 +84,7 @@ private:
     BoundedBlockQueue* m_queue = nullptr;
     PipelineMetrics* m_metrics = nullptr;
     PipelineDiagnostics* m_diagnostics = nullptr;
-    SnapshotExchange<WaterfallSnapshot>* m_waterfallSnapshots = nullptr;
+    WaterfallRowQueue* m_waterfallRows = nullptr;
     SnapshotExchange<SpectrumSnapshot>* m_spectrumSnapshots = nullptr;
     SnapshotExchange<BearingSnapshot>* m_bearingSnapshots = nullptr;
 
@@ -96,6 +98,8 @@ private:
     WaterfallAggregator m_waterfallAggregator;
     SpectrumAggregator m_spectrumAggregator;
     BearingAggregator m_bearingAggregator;
+    std::uint64_t m_nextWaterfallSourceSnapshotSequenceId = 1;
+    std::uint64_t m_completedQueuePops = 0;
     bool m_running = false;
     bool m_processingBlock = false;
 };

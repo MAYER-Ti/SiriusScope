@@ -14,10 +14,11 @@ DataIngestPipeline::DataIngestPipeline(DataIngestPipelineConfig config,
           m_config.diagnosticsPublishInterval,
           "DataIngestPipeline",
       })
+    , m_waterfallRows(m_config.waterfallRows)
     , m_engine(&m_queue,
                &m_metrics,
                &m_diagnostics,
-               &m_waterfallSnapshots,
+               &m_waterfallRows,
                m_config.waterfall,
                &m_spectrumSnapshots,
                m_config.spectrum,
@@ -39,7 +40,7 @@ core::OperationResult DataIngestPipeline::start()
 
     m_queue.reset();
     m_metrics.reset();
-    m_waterfallSnapshots.reset();
+    m_waterfallRows.reset();
     m_spectrumSnapshots.reset();
     m_bearingSnapshots.reset();
     m_accepting.store(m_config.acceptingOnStart, std::memory_order_release);
@@ -133,7 +134,7 @@ core::OperationResult DataIngestPipeline::flushProcessing(std::chrono::milliseco
 
 PipelineMetricsSnapshot DataIngestPipeline::metricsSnapshot() const
 {
-    return m_metrics.snapshot(m_queue.metrics(), m_pool.counters());
+    return m_metrics.snapshot(m_queue.metrics(), m_pool.counters(), m_waterfallRows.metrics());
 }
 
 ProcessingEngineSummary DataIngestPipeline::lastSummary() const
@@ -143,9 +144,16 @@ ProcessingEngineSummary DataIngestPipeline::lastSummary() const
     return summary;
 }
 
-std::shared_ptr<const WaterfallSnapshot> DataIngestPipeline::latestWaterfallSnapshot() const
+std::vector<WaterfallQueuedRow> DataIngestPipeline::drainWaterfallRows(std::size_t maxRows)
 {
-    return m_waterfallSnapshots.latest();
+    auto rows = m_waterfallRows.drain(maxRows);
+    m_diagnostics.publishIfDue(m_diagnosticsSink);
+    return rows;
+}
+
+WaterfallRowQueueMetrics DataIngestPipeline::waterfallRowQueueMetrics() const
+{
+    return m_waterfallRows.metrics();
 }
 
 std::shared_ptr<const SpectrumSnapshot> DataIngestPipeline::latestSpectrumSnapshot() const
@@ -161,7 +169,7 @@ std::shared_ptr<const BearingSnapshot> DataIngestPipeline::latestBearingSnapshot
 void DataIngestPipeline::configureWaterfall(WaterfallAggregatorConfig config)
 {
     m_config.waterfall = config;
-    m_waterfallSnapshots.reset();
+    m_waterfallRows.reset();
     m_engine.setWaterfallConfig(std::move(config));
 }
 

@@ -97,6 +97,22 @@ target_include_directories(tst_waterfall_aggregator
 
 add_test(NAME tst_waterfall_aggregator COMMAND tst_waterfall_aggregator)
 
+add_executable(tst_waterfall_row_queue
+    pipeline/tst_waterfall_row_queue.cpp
+)
+
+target_link_libraries(tst_waterfall_row_queue
+    PRIVATE
+        siriusscope_pipeline
+)
+
+target_include_directories(tst_waterfall_row_queue
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_waterfall_row_queue COMMAND tst_waterfall_row_queue)
+
 add_executable(tst_spectrum_aggregator
     pipeline/tst_spectrum_aggregator.cpp
 )

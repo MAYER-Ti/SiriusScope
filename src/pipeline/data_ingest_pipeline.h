@@ -13,6 +13,7 @@
 #include "pipeline/snapshot_exchange.h"
 #include "pipeline/spectrum_aggregator.h"
 #include "pipeline/spectrum_snapshot.h"
+#include "pipeline/waterfall_row_queue.h"
 #include "pipeline/waterfall_snapshot.h"
 
 #include <atomic>
@@ -20,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace siriusscope::pipeline {
 
@@ -30,6 +32,7 @@ struct DataIngestPipelineConfig
     std::chrono::milliseconds diagnosticsPublishInterval{1000};
     bool acceptingOnStart = false;
     WaterfallAggregatorConfig waterfall;
+    WaterfallRowQueueConfig waterfallRows;
     SpectrumAggregatorConfig spectrum;
     BearingAggregatorConfig bearing;
 };
@@ -56,7 +59,8 @@ public:
     core::OperationResult flushProcessing(std::chrono::milliseconds timeout);
     PipelineMetricsSnapshot metricsSnapshot() const;
     ProcessingEngineSummary lastSummary() const;
-    std::shared_ptr<const WaterfallSnapshot> latestWaterfallSnapshot() const;
+    std::vector<WaterfallQueuedRow> drainWaterfallRows(std::size_t maxRows);
+    WaterfallRowQueueMetrics waterfallRowQueueMetrics() const;
     std::shared_ptr<const SpectrumSnapshot> latestSpectrumSnapshot() const;
     std::shared_ptr<const BearingSnapshot> latestBearingSnapshot() const;
     void configureWaterfall(WaterfallAggregatorConfig config);
@@ -73,7 +77,7 @@ private:
     BoundedBlockQueue m_queue;
     PipelineMetrics m_metrics;
     PipelineDiagnostics m_diagnostics;
-    SnapshotExchange<WaterfallSnapshot> m_waterfallSnapshots;
+    WaterfallRowQueue m_waterfallRows;
     SnapshotExchange<SpectrumSnapshot> m_spectrumSnapshots;
     SnapshotExchange<BearingSnapshot> m_bearingSnapshots;
     ProcessingEngine m_engine;

@@ -171,13 +171,13 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     pipeline::PipelineMetrics metrics;
     pipeline::PipelineDiagnostics diagnostics(
         pipeline::PipelineDiagnosticsConfig{std::chrono::milliseconds{1}, "ProcessingEngine"});
-    pipeline::SnapshotExchange<pipeline::WaterfallSnapshot> waterfallSnapshots;
+    pipeline::WaterfallRowQueue waterfallRows;
     pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
     pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
     pipeline::ProcessingEngine engine(&queue,
                                       &metrics,
                                       &diagnostics,
-                                      &waterfallSnapshots,
+                                      &waterfallRows,
                                       {},
                                       &spectrumSnapshots,
                                       {},
@@ -198,10 +198,11 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     const bool queued = queue.tryPush(std::move(block));
     const auto flushed = engine.flush(std::chrono::milliseconds{1500});
     const auto summary = engine.lastSummary();
-    const auto waterfallSnapshot = waterfallSnapshots.latest();
+    const auto drainedWaterfallRows = waterfallRows.drain(10);
     const auto spectrumSnapshot = spectrumSnapshots.latest();
     const auto bearingSnapshot = bearingSnapshots.latest();
-    const auto metricsSnapshot = metrics.snapshot(queue.metrics(), pool.counters());
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(), pool.counters(), waterfallRows.metrics());
     engine.stop();
 
     test.require(started.success, "processing engine starts");
@@ -211,8 +212,8 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     test.require(summary.processedSamples == 3, "processing engine counts processed samples");
     test.require(summary.firstSampleIndex == 10 && summary.lastSampleIndex == 11,
                  "processing engine tracks sample index range");
-    test.require(waterfallSnapshot && !waterfallSnapshot->rows.empty(),
-                 "processing engine publishes waterfall snapshot after flush");
+    test.require(!drainedWaterfallRows.empty(),
+                 "processing engine queues waterfall rows after flush");
     test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
                  "processing engine publishes spectrum snapshot after flush");
     test.require(bearingSnapshot && !bearingSnapshot->estimates.empty(),
@@ -220,7 +221,11 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
     test.require(metricsSnapshot.producedWaterfallRows > 0,
                  "pipeline metrics count produced waterfall rows");
     test.require(metricsSnapshot.producedWaterfallSnapshots > 0,
-                 "pipeline metrics count produced waterfall snapshots");
+                 "pipeline metrics count produced waterfall row batches");
+    test.require(metricsSnapshot.waterfallQueuedRows > 0,
+                 "pipeline metrics count queued waterfall rows");
+    test.require(metricsSnapshot.waterfallDrainedRows > 0,
+                 "pipeline metrics count drained waterfall rows");
     test.require(metricsSnapshot.producedSpectrumSnapshots > 0,
                  "pipeline metrics count produced spectrum snapshots");
     test.require(metricsSnapshot.producedBearingSnapshots > 0,
@@ -265,6 +270,101 @@ void testDiagnosticsAreAggregated(TestRunner& test)
     test.require(sink.events.size() == 2, "diagnostics does not publish per-event spam");
     test.require(sink.events.front().message.find("droppedBlocks=100") != std::string::npos,
                  "diagnostics summary contains aggregated dropped block count");
+}
+
+void testDataPipelineDrainsAllWaterfallRows(TestRunner& test)
+{
+    pipeline::DataIngestPipelineConfig config;
+    config.blockPool = pipeline::SignalBlockPoolConfig{4, 64};
+    config.queueCapacity = 4;
+    config.diagnosticsPublishInterval = std::chrono::milliseconds{50};
+    config.acceptingOnStart = true;
+    config.waterfall.renderBinCount = 16;
+    config.waterfall.sourceMinHz = 300'000'000;
+    config.waterfall.sourceMaxHz = 18'000'000'000LL;
+    config.waterfall.rowPeriodNs = 20'000'000;
+    config.waterfall.timeBase = core::TimeBase{0, 0, 1'000'000};
+    config.waterfallRows = pipeline::WaterfallRowQueueConfig{
+        32,
+        pipeline::WaterfallOverflowPolicy::DropOldest,
+    };
+    pipeline::DataIngestPipeline dataPipeline(config);
+
+    const auto band = makeBand(0);
+    std::vector<core::SignalSample> samples;
+    for (std::uint64_t index = 0; index < 10; ++index) {
+        samples.push_back(makeSample(band, index * 20, 0, 40));
+    }
+
+    const auto started = dataPipeline.start();
+    const auto ingested = dataPipeline.ingestSamples(samples);
+    const auto flushed = dataPipeline.flushProcessing(std::chrono::milliseconds{1500});
+    const auto drained = dataPipeline.drainWaterfallRows(20);
+    const auto summary = dataPipeline.lastSummary();
+    dataPipeline.stop();
+
+    test.require(started.success, "data pipeline starts for waterfall drain test");
+    test.require(ingested.success, "data pipeline ingests multi-row waterfall block");
+    test.require(flushed.success, "data pipeline flushes multi-row waterfall block");
+    test.require(drained.size() == 10,
+                 "drainWaterfallRows returns all produced rows without latest-only loss");
+    bool ordered = true;
+    for (std::size_t index = 0; index < drained.size(); ++index) {
+        ordered = ordered && drained[index].row.firstSampleIndex == index * 20;
+    }
+    test.require(ordered, "drained waterfall rows preserve production order");
+    test.require(summary.metrics.waterfallQueuedRows == 10,
+                 "metrics count queued waterfall rows");
+    test.require(summary.metrics.waterfallDrainedRows == 10,
+                 "metrics count drained waterfall rows");
+    test.require(summary.metrics.waterfallDroppedRows == 0,
+                 "no waterfall rows drop without overload");
+}
+
+void testWaterfallRowQueueOverflowIsCounted(TestRunner& test)
+{
+    RecordingDiagnosticsSink diagnostics;
+    pipeline::DataIngestPipelineConfig config;
+    config.blockPool = pipeline::SignalBlockPoolConfig{4, 64};
+    config.queueCapacity = 4;
+    config.diagnosticsPublishInterval = std::chrono::milliseconds{0};
+    config.acceptingOnStart = true;
+    config.waterfall.renderBinCount = 16;
+    config.waterfall.sourceMinHz = 300'000'000;
+    config.waterfall.sourceMaxHz = 18'000'000'000LL;
+    config.waterfall.rowPeriodNs = 20'000'000;
+    config.waterfall.timeBase = core::TimeBase{0, 0, 1'000'000};
+    config.waterfallRows = pipeline::WaterfallRowQueueConfig{
+        3,
+        pipeline::WaterfallOverflowPolicy::DropOldest,
+    };
+    pipeline::DataIngestPipeline dataPipeline(config, &diagnostics);
+
+    const auto band = makeBand(0);
+    std::vector<core::SignalSample> samples;
+    for (std::uint64_t index = 0; index < 5; ++index) {
+        samples.push_back(makeSample(band, index * 20, 0, 40));
+    }
+
+    dataPipeline.start();
+    dataPipeline.ingestSamples(samples);
+    dataPipeline.flushProcessing(std::chrono::milliseconds{1500});
+    const auto drained = dataPipeline.drainWaterfallRows(10);
+    const auto metrics = dataPipeline.metricsSnapshot();
+    dataPipeline.stop();
+
+    test.require(drained.size() == 3, "overflow leaves bounded waterfall rows queued");
+    test.require(drained.front().row.firstSampleIndex == 40
+                     && drained.back().row.firstSampleIndex == 80,
+                 "DropOldest waterfall delivery keeps newest rows under overload");
+    test.require(metrics.waterfallQueuedRows == 5,
+                 "metrics count attempted queued waterfall rows");
+    test.require(metrics.waterfallDroppedRows == 2,
+                 "metrics count dropped waterfall rows");
+    test.require(!diagnostics.events.empty()
+                     && diagnostics.events.front().message.find("Waterfall row queue overflow")
+                         != std::string::npos,
+                 "diagnostics publish rate-limited waterfall overflow summary");
 }
 
 void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
@@ -316,8 +416,8 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
 
     source.stop();
     const auto flushed = dataPipeline.flushProcessing(std::chrono::milliseconds{1500});
+    const auto waterfallRows = dataPipeline.drainWaterfallRows(10'000);
     const auto summary = dataPipeline.lastSummary();
-    const auto waterfallSnapshot = dataPipeline.latestWaterfallSnapshot();
     const auto spectrumSnapshot = dataPipeline.latestSpectrumSnapshot();
     const auto bearingSnapshot = dataPipeline.latestBearingSnapshot();
     dataPipeline.stop();
@@ -330,14 +430,18 @@ void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
     test.require(summary.processedBlocks > 0, "data ingest pipeline processes simulator blocks");
     test.require(summary.metrics.processedSamples > 0,
                  "pipeline metrics count processed simulator samples");
-    test.require(waterfallSnapshot && !waterfallSnapshot->rows.empty(),
-                 "data ingest pipeline publishes waterfall snapshot");
+    test.require(!waterfallRows.empty(),
+                 "data ingest pipeline publishes queued waterfall rows");
     test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
                  "data ingest pipeline publishes spectrum snapshot");
     test.require(bearingSnapshot && !bearingSnapshot->estimates.empty(),
                  "data ingest pipeline publishes bearing snapshot");
     test.require(summary.metrics.producedWaterfallSnapshots > 0,
-                 "data ingest metrics count produced waterfall snapshots");
+                 "data ingest metrics count produced waterfall row batches");
+    test.require(summary.metrics.waterfallQueuedRows > 0,
+                 "data ingest metrics count queued waterfall rows");
+    test.require(summary.metrics.waterfallDrainedRows > 0,
+                 "data ingest metrics count drained waterfall rows");
     test.require(summary.metrics.producedSpectrumSnapshots > 0,
                  "data ingest metrics count produced spectrum snapshots");
     test.require(summary.metrics.producedBearingSnapshots > 0,
@@ -356,6 +460,8 @@ int main()
     testBoundedBlockQueuePushPopOverflowShutdown(test);
     testProcessingEngineProcessesBlocksAndFlushes(test);
     testDiagnosticsAreAggregated(test);
+    testDataPipelineDrainsAllWaterfallRows(test);
+    testWaterfallRowQueueOverflowIsCounted(test);
     testHighLoadSimulatorConnectsToDataIngestPipeline(test);
 
     return test.result();

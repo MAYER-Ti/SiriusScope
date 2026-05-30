@@ -11,6 +11,7 @@ bool PipelineDiagnosticCounters::empty() const noexcept
         && droppedBlocks == 0 && droppedSamples == 0 && queueOverflows == 0
         && processingLatencyMaxMs <= 0.0 && invalidFrequencySamples == 0
         && outOfRangeSamples == 0 && emptyBlocks == 0 && aggregationLatencyMaxMs <= 0.0
+        && waterfallDroppedRows == 0
         && spectrumInvalidSamples == 0 && spectrumOutOfRangeSamples == 0
         && spectrumAggregationLatencyMaxMs <= 0.0 && incompleteBearingCandidates == 0
         && missingBeam0Candidates == 0 && missingBeam1Candidates == 0
@@ -79,6 +80,20 @@ void PipelineDiagnostics::recordWaterfallAggregation(
     m_counters.aggregationLatencyMaxMs =
         std::max(m_counters.aggregationLatencyMaxMs,
                  static_cast<double>(aggregationLatency.count()));
+}
+
+void PipelineDiagnostics::recordWaterfallRowQueueOverflow(std::uint64_t droppedRows,
+                                                          std::size_t depth,
+                                                          std::size_t capacity)
+{
+    if (droppedRows == 0) {
+        return;
+    }
+
+    std::lock_guard lock(m_mutex);
+    m_counters.waterfallDroppedRows += droppedRows;
+    m_counters.waterfallRowQueueDepth = depth;
+    m_counters.waterfallRowQueueCapacity = capacity;
 }
 
 void PipelineDiagnostics::recordSpectrumAggregation(
@@ -195,6 +210,12 @@ std::string PipelineDiagnostics::buildMessage(
     }
     if (counters.producedSnapshots > 0) {
         stream << " producedSnapshots=" << counters.producedSnapshots;
+    }
+    if (counters.waterfallDroppedRows > 0) {
+        stream << " Waterfall row queue overflow: droppedRows="
+               << counters.waterfallDroppedRows << ", depth="
+               << counters.waterfallRowQueueDepth << "/"
+               << counters.waterfallRowQueueCapacity;
     }
     if (counters.aggregationLatencyMaxMs > 0.0) {
         stream << " aggregationLatencyMaxMs=" << counters.aggregationLatencyMaxMs;

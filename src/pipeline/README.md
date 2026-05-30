@@ -5,10 +5,13 @@ block-oriented transport, a fixed block pool, bounded queues, basic metrics,
 rate-limited diagnostics, a minimal processing worker, v1 waterfall time-bucket
 aggregation, v1 spectrum snapshot aggregation, and v1 bearing aggregation.
 
-Waterfall output is published as immutable `WaterfallSnapshot` objects through
-`SnapshotExchange`. The GUI polls the latest snapshot and adapts aggregated rows to its
-render buffer; raw `SignalSample` vectors are not transported through Qt, QML,
-`SignalSampleBus`, or `BearingFrameBus` on the high-load path.
+Waterfall output is delivered through a bounded `WaterfallRowQueue`, not a latest-only
+exchange. `ProcessingEngine` pushes every produced time-bucket row with its original
+UTC/sample-index timing and frequency metadata; the Qt layer drains rows at a bounded UI
+cadence and adapts them to the render buffer. If the UI falls behind, row loss is an
+explicit overload event counted by queue metrics and rate-limited diagnostics. Raw
+`SignalSample` vectors are not transported through Qt, QML, `SignalSampleBus`, or
+`BearingFrameBus` on the high-load path.
 
 Spectrum output is published as immutable `SpectrumSnapshot` objects through the same
 latest-value exchange model. `SpectrumAggregator` builds fixed frequency bins and compact

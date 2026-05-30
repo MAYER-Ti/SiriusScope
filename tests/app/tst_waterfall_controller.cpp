@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -318,7 +319,7 @@ void testSourceBlocksGoToDataPlane(TestRunner& test)
     test.require(summary.processedSamples == 2, "data plane counts source samples");
 }
 
-void testSourceBlocksUpdateWaterfallRingBufferThroughSnapshots(TestRunner& test)
+void testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(TestRunner& test)
 {
     FrequencyViewportModel viewport;
     FakeBcoStreamSource source;
@@ -330,6 +331,7 @@ void testSourceBlocksUpdateWaterfallRingBufferThroughSnapshots(TestRunner& test)
     app::WaterfallControllerConfig config;
     config.renderBinCount = 64;
     config.visibleRowCount = 8;
+    config.maxWaterfallRowsPerUiTick = 256;
     app::WaterfallController controller(&viewport,
                                         &source,
                                         bands,
@@ -342,6 +344,7 @@ void testSourceBlocksUpdateWaterfallRingBufferThroughSnapshots(TestRunner& test)
                                         &dataPipeline);
 
     controller.start();
+    controller.setWaterfallTimeBase(core::TimeBase{1'000'000'000, 0, 1'000'000});
     controller.startRecording();
     controller.startLiveSource();
     waitUntil([&controller] {
@@ -350,18 +353,36 @@ void testSourceBlocksUpdateWaterfallRingBufferThroughSnapshots(TestRunner& test)
     auto* buffer = qobject_cast<WaterfallRingBuffer*>(controller.ringBuffer());
     const auto initialWriteIndex = buffer ? buffer->writeIndex() : 0;
 
-    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90),
-                                makeSample(bands, 1, 0, 1, 40)}));
+    source.emitBlock(makeBlock({makeSample(bands, 0, 0, 0, 90),
+                                makeSample(bands, 0, 0, 1, 40),
+                                makeSample(bands, 20, 0, 0, 80),
+                                makeSample(bands, 20, 0, 1, 35),
+                                makeSample(bands, 40, 0, 0, 70),
+                                makeSample(bands, 40, 0, 1, 30)}));
     controller.flushProcessing(std::chrono::milliseconds{1500});
     const bool snapshotApplied = waitUntil([&] {
-        return buffer && buffer->writeIndex() > initialWriteIndex;
+        return buffer && buffer->writeIndex() >= initialWriteIndex + 3;
     });
+    const auto latestSession = storage.latestSession();
+    const auto storedRows = latestSession
+        ? storage.loadRows(latestSession->id, 0, std::numeric_limits<qint64>::max(), 10)
+        : QVector<WaterfallRow>{};
 
     test.require(buffer != nullptr, "controller exposes a waterfall ring buffer");
     test.require(snapshotApplied,
-                 "high-load source block appends waterfall rows through snapshot handoff");
-    test.require(storage.rowCount(storage.latestSession()->id) == 1,
-                 "snapshot row is stored as aggregated waterfall row");
+                 "high-load source block appends all queued waterfall rows");
+    test.require(latestSession && storage.rowCount(latestSession->id) == 3,
+                 "all queued rows are stored as aggregated waterfall rows");
+    test.require(storedRows.size() == 3
+                     && storedRows[0].utcMs == 1000
+                     && storedRows[1].utcMs == 1020
+                     && storedRows[2].utcMs == 1040,
+                 "queued row utc timing is preserved in storage");
+    test.require(storedRows.size() == 3
+                     && storedRows[0].firstSampleIndex == 0
+                     && storedRows[1].firstSampleIndex == 20
+                     && storedRows[2].firstSampleIndex == 40,
+                 "queued row sample index ranges are preserved in storage");
 }
 
 void testHighLoadPathDoesNotPublishRawBuses(TestRunner& test)
@@ -504,7 +525,7 @@ int main(int argc, char *argv[])
     testStopLiveSourceStopsStreamSource(test);
     testNullStreamSourceReturnsFailure(test);
     testSourceBlocksGoToDataPlane(test);
-    testSourceBlocksUpdateWaterfallRingBufferThroughSnapshots(test);
+    testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(test);
     testHighLoadPathDoesNotPublishRawBuses(test);
     testHighLoadPathDoesNotCopyBlocksToSpectrumWorker(test);
     testStopRecordingFreezesDataPlaneAcceptance(test);
