@@ -23,7 +23,9 @@ DataIngestPipeline::DataIngestPipeline(DataIngestPipelineConfig config,
                &m_spectrumSnapshots,
                m_config.spectrum,
                &m_bearingSnapshots,
-               m_config.bearing)
+               m_config.bearing,
+               &m_signalParameterSnapshots,
+               m_config.signalParameters)
 {
 }
 
@@ -43,6 +45,7 @@ core::OperationResult DataIngestPipeline::start()
     m_waterfallRows.reset();
     m_spectrumSnapshots.reset();
     m_bearingSnapshots.reset();
+    m_signalParameterSnapshots.reset();
     m_accepting.store(m_config.acceptingOnStart, std::memory_order_release);
     const auto started = m_engine.start();
     if (!started) {
@@ -166,6 +169,11 @@ std::shared_ptr<const BearingSnapshot> DataIngestPipeline::latestBearingSnapshot
     return m_bearingSnapshots.latest();
 }
 
+std::shared_ptr<const SignalParameterSnapshot> DataIngestPipeline::latestSignalParameterSnapshot() const
+{
+    return m_signalParameterSnapshots.latest();
+}
+
 void DataIngestPipeline::configureWaterfall(WaterfallAggregatorConfig config)
 {
     m_config.waterfall = config;
@@ -185,6 +193,13 @@ void DataIngestPipeline::configureBearing(BearingAggregatorConfig config)
     m_config.bearing = config;
     m_bearingSnapshots.reset();
     m_engine.setBearingConfig(std::move(config));
+}
+
+void DataIngestPipeline::configureSignalParameters(SignalParameterAggregatorConfig config)
+{
+    m_config.signalParameters = config;
+    m_signalParameterSnapshots.reset();
+    m_engine.setSignalParameterConfig(std::move(config));
 }
 
 void DataIngestPipeline::clearQueuedBlocks()

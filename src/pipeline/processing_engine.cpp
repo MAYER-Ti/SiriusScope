@@ -15,16 +15,20 @@ ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
                                    SnapshotExchange<SpectrumSnapshot>* spectrumSnapshots,
                                    SpectrumAggregatorConfig spectrumConfig,
                                    SnapshotExchange<BearingSnapshot>* bearingSnapshots,
-                                   BearingAggregatorConfig bearingConfig)
+                                   BearingAggregatorConfig bearingConfig,
+                                   SnapshotExchange<SignalParameterSnapshot>* signalParameterSnapshots,
+                                   SignalParameterAggregatorConfig signalParameterConfig)
     : m_queue(queue)
     , m_metrics(metrics)
     , m_diagnostics(diagnostics)
     , m_waterfallRows(waterfallRows)
     , m_spectrumSnapshots(spectrumSnapshots)
     , m_bearingSnapshots(bearingSnapshots)
+    , m_signalParameterSnapshots(signalParameterSnapshots)
     , m_waterfallAggregator(std::move(waterfallConfig))
     , m_spectrumAggregator(std::move(spectrumConfig))
     , m_bearingAggregator(std::move(bearingConfig))
+    , m_signalParameterAggregator(std::move(signalParameterConfig))
 {
 }
 
@@ -59,6 +63,10 @@ core::OperationResult ProcessingEngine::start()
     {
         std::lock_guard bearingLock(m_bearingMutex);
         m_bearingAggregator.reset();
+    }
+    {
+        std::lock_guard signalParameterLock(m_signalParameterMutex);
+        m_signalParameterAggregator.reset();
     }
     m_worker = std::thread(&ProcessingEngine::workerLoop, this);
     return core::OperationResult::ok();
@@ -152,6 +160,12 @@ void ProcessingEngine::setBearingConfig(BearingAggregatorConfig config)
 {
     std::lock_guard lock(m_bearingMutex);
     m_bearingAggregator.setConfig(std::move(config));
+}
+
+void ProcessingEngine::setSignalParameterConfig(SignalParameterAggregatorConfig config)
+{
+    std::lock_guard lock(m_signalParameterMutex);
+    m_signalParameterAggregator.setConfig(std::move(config));
 }
 
 void ProcessingEngine::workerLoop()
@@ -248,6 +262,16 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - bearingAggregationStartedAt);
 
+    SignalParameterAggregationResult signalParameterResult;
+    const auto signalParameterAggregationStartedAt = std::chrono::steady_clock::now();
+    {
+        std::lock_guard signalParameterLock(m_signalParameterMutex);
+        signalParameterResult = m_signalParameterAggregator.consume(block);
+    }
+    const auto signalParameterAggregationLatency =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - signalParameterAggregationStartedAt);
+
     const auto finishedAt = std::chrono::steady_clock::now();
     const auto processingLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(finishedAt - startedAt);
@@ -262,6 +286,8 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
                          waterfallAggregationLatency);
     publishSpectrumSnapshots(std::move(spectrumResult), spectrumAggregationLatency);
     publishBearingSnapshots(std::move(bearingResult), bearingAggregationLatency);
+    publishSignalParameterSnapshots(std::move(signalParameterResult),
+                                    signalParameterAggregationLatency);
 
     std::lock_guard lock(m_mutex);
     ++m_summary.processedBlocks;
@@ -416,6 +442,16 @@ void ProcessingEngine::publishBearingSnapshots(
             producedSnapshots,
             result.deltaCounters.producedEstimates,
             aggregationLatency);
+    }
+}
+
+void ProcessingEngine::publishSignalParameterSnapshots(
+    SignalParameterAggregationResult result,
+    std::chrono::milliseconds aggregationLatency)
+{
+    (void)aggregationLatency;
+    if (result.snapshot && m_signalParameterSnapshots) {
+        m_signalParameterSnapshots->publish(std::move(result.snapshot));
     }
 }
 

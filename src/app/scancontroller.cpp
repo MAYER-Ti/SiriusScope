@@ -3,6 +3,7 @@
 #include "bearingframebus.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "pipeline/bearing_snapshot.h"
+#include "pipeline/signal_parameter_snapshot.h"
 #include "signalsamplebus.h"
 
 #include <QMetaObject>
@@ -94,6 +95,18 @@ QString frequencyMHzText(const std::vector<std::int64_t>& frequenciesHz)
                                         1));
     }
     return parts.join(QStringLiteral(", "));
+}
+
+processing::SignalParameters toSignalParameters(
+    const pipeline::BandSignalParametersSummary& summary)
+{
+    processing::SignalParameters parameters;
+    parameters.bandIndex = summary.bandIndex;
+    parameters.pulseCount = static_cast<std::size_t>(summary.pulseCount);
+    parameters.pulseWidthUs = summary.pulseWidthUs.value_or(0.0);
+    parameters.pulseRepetitionPeriodUs = summary.pulseRepetitionPeriodUs;
+    parameters.frequenciesHz = summary.frequenciesHz;
+    return parameters;
 }
 
 } // namespace
@@ -320,6 +333,8 @@ void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double
     m_signalParameterAccumulator.reset();
     m_collectedSignalSampleCount = 0;
     m_lastSignalParameters.clear();
+    m_latestDataPlaneSignalParameters.clear();
+    m_lastSignalParameterSnapshotSequenceId = 0;
 
     ScanSession session;
     session.id = m_nextSessionId++;
@@ -371,6 +386,8 @@ void ScanController::stopScan()
 
     m_signalParameterAccumulator.reset();
     m_collectedSignalSampleCount = 0;
+    m_latestDataPlaneSignalParameters.clear();
+    m_lastSignalParameterSnapshotSequenceId = 0;
     m_activeSession.reset();
     setProgress(0.0);
     setState(ScanState::Cancelled);
@@ -557,6 +574,29 @@ void ScanController::acceptBearingSnapshotSummary(
                                   m_targetBearings);
 }
 
+void ScanController::acceptSignalParameterSnapshot(
+    std::shared_ptr<const pipeline::SignalParameterSnapshot> snapshot)
+{
+    if (!snapshot || snapshot->sequenceId == m_lastSignalParameterSnapshotSequenceId) {
+        return;
+    }
+
+    const bool acceptsSummaries =
+        m_state == ScanState::Scanning || m_state == ScanState::Completing;
+    if (!m_activeSession || !acceptsSummaries) {
+        return;
+    }
+
+    m_lastSignalParameterSnapshotSequenceId = snapshot->sequenceId;
+    m_collectedSignalSampleCount =
+        static_cast<std::size_t>(snapshot->acceptedSampleCount);
+    m_latestDataPlaneSignalParameters.clear();
+    m_latestDataPlaneSignalParameters.reserve(snapshot->bands.size());
+    for (const auto& summary : snapshot->bands) {
+        m_latestDataPlaneSignalParameters.push_back(toSignalParameters(summary));
+    }
+}
+
 void ScanController::beginSectorScan()
 {
     if (!m_activeSession || m_state != ScanState::MovingToStart || !m_antennaControl) {
@@ -734,11 +774,15 @@ void ScanController::finalizeCompletedScan(std::uint64_t sessionId)
                              static_cast<int>(m_lastBearingResults.size()));
     emit bearingResultsCalculated(static_cast<qulonglong>(sessionId), m_targetBearings);
 
-    m_lastSignalParameters = m_signalParameterAccumulator.finalize();
-    m_collectedSignalSampleCount = m_signalParameterAccumulator.acceptedSampleCount();
+    if (!m_latestDataPlaneSignalParameters.empty()) {
+        m_lastSignalParameters = m_latestDataPlaneSignalParameters;
+    } else {
+        m_lastSignalParameters = m_signalParameterAccumulator.finalize();
+        m_collectedSignalSampleCount = m_signalParameterAccumulator.acceptedSampleCount();
+    }
     if (m_lastSignalParameters.empty()) {
         publish(infrastructure::DiagnosticSeverity::Warning,
-                "ScanController: no signal parameters calculated by streaming accumulator, "
+                "ScanController: no signal parameters calculated, "
                 "acceptedSamples="
                     + std::to_string(m_collectedSignalSampleCount));
     } else {
@@ -790,6 +834,8 @@ void ScanController::failScan(const QString& reason)
 
     m_signalParameterAccumulator.reset();
     m_collectedSignalSampleCount = 0;
+    m_latestDataPlaneSignalParameters.clear();
+    m_lastSignalParameterSnapshotSequenceId = 0;
     m_activeSession.reset();
     setLastError(reason);
     setProgress(0.0);

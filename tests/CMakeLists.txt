@@ -145,6 +145,38 @@ target_include_directories(tst_bearing_aggregator
 
 add_test(NAME tst_bearing_aggregator COMMAND tst_bearing_aggregator)
 
+add_executable(tst_signal_parameter_aggregator
+    pipeline/tst_signal_parameter_aggregator.cpp
+)
+
+target_link_libraries(tst_signal_parameter_aggregator
+    PRIVATE
+        siriusscope_pipeline
+)
+
+target_include_directories(tst_signal_parameter_aggregator
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_signal_parameter_aggregator COMMAND tst_signal_parameter_aggregator)
+
+add_executable(tst_data_ingest_pipeline
+    pipeline/tst_data_ingest_pipeline.cpp
+)
+
+target_link_libraries(tst_data_ingest_pipeline
+    PRIVATE
+        siriusscope_pipeline
+)
+
+target_include_directories(tst_data_ingest_pipeline
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_data_ingest_pipeline COMMAND tst_data_ingest_pipeline)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )
@@ -550,6 +582,23 @@ target_include_directories(tst_bearing_snapshot_adapter
 
 add_test(NAME tst_bearing_snapshot_adapter COMMAND tst_bearing_snapshot_adapter)
 
+add_executable(tst_signal_parameter_snapshot_adapter
+    app/tst_signal_parameter_snapshot_adapter.cpp
+)
+
+target_link_libraries(tst_signal_parameter_snapshot_adapter
+    PRIVATE
+        Qt6::Core
+        siriusscope_application
+)
+
+target_include_directories(tst_signal_parameter_snapshot_adapter
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_signal_parameter_snapshot_adapter COMMAND tst_signal_parameter_snapshot_adapter)
+
 add_executable(tst_diagnostics_service
     app/tst_diagnostics_service.cpp
 )
@@ -797,6 +846,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_bearing_snapshot_adapter PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_signal_parameter_snapshot_adapter PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_diagnostics_service PROPERTIES

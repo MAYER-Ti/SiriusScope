@@ -19,6 +19,7 @@
 #include "resulttablemodel.h"
 #include "scancontroller.h"
 #include "signalsamplebus.h"
+#include "signalparametersnapshotadapter.h"
 #include "spectrumcontrollerstub.h"
 #include "spectrumdecimator.h"
 #include "spectrumenvelopecontroller.h"
@@ -70,6 +71,10 @@ public:
     BearingSnapshotAdapter* bearingSnapshotAdapter() noexcept
     {
         return m_bearingSnapshotAdapter.get();
+    }
+    SignalParameterSnapshotAdapter* signalParameterSnapshotAdapter() noexcept
+    {
+        return m_signalParameterSnapshotAdapter.get();
     }
     WaterfallController* waterfallController() noexcept { return m_waterfallController.get(); }
     AntennaControllerStub* antennaController() noexcept { return &m_antennaController; }
@@ -150,6 +155,7 @@ private:
     SpectrumEnvelopeController m_spectrumEnvelopeController;
     std::unique_ptr<SpectrumSnapshotAdapter> m_spectrumSnapshotAdapter;
     std::unique_ptr<BearingSnapshotAdapter> m_bearingSnapshotAdapter;
+    std::unique_ptr<SignalParameterSnapshotAdapter> m_signalParameterSnapshotAdapter;
     AntennaControllerStub m_antennaController;
     std::unique_ptr<infrastructure::DiagnosticLogWriter> m_diagnosticLogWriter;
     std::unique_ptr<DiagnosticsService> m_diagnosticsService;

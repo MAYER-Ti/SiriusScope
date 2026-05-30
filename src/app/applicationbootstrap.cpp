@@ -153,6 +153,10 @@ ApplicationBootstrap::ApplicationBootstrap()
         std::make_unique<BearingSnapshotAdapter>(m_scanController.get(),
                                                  m_dataIngestPipeline.get(),
                                                  m_diagnosticsService.get());
+    m_signalParameterSnapshotAdapter =
+        std::make_unique<SignalParameterSnapshotAdapter>(m_scanController.get(),
+                                                         m_dataIngestPipeline.get(),
+                                                         m_diagnosticsService.get());
 
     m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),
                                                   &AppState::instance(),
@@ -206,6 +210,9 @@ ApplicationBootstrap::ApplicationBootstrap()
     if (m_bearingSnapshotAdapter) {
         m_bearingSnapshotAdapter->start();
     }
+    if (m_signalParameterSnapshotAdapter) {
+        m_signalParameterSnapshotAdapter->start();
+    }
     m_resultTableController->reload();
 
     m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
@@ -223,6 +230,9 @@ ApplicationBootstrap::~ApplicationBootstrap()
     }
     if (m_bearingSnapshotAdapter) {
         m_bearingSnapshotAdapter->stop();
+    }
+    if (m_signalParameterSnapshotAdapter) {
+        m_signalParameterSnapshotAdapter->stop();
     }
     if (m_waterfallController) {
         m_waterfallController->stop();

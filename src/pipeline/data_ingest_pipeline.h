@@ -9,6 +9,8 @@
 #include "pipeline/pipeline_diagnostics.h"
 #include "pipeline/pipeline_metrics.h"
 #include "pipeline/processing_engine.h"
+#include "pipeline/signal_parameter_aggregator.h"
+#include "pipeline/signal_parameter_snapshot.h"
 #include "pipeline/signal_block_pool.h"
 #include "pipeline/snapshot_exchange.h"
 #include "pipeline/spectrum_aggregator.h"
@@ -35,6 +37,7 @@ struct DataIngestPipelineConfig
     WaterfallRowQueueConfig waterfallRows;
     SpectrumAggregatorConfig spectrum;
     BearingAggregatorConfig bearing;
+    SignalParameterAggregatorConfig signalParameters;
 };
 
 class DataIngestPipeline
@@ -63,9 +66,11 @@ public:
     WaterfallRowQueueMetrics waterfallRowQueueMetrics() const;
     std::shared_ptr<const SpectrumSnapshot> latestSpectrumSnapshot() const;
     std::shared_ptr<const BearingSnapshot> latestBearingSnapshot() const;
+    std::shared_ptr<const SignalParameterSnapshot> latestSignalParameterSnapshot() const;
     void configureWaterfall(WaterfallAggregatorConfig config);
     void configureSpectrum(SpectrumAggregatorConfig config);
     void configureBearing(BearingAggregatorConfig config);
+    void configureSignalParameters(SignalParameterAggregatorConfig config);
     void clearQueuedBlocks();
 
 private:
@@ -80,6 +85,7 @@ private:
     WaterfallRowQueue m_waterfallRows;
     SnapshotExchange<SpectrumSnapshot> m_spectrumSnapshots;
     SnapshotExchange<BearingSnapshot> m_bearingSnapshots;
+    SnapshotExchange<SignalParameterSnapshot> m_signalParameterSnapshots;
     ProcessingEngine m_engine;
     std::atomic_bool m_accepting{false};
     std::atomic_bool m_running{false};

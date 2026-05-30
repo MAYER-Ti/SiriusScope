@@ -815,6 +815,10 @@ void WaterfallController::configureDataPlaneWaterfall(core::TimeBase timeBase)
     bearingConfig.fallbackAntennaAzimuthDeg = 0.0;
     bearingConfig.timeBase = timeBase;
     m_dataIngestPipeline->configureBearing(bearingConfig);
+
+    pipeline::SignalParameterAggregatorConfig signalParameterConfig;
+    signalParameterConfig.estimatorConfig.samplePeriodNs = timeBase.samplePeriodNs;
+    m_dataIngestPipeline->configureSignalParameters(signalParameterConfig);
 }
 
 core::TimeBase WaterfallController::fallbackWaterfallTimeBase() const

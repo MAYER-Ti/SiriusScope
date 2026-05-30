@@ -6,6 +6,7 @@
 #include "app/scancontroller.h"
 #include "app/signalsamplebus.h"
 #include "pipeline/bearing_snapshot.h"
+#include "pipeline/signal_parameter_snapshot.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -487,6 +488,26 @@ std::shared_ptr<const pipeline::BearingSnapshot> makeBearingSnapshot(
     });
     snapshot->counters.completeCandidates = 1;
     snapshot->counters.producedEstimates = 1;
+    return snapshot;
+}
+
+std::shared_ptr<const pipeline::SignalParameterSnapshot> makeSignalParameterSnapshot(
+    std::uint64_t sequenceId)
+{
+    auto snapshot = std::make_shared<pipeline::SignalParameterSnapshot>();
+    snapshot->sequenceId = sequenceId;
+    snapshot->createdUtcNs = 1'000'000'000;
+    snapshot->acceptedSampleCount = 5;
+    snapshot->pulseCount = 2;
+    pipeline::BandSignalParametersSummary band;
+    band.bandIndex = 0;
+    band.frequenciesHz = {1'001'000'000LL};
+    band.pulseRepetitionPeriodUs = 10.0;
+    band.pulseWidthUs = 2.5;
+    band.pulseCount = 2;
+    band.firstSampleIndex = 10;
+    band.lastSampleIndex = 22;
+    snapshot->bands.push_back(std::move(band));
     return snapshot;
 }
 
@@ -1093,6 +1114,55 @@ void testBearingSnapshotSummaryFeedsActiveScan(TestRunner& test)
     fixture.controller.stopScan();
 }
 
+void testSignalParameterSnapshotFeedsCompletedScan(TestRunner& test)
+{
+    ControllerFixture fixture;
+    int parameterCount = -1;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::signalParametersCalculated,
+                     [&](qulonglong, int count) {
+                         parameterCount = count;
+                     });
+
+    fixture.azimuthSource.emitAzimuth(0.0);
+    waitUntil([&fixture] {
+        return std::abs(fixture.controller.currentAzimuthDeg()) < 0.001;
+    });
+
+    fixture.controller.startScan(0.0, 20.0, 10.0);
+    test.require(fixture.controller.scanActive(),
+                 "scan is active before accepting signal parameter snapshot");
+
+    fixture.controller.acceptSignalParameterSnapshot(makeSignalParameterSnapshot(1));
+    fixture.controller.acceptBearingSnapshotSummary(makeBearingSnapshot(1, 42.0, 0.8));
+
+    test.require(fixture.controller.collectedSignalSampleCount() == 5,
+                 "signal parameter snapshot updates accepted sample count without raw samples");
+
+    fixture.azimuthSource.emitAzimuth(20.0);
+    const bool appended = waitUntil([&fixture] {
+        return fixture.resultTableSink.appendCalls == 1;
+    });
+
+    const auto* band0 = findSignalParameters(fixture.resultTableSink.lastSignalParameters, 0);
+    test.require(appended, "completed scan appends result table rows");
+    test.require(parameterCount == 1,
+                 "completed scan emits data-plane signal parameter count");
+    test.require(band0 != nullptr,
+                 "result table context receives data-plane signal parameters");
+    if (!band0) {
+        return;
+    }
+
+    test.require(band0->pulseCount == 2,
+                 "data-plane signal parameter pulse count reaches result table context");
+    test.require(std::abs(band0->pulseWidthUs - 2.5) < 0.001,
+                 "data-plane PW reaches result table context");
+    test.require(band0->pulseRepetitionPeriodUs
+                     && std::abs(*band0->pulseRepetitionPeriodUs - 10.0) < 0.001,
+                 "data-plane PRI reaches result table context");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -1119,6 +1189,7 @@ int main(int argc, char *argv[])
     testAzimuthSampleUpdatesCurrentValue(test);
     testBearingSnapshotSummaryIgnoredWhenInactive(test);
     testBearingSnapshotSummaryFeedsActiveScan(test);
+    testSignalParameterSnapshotFeedsCompletedScan(test);
 
     return test.result();
 }

@@ -50,6 +50,11 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides spectrum snapshot adapter");
     test.require(bootstrap.bearingSnapshotAdapter() != nullptr,
                  "bootstrap provides bearing snapshot adapter");
+    test.require(bootstrap.signalParameterSnapshotAdapter() != nullptr,
+                 "bootstrap provides signal parameter snapshot adapter");
+    test.require(bootstrap.signalParameterSnapshotAdapter()
+                     && bootstrap.signalParameterSnapshotAdapter()->running(),
+                 "bootstrap starts signal parameter snapshot adapter");
     test.require(bootstrap.waterfallController() != nullptr,
                  "bootstrap provides waterfall controller");
     test.require(bootstrap.antennaController() != nullptr,

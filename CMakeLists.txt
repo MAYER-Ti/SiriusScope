@@ -61,6 +61,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/scancontroller.cpp
     src/app/signalsamplebus.h
     src/app/signalsamplebus.cpp
+    src/app/signalparametersnapshotadapter.h
+    src/app/signalparametersnapshotadapter.cpp
     src/app/spectrumcontrollerstub.h
     src/app/spectrumcontrollerstub.cpp
     src/app/spectrumdecimator.h
@@ -141,6 +143,10 @@ set(SIRIUSSCOPE_PIPELINE_SOURCES
     src/pipeline/signal_block.cpp
     src/pipeline/signal_block_pool.h
     src/pipeline/signal_block_pool.cpp
+    src/pipeline/signal_parameter_aggregator.h
+    src/pipeline/signal_parameter_aggregator.cpp
+    src/pipeline/signal_parameter_snapshot.h
+    src/pipeline/signal_parameter_snapshot.cpp
     src/pipeline/snapshot_exchange.h
     src/pipeline/spectrum_aggregator.h
     src/pipeline/spectrum_aggregator.cpp
@@ -306,6 +312,7 @@ target_link_libraries(siriusscope_pipeline
     PUBLIC
         Threads::Threads
         siriusscope_core
+        siriusscope_processing_iface
         siriusscope_infrastructure_iface
 )
 

@@ -25,6 +25,10 @@ frequency bin, and band, pairs beam 0 / beam 1 peaks inside the window, and coun
 incomplete candidates instead of producing per-candidate diagnostics. The Qt layer polls
 snapshots and passes low-volume summaries to `ScanController` only while a scan is active.
 
+Signal parameter output is published as immutable `SignalParameterSnapshot` objects.
+`SignalParameterAggregator` reuses the processing accumulator inside the data plane and
+publishes compact per-band PRI/PW summaries without returning raw samples to Qt.
+
 `HighLoadSimulatorBcoStreamSource` is antenna-aware: it reads the current azimuth through
 a Qt-free provider interface, evaluates the shared simulator radio scene against two beam
 axes, and emits beam samples only when the source is visible to that beam. Duplicate

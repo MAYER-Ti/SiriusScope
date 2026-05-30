@@ -30,6 +30,7 @@ class IDiagnosticsSink;
 
 namespace siriusscope::pipeline {
 struct BearingSnapshot;
+struct SignalParameterSnapshot;
 }
 
 namespace siriusscope::app {
@@ -102,6 +103,8 @@ public:
         return m_collectedSignalSampleCount;
     }
     void acceptBearingSnapshotSummary(std::shared_ptr<const pipeline::BearingSnapshot> snapshot);
+    void acceptSignalParameterSnapshot(
+        std::shared_ptr<const pipeline::SignalParameterSnapshot> snapshot);
 
     Q_INVOKABLE void selectSector(double leftAngleDeg, double rightAngleDeg);
     Q_INVOKABLE void clearSector();
@@ -203,6 +206,8 @@ private:
     processing::SignalParameterAccumulator m_signalParameterAccumulator;
     std::size_t m_collectedSignalSampleCount = 0;
     std::vector<processing::SignalParameters> m_lastSignalParameters;
+    std::vector<processing::SignalParameters> m_latestDataPlaneSignalParameters;
+    std::uint64_t m_lastSignalParameterSnapshotSequenceId = 0;
     QVariantList m_targetBearings;
     QVariantList m_targetAzimuthsDeg;
     std::chrono::steady_clock::time_point m_nextAzimuthLatencyDiagnostic;
