@@ -319,6 +319,13 @@ void testDataPipelineDrainsAllWaterfallRows(TestRunner& test)
                  "metrics count drained waterfall rows");
     test.require(summary.metrics.waterfallDroppedRows == 0,
                  "no waterfall rows drop without overload");
+    test.require(summary.metrics.waterfallExpectedRowPeriodMs == 20.0,
+                 "pipeline metrics expose expected waterfall row period");
+    test.require(summary.metrics.waterfallRowUtcDeltaMinMs == 20.0
+                     && summary.metrics.waterfallRowUtcDeltaMaxMs == 20.0,
+                 "pipeline metrics expose waterfall UTC row delta range");
+    test.require(summary.metrics.waterfallTimebaseMismatchWarnings == 0,
+                 "pipeline metrics report no timebase mismatch for contiguous rows");
 }
 
 void testWaterfallRowQueueOverflowIsCounted(TestRunner& test)
@@ -365,6 +372,55 @@ void testWaterfallRowQueueOverflowIsCounted(TestRunner& test)
                      && diagnostics.events.front().message.find("Waterfall row queue overflow")
                          != std::string::npos,
                  "diagnostics publish rate-limited waterfall overflow summary");
+}
+
+void testWaterfallRowTimebaseMismatchIsCounted(TestRunner& test)
+{
+    RecordingDiagnosticsSink diagnostics;
+    pipeline::DataIngestPipelineConfig config;
+    config.blockPool = pipeline::SignalBlockPoolConfig{4, 64};
+    config.queueCapacity = 4;
+    config.diagnosticsPublishInterval = std::chrono::milliseconds{0};
+    config.acceptingOnStart = true;
+    config.waterfall.renderBinCount = 16;
+    config.waterfall.sourceMinHz = 300'000'000;
+    config.waterfall.sourceMaxHz = 18'000'000'000LL;
+    config.waterfall.rowPeriodNs = 20'000'000;
+    config.waterfall.timeBase = core::TimeBase{1'000'000'000, 0, 1'000'000};
+    config.waterfallRows = pipeline::WaterfallRowQueueConfig{
+        32,
+        pipeline::WaterfallOverflowPolicy::DropOldest,
+    };
+    pipeline::DataIngestPipeline dataPipeline(config, &diagnostics);
+
+    const auto band = makeBand(0);
+    const std::vector<core::SignalSample> samples{
+        makeSample(band, 0, 0, 40),
+        makeSample(band, 40, 0, 40),
+        makeSample(band, 60, 0, 40),
+    };
+
+    dataPipeline.start();
+    dataPipeline.ingestSamples(samples);
+    dataPipeline.flushProcessing(std::chrono::milliseconds{1500});
+    const auto drained = dataPipeline.drainWaterfallRows(10);
+    const auto metrics = dataPipeline.metricsSnapshot();
+    dataPipeline.stop();
+
+    test.require(drained.size() == 3,
+                 "timebase mismatch test produces sparse waterfall rows");
+    test.require(metrics.waterfallExpectedRowPeriodMs == 20.0,
+                 "timebase mismatch metrics keep expected row period");
+    test.require(metrics.waterfallRowUtcDeltaMinMs == 20.0
+                     && metrics.waterfallRowUtcDeltaMaxMs == 40.0,
+                 "timebase mismatch metrics expose sparse UTC delta range");
+    test.require(metrics.waterfallTimebaseMismatchWarnings == 1,
+                 "timebase mismatch metrics count row delta warning");
+    test.require(!diagnostics.events.empty()
+                     && diagnostics.events.front().message.find(
+                            "waterfall row time delta mismatch")
+                         != std::string::npos,
+                 "timebase mismatch diagnostic is aggregated");
 }
 
 void testHighLoadSimulatorConnectsToDataIngestPipeline(TestRunner& test)
@@ -462,6 +518,7 @@ int main()
     testDiagnosticsAreAggregated(test);
     testDataPipelineDrainsAllWaterfallRows(test);
     testWaterfallRowQueueOverflowIsCounted(test);
+    testWaterfallRowTimebaseMismatchIsCounted(test);
     testHighLoadSimulatorConnectsToDataIngestPipeline(test);
 
     return test.result();

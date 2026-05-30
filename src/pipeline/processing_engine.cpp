@@ -342,6 +342,11 @@ void ProcessingEngine::publishWaterfallRows(WaterfallAggregationResult result,
         m_diagnostics->recordWaterfallRowQueueOverflow(pushResult.droppedRows,
                                                        pushResult.depth,
                                                        pushResult.capacity);
+        m_diagnostics->recordWaterfallRowTimebaseMismatch(
+            pushResult.waterfallTimebaseMismatchWarnings,
+            pushResult.waterfallRowUtcDeltaMinMs,
+            pushResult.waterfallRowUtcDeltaMaxMs,
+            pushResult.waterfallExpectedRowPeriodMs);
     }
 }
 

@@ -158,6 +158,11 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.waterfallRowQueueDepth = waterfallRowMetrics.depth;
     snapshot.waterfallRowQueueCapacity = waterfallRowMetrics.capacity;
     snapshot.latestWaterfallRowSequenceId = waterfallRowMetrics.latestRowSequenceId;
+    snapshot.waterfallRowUtcDeltaMinMs = waterfallRowMetrics.waterfallRowUtcDeltaMinMs;
+    snapshot.waterfallRowUtcDeltaMaxMs = waterfallRowMetrics.waterfallRowUtcDeltaMaxMs;
+    snapshot.waterfallExpectedRowPeriodMs = waterfallRowMetrics.waterfallExpectedRowPeriodMs;
+    snapshot.waterfallTimebaseMismatchWarnings =
+        waterfallRowMetrics.waterfallTimebaseMismatchWarnings;
     snapshot.aggregationLatencyMaxMs = static_cast<double>(m_aggregationLatencyMax.count());
     snapshot.waterfallInvalidFrequencySamples = m_waterfallInvalidFrequencySamples;
     snapshot.waterfallOutOfRangeSamples = m_waterfallOutOfRangeSamples;

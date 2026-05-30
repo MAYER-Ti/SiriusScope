@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace siriusscope::pipeline {
@@ -54,6 +55,10 @@ struct WaterfallRowQueueMetrics
     std::uint64_t drainedRows = 0;
     std::uint64_t droppedRows = 0;
     std::uint64_t latestRowSequenceId = 0;
+    double waterfallRowUtcDeltaMinMs = 0.0;
+    double waterfallRowUtcDeltaMaxMs = 0.0;
+    double waterfallExpectedRowPeriodMs = 0.0;
+    std::uint64_t waterfallTimebaseMismatchWarnings = 0;
 };
 
 struct WaterfallRowQueuePushResult
@@ -64,6 +69,10 @@ struct WaterfallRowQueuePushResult
     std::size_t depth = 0;
     std::size_t capacity = 0;
     std::uint64_t latestRowSequenceId = 0;
+    double waterfallRowUtcDeltaMinMs = 0.0;
+    double waterfallRowUtcDeltaMaxMs = 0.0;
+    double waterfallExpectedRowPeriodMs = 0.0;
+    std::uint64_t waterfallTimebaseMismatchWarnings = 0;
 };
 
 class WaterfallRowQueue
@@ -82,12 +91,17 @@ public:
 private:
     WaterfallQueuedRow makeQueuedRow(WaterfallSnapshotRow row,
                                      const WaterfallRowBatchMetadata& metadata);
+    void recordQueuedRowTimeMetrics(const WaterfallQueuedRow& row,
+                                    const WaterfallRowBatchMetadata& metadata,
+                                    WaterfallRowQueuePushResult& result);
 
     mutable std::mutex m_mutex;
     WaterfallRowQueueConfig m_config;
     std::deque<WaterfallQueuedRow> m_rows;
     WaterfallRowQueueMetrics m_metrics;
     std::uint64_t m_nextRowSequenceId = 1;
+    std::optional<std::int64_t> m_lastValidRowUtcMs;
+    bool m_hasWaterfallRowUtcDelta = false;
 };
 
 } // namespace siriusscope::pipeline

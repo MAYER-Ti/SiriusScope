@@ -373,6 +373,8 @@ void testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(TestRunner& test
                  "high-load source block appends all queued waterfall rows");
     test.require(latestSession && storage.rowCount(latestSession->id) == 3,
                  "all queued rows are stored as aggregated waterfall rows");
+    test.require(latestSession && latestSession->rowPeriodMs == config.rowPeriodMs,
+                 "waterfall session metadata preserves controller row period");
     test.require(storedRows.size() == 3
                      && storedRows[0].utcMs == 1000
                      && storedRows[1].utcMs == 1020
@@ -383,6 +385,16 @@ void testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(TestRunner& test
                      && storedRows[1].firstSampleIndex == 20
                      && storedRows[2].firstSampleIndex == 40,
                  "queued row sample index ranges are preserved in storage");
+    if (latestSession && storedRows.size() == 3) {
+        WaterfallTimelineMapper mapper(storedRows[2].utcMs,
+                                       latestSession->rowPeriodMs,
+                                       config.visibleRowCount,
+                                       config.visibleRowCount);
+        test.require(mapper.rowIndexForUtcMs(storedRows[2].utcMs) == 0
+                         && mapper.rowIndexForUtcMs(storedRows[1].utcMs) == 1
+                         && mapper.rowIndexForUtcMs(storedRows[0].utcMs) == 2,
+                     "history timeline maps stored rows to matching row slots");
+    }
 }
 
 void testHighLoadPathDoesNotPublishRawBuses(TestRunner& test)

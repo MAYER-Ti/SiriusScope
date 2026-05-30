@@ -2,6 +2,7 @@
 #include "hardware/interfaces/antenna_azimuth_provider.h"
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
 
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <condition_variable>
@@ -50,6 +51,28 @@ public:
 private:
     double m_azimuthDeg = 0.0;
 };
+
+class CapturingDiagnosticsSink final : public infrastructure::IDiagnosticsSink
+{
+public:
+    void publish(const infrastructure::DiagnosticEvent& event) override
+    {
+        events.push_back(event);
+    }
+
+    std::vector<infrastructure::DiagnosticEvent> events;
+};
+
+bool hasWarningContaining(const CapturingDiagnosticsSink& diagnostics,
+                          const std::string& text)
+{
+    return std::any_of(diagnostics.events.begin(),
+                       diagnostics.events.end(),
+                       [&text](const auto& event) {
+                           return event.severity == infrastructure::DiagnosticSeverity::Warning
+                               && event.message.find(text) != std::string::npos;
+                       });
+}
 
 core::BandConfig makeBandConfig(bool enabled = true)
 {
@@ -550,6 +573,44 @@ void testRuntimePulseConfigUpdateAppliesToNextBlocks(TestRunner& test)
                  "source applies disabled pulse config to following block");
 }
 
+void testConfigurePublishesTimebaseMismatchWarning(TestRunner& test)
+{
+    auto loadConfig = makePulseLoadConfig();
+    loadConfig.samplesPerSecond = 1'000'000;
+    CapturingDiagnosticsSink diagnostics;
+    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig, &diagnostics);
+
+    auto config = makeValidConfig();
+    config.timeBase.samplePeriodNs = 320;
+    const auto configureResult = source.configure(config);
+
+    test.require(configureResult.success,
+                 "source accepts config with diagnostic timebase mismatch");
+    test.require(hasWarningContaining(diagnostics, "timebase mismatch"),
+                 "source publishes warning for simulator timebase mismatch");
+    test.require(hasWarningContaining(diagnostics, "samplesPerSecond=1000000"),
+                 "timebase mismatch warning contains configured sample rate");
+    test.require(hasWarningContaining(diagnostics, "samplePeriodNs=320"),
+                 "timebase mismatch warning contains sample period");
+}
+
+void testConfigureDoesNotWarnWhenTimebaseMatchesThroughput(TestRunner& test)
+{
+    auto loadConfig = makePulseLoadConfig();
+    loadConfig.samplesPerSecond = 1'000'000;
+    CapturingDiagnosticsSink diagnostics;
+    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig, &diagnostics);
+
+    auto config = makeValidConfig();
+    config.timeBase.samplePeriodNs = 1000;
+    const auto configureResult = source.configure(config);
+
+    test.require(configureResult.success,
+                 "source accepts config with matching simulator timebase");
+    test.require(!hasWarningContaining(diagnostics, "timebase mismatch"),
+                 "source does not publish mismatch warning when rates match");
+}
+
 void testFactoryCreatesHighLoadSimulator(TestRunner& test)
 {
     hardware::HardwareProfile profile;
@@ -590,6 +651,8 @@ int main()
     testStopIsIdempotent(test);
     testPulseConfigsCanBeUpdated(test);
     testRuntimePulseConfigUpdateAppliesToNextBlocks(test);
+    testConfigurePublishesTimebaseMismatchWarning(test);
+    testConfigureDoesNotWarnWhenTimebaseMatchesThroughput(test);
     testFactoryCreatesHighLoadSimulator(test);
     testFactoryRejectsWrongMode(test);
 

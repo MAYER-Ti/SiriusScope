@@ -133,6 +133,16 @@ void testTimeBase(TestRunner& test)
     const auto invalidPeriod = TimeBase::create(0, 0, 0);
     test.require(invalidPeriod.validation().contains(ValidationCode::InvalidTimeBase),
                  "zero sample period is invalid");
+
+    const auto explicitBase =
+        TimeBase::create(1'700'000'000'000'000'000LL, 1000, 1'000'000);
+    test.require(explicitBase.hasValue(), "explicit UTC time base is valid");
+    if (explicitBase) {
+        const auto mapped = (*explicitBase.value()).globalTimeUtcNsForSample(1040);
+        test.require(mapped.hasValue()
+                         && *mapped.value() == 1'700'000'000'040'000'000LL,
+                     "sampleIndex maps to UTC through recording start and sample period");
+    }
 }
 
 void testResultModels(TestRunner& test)

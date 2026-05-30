@@ -34,6 +34,10 @@ struct PipelineMetricsSnapshot
     std::size_t waterfallRowQueueDepth = 0;
     std::size_t waterfallRowQueueCapacity = 0;
     std::uint64_t latestWaterfallRowSequenceId = 0;
+    double waterfallRowUtcDeltaMinMs = 0.0;
+    double waterfallRowUtcDeltaMaxMs = 0.0;
+    double waterfallExpectedRowPeriodMs = 0.0;
+    std::uint64_t waterfallTimebaseMismatchWarnings = 0;
     double aggregationLatencyMaxMs = 0.0;
     std::uint64_t waterfallInvalidFrequencySamples = 0;
     std::uint64_t waterfallOutOfRangeSamples = 0;

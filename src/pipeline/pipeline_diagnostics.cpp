@@ -12,6 +12,7 @@ bool PipelineDiagnosticCounters::empty() const noexcept
         && processingLatencyMaxMs <= 0.0 && invalidFrequencySamples == 0
         && outOfRangeSamples == 0 && emptyBlocks == 0 && aggregationLatencyMaxMs <= 0.0
         && waterfallDroppedRows == 0
+        && waterfallTimebaseMismatchWarnings == 0
         && spectrumInvalidSamples == 0 && spectrumOutOfRangeSamples == 0
         && spectrumAggregationLatencyMaxMs <= 0.0 && incompleteBearingCandidates == 0
         && missingBeam0Candidates == 0 && missingBeam1Candidates == 0
@@ -94,6 +95,29 @@ void PipelineDiagnostics::recordWaterfallRowQueueOverflow(std::uint64_t droppedR
     m_counters.waterfallDroppedRows += droppedRows;
     m_counters.waterfallRowQueueDepth = depth;
     m_counters.waterfallRowQueueCapacity = capacity;
+}
+
+void PipelineDiagnostics::recordWaterfallRowTimebaseMismatch(
+    std::uint64_t warnings,
+    double deltaMinMs,
+    double deltaMaxMs,
+    double expectedMs)
+{
+    if (warnings == 0) {
+        return;
+    }
+
+    std::lock_guard lock(m_mutex);
+    m_counters.waterfallTimebaseMismatchWarnings += warnings;
+    if (m_counters.waterfallRowUtcDeltaMinMs == 0.0
+        || deltaMinMs < m_counters.waterfallRowUtcDeltaMinMs) {
+        m_counters.waterfallRowUtcDeltaMinMs = deltaMinMs;
+    }
+    if (m_counters.waterfallRowUtcDeltaMaxMs == 0.0
+        || deltaMaxMs > m_counters.waterfallRowUtcDeltaMaxMs) {
+        m_counters.waterfallRowUtcDeltaMaxMs = deltaMaxMs;
+    }
+    m_counters.waterfallExpectedRowPeriodMs = expectedMs;
 }
 
 void PipelineDiagnostics::recordSpectrumAggregation(
@@ -216,6 +240,13 @@ std::string PipelineDiagnostics::buildMessage(
                << counters.waterfallDroppedRows << ", depth="
                << counters.waterfallRowQueueDepth << "/"
                << counters.waterfallRowQueueCapacity;
+    }
+    if (counters.waterfallTimebaseMismatchWarnings > 0) {
+        stream << " waterfall row time delta mismatch: deltaMs="
+               << counters.waterfallRowUtcDeltaMinMs << ".."
+               << counters.waterfallRowUtcDeltaMaxMs << ", expectedMs="
+               << counters.waterfallExpectedRowPeriodMs << ", warnings="
+               << counters.waterfallTimebaseMismatchWarnings;
     }
     if (counters.aggregationLatencyMaxMs > 0.0) {
         stream << " aggregationLatencyMaxMs=" << counters.aggregationLatencyMaxMs;

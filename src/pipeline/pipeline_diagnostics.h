@@ -32,6 +32,10 @@ struct PipelineDiagnosticCounters
     std::uint64_t waterfallDroppedRows = 0;
     std::size_t waterfallRowQueueDepth = 0;
     std::size_t waterfallRowQueueCapacity = 0;
+    std::uint64_t waterfallTimebaseMismatchWarnings = 0;
+    double waterfallRowUtcDeltaMinMs = 0.0;
+    double waterfallRowUtcDeltaMaxMs = 0.0;
+    double waterfallExpectedRowPeriodMs = 0.0;
     double aggregationLatencyMaxMs = 0.0;
     std::uint64_t spectrumInvalidSamples = 0;
     std::uint64_t spectrumOutOfRangeSamples = 0;
@@ -66,6 +70,10 @@ public:
     void recordWaterfallRowQueueOverflow(std::uint64_t droppedRows,
                                          std::size_t depth,
                                          std::size_t capacity);
+    void recordWaterfallRowTimebaseMismatch(std::uint64_t warnings,
+                                            double deltaMinMs,
+                                            double deltaMaxMs,
+                                            double expectedMs);
     void recordSpectrumAggregation(std::uint64_t invalidSamples,
                                    std::uint64_t outOfRangeSamples,
                                    std::uint64_t producedSnapshots,

@@ -109,6 +109,39 @@ void testDifferentTimeBucketsProduceMultipleRows(TestRunner& test)
                  "second bucket UTC advances by row period");
 }
 
+void testTimeBaseMapsSampleIndexToRowUtcMs(TestRunner& test)
+{
+    auto config = makeConfig();
+    config.timeBase =
+        core::TimeBase{1'700'000'000'000'000'000LL, 1000, 1'000'000};
+    config.rowPeriodNs = 20'000'000;
+    pipeline::WaterfallAggregator aggregator(config);
+
+    const auto rows = consumeAndFlush(aggregator,
+                                      {sample(1000, 150, 0, 20),
+                                       sample(1010, 150, 1, 30),
+                                       sample(1020, 150, 0, 40),
+                                       sample(1040, 150, 1, 50)});
+
+    test.require(rows.size() == 3,
+                 "timebase test produces one row per 20 ms bucket");
+    if (rows.size() != 3) {
+        return;
+    }
+
+    const auto utcMs = [](const auto& row) {
+        return row.utcNs / 1'000'000;
+    };
+
+    test.require(utcMs(rows[0]) == 1'700'000'000'000LL,
+                 "first waterfall row UTC ms equals recording start");
+    test.require(utcMs(rows[0]) < utcMs(rows[1]) && utcMs(rows[1]) < utcMs(rows[2]),
+                 "waterfall row UTC values are monotonic");
+    test.require(utcMs(rows[1]) - utcMs(rows[0]) == 20
+                     && utcMs(rows[2]) - utcMs(rows[1]) == 20,
+                 "waterfall row UTC deltas match configured row period");
+}
+
 void testBeamPeaksAndHitCount(TestRunner& test)
 {
     pipeline::WaterfallAggregator aggregator(makeConfig());
@@ -205,6 +238,7 @@ int main()
     testFrequencyMapsToExpectedBin(test);
     testOneTimeBucketProducesOneRow(test);
     testDifferentTimeBucketsProduceMultipleRows(test);
+    testTimeBaseMapsSampleIndexToRowUtcMs(test);
     testBeamPeaksAndHitCount(test);
     testDirectionalBalanceChangesAcrossBuckets(test);
     testAggregatorDoesNotCreateRowPerSampleIndex(test);

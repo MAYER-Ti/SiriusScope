@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -131,6 +132,41 @@ std::uint64_t saturatedAdd(std::uint64_t value, std::uint64_t increment)
     }
 
     return value + increment;
+}
+
+long double samplesPerSecondFromTimeBase(std::uint64_t samplePeriodNs)
+{
+    if (samplePeriodNs == 0) {
+        return 0.0L;
+    }
+
+    return 1'000'000'000.0L / static_cast<long double>(samplePeriodNs);
+}
+
+bool hasTimebaseRateMismatch(std::size_t configuredSamplesPerSecond,
+                             std::uint64_t samplePeriodNs)
+{
+    const long double timeBaseRate = samplesPerSecondFromTimeBase(samplePeriodNs);
+    if (timeBaseRate <= 0.0L) {
+        return false;
+    }
+
+    const long double configuredRate =
+        static_cast<long double>(configuredSamplesPerSecond);
+    const long double relativeDifference =
+        std::abs(configuredRate - timeBaseRate) / timeBaseRate;
+    return relativeDifference > 0.05L;
+}
+
+std::string timebaseMismatchMessage(std::size_t configuredSamplesPerSecond,
+                                    std::uint64_t samplePeriodNs)
+{
+    std::ostringstream stream;
+    stream << "high-load simulator timebase mismatch: samplesPerSecond="
+           << configuredSamplesPerSecond << ", timeBaseRate="
+           << static_cast<double>(samplesPerSecondFromTimeBase(samplePeriodNs))
+           << ", samplePeriodNs=" << samplePeriodNs;
+    return stream.str();
 }
 
 const SimulatorPulseBandConfig* pulseConfigForBand(
@@ -512,9 +548,11 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
     const BcoStreamConfig& config)
 {
     std::vector<SimulatorPulseBandConfig> pulseConfigs;
+    std::size_t configuredSamplesPerSecond = 0;
     {
         std::lock_guard lock(m_mutex);
         pulseConfigs = m_loadConfig.pulseBandConfigs;
+        configuredSamplesPerSecond = m_loadConfig.samplesPerSecond;
     }
 
     if (config.bandConfigs.empty()) {
@@ -554,6 +592,13 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
             publish(infrastructure::DiagnosticSeverity::Warning,
                     "high-load BCO simulator pulse configs disable all enabled bands");
         }
+    }
+
+    if (hasTimebaseRateMismatch(configuredSamplesPerSecond,
+                                config.timeBase.samplePeriodNs)) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                timebaseMismatchMessage(configuredSamplesPerSecond,
+                                        config.timeBase.samplePeriodNs));
     }
 
     std::lock_guard lock(m_mutex);

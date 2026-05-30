@@ -155,6 +155,28 @@ void testDropNewestOverflowOrdering(TestRunner& test)
     requireInvariant(test, metrics, "after DropNewest overflow");
 }
 
+void testRowUtcDeltaMetrics(TestRunner& test)
+{
+    pipeline::WaterfallRowQueue queue(
+        pipeline::WaterfallRowQueueConfig{8, pipeline::WaterfallOverflowPolicy::DropOldest});
+
+    const auto pushed = queue.pushRows(rows(0, 2), metadata());
+    const auto metrics = queue.metrics();
+
+    test.require(pushed.queuedRows == 3, "delta metrics test queues rows");
+    test.require(metrics.waterfallExpectedRowPeriodMs == 20.0,
+                 "row queue metrics expose expected row period");
+    test.require(metrics.waterfallRowUtcDeltaMinMs == 20.0,
+                 "row queue metrics expose minimum UTC row delta");
+    test.require(metrics.waterfallRowUtcDeltaMaxMs == 20.0,
+                 "row queue metrics expose maximum UTC row delta");
+    test.require(metrics.waterfallTimebaseMismatchWarnings == 0,
+                 "matching UTC row deltas do not count mismatch warnings");
+    test.require(pushed.waterfallRowUtcDeltaMinMs == 20.0
+                     && pushed.waterfallRowUtcDeltaMaxMs == 20.0,
+                 "push result mirrors row delta metrics");
+}
+
 void testResetClearsQueueAndMetrics(TestRunner& test)
 {
     pipeline::WaterfallRowQueue queue(
@@ -185,6 +207,7 @@ int main()
     testDrainMaxRowsLeavesRemainder(test);
     testDropOldestOverflowOrdering(test);
     testDropNewestOverflowOrdering(test);
+    testRowUtcDeltaMetrics(test);
     testResetClearsQueueAndMetrics(test);
 
     return test.result();

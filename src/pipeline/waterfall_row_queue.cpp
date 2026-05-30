@@ -1,6 +1,7 @@
 #include "pipeline/waterfall_row_queue.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace siriusscope::pipeline {
@@ -18,6 +19,8 @@ void WaterfallRowQueue::reset()
     m_metrics = {};
     m_metrics.capacity = m_config.maxQueuedRows;
     m_nextRowSequenceId = 1;
+    m_lastValidRowUtcMs.reset();
+    m_hasWaterfallRowUtcDelta = false;
 }
 
 void WaterfallRowQueue::setConfig(WaterfallRowQueueConfig config)
@@ -28,6 +31,8 @@ void WaterfallRowQueue::setConfig(WaterfallRowQueueConfig config)
     m_metrics = {};
     m_metrics.capacity = m_config.maxQueuedRows;
     m_nextRowSequenceId = 1;
+    m_lastValidRowUtcMs.reset();
+    m_hasWaterfallRowUtcDelta = false;
 }
 
 WaterfallRowQueuePushResult WaterfallRowQueue::pushRows(
@@ -62,12 +67,16 @@ WaterfallRowQueuePushResult WaterfallRowQueue::pushRows(
         }
 
         m_rows.push_back(makeQueuedRow(std::move(row), metadata));
+        recordQueuedRowTimeMetrics(m_rows.back(), metadata, result);
         ++result.queuedRows;
     }
 
     m_metrics.depth = m_rows.size();
     result.depth = m_rows.size();
     result.latestRowSequenceId = m_metrics.latestRowSequenceId;
+    result.waterfallRowUtcDeltaMinMs = m_metrics.waterfallRowUtcDeltaMinMs;
+    result.waterfallRowUtcDeltaMaxMs = m_metrics.waterfallRowUtcDeltaMaxMs;
+    result.waterfallExpectedRowPeriodMs = m_metrics.waterfallExpectedRowPeriodMs;
     return result;
 }
 
@@ -113,6 +122,51 @@ WaterfallQueuedRow WaterfallRowQueue::makeQueuedRow(
     queued.row = std::move(row);
     m_metrics.latestRowSequenceId = queued.sequenceId;
     return queued;
+}
+
+void WaterfallRowQueue::recordQueuedRowTimeMetrics(
+    const WaterfallQueuedRow& row,
+    const WaterfallRowBatchMetadata& metadata,
+    WaterfallRowQueuePushResult& result)
+{
+    const auto utcMs = row.row.utcNs / 1'000'000;
+    if (utcMs <= 0) {
+        return;
+    }
+
+    const double expectedMs =
+        static_cast<double>(metadata.rowPeriodNs) / 1'000'000.0;
+    m_metrics.waterfallExpectedRowPeriodMs = expectedMs;
+    result.waterfallExpectedRowPeriodMs = expectedMs;
+
+    if (!m_lastValidRowUtcMs) {
+        m_lastValidRowUtcMs = utcMs;
+        return;
+    }
+
+    const double deltaMs =
+        static_cast<double>(utcMs - *m_lastValidRowUtcMs);
+    m_lastValidRowUtcMs = utcMs;
+
+    if (!m_hasWaterfallRowUtcDelta) {
+        m_metrics.waterfallRowUtcDeltaMinMs = deltaMs;
+        m_metrics.waterfallRowUtcDeltaMaxMs = deltaMs;
+        m_hasWaterfallRowUtcDelta = true;
+    } else {
+        m_metrics.waterfallRowUtcDeltaMinMs =
+            std::min(m_metrics.waterfallRowUtcDeltaMinMs, deltaMs);
+        m_metrics.waterfallRowUtcDeltaMaxMs =
+            std::max(m_metrics.waterfallRowUtcDeltaMaxMs, deltaMs);
+    }
+
+    const double thresholdMs = std::max(2.0, expectedMs * 0.25);
+    if (expectedMs > 0.0 && std::abs(deltaMs - expectedMs) > thresholdMs) {
+        ++m_metrics.waterfallTimebaseMismatchWarnings;
+        ++result.waterfallTimebaseMismatchWarnings;
+    }
+
+    result.waterfallRowUtcDeltaMinMs = m_metrics.waterfallRowUtcDeltaMinMs;
+    result.waterfallRowUtcDeltaMaxMs = m_metrics.waterfallRowUtcDeltaMaxMs;
 }
 
 } // namespace siriusscope::pipeline
