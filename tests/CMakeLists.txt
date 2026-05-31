@@ -177,6 +177,24 @@ target_include_directories(tst_data_ingest_pipeline
 
 add_test(NAME tst_data_ingest_pipeline COMMAND tst_data_ingest_pipeline)
 
+add_executable(tst_high_load_data_plane
+    perf/tst_high_load_data_plane.cpp
+)
+
+target_link_libraries(tst_high_load_data_plane
+    PRIVATE
+        siriusscope_pipeline
+        siriusscope_hardware
+)
+
+target_include_directories(tst_high_load_data_plane
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_high_load_data_plane COMMAND tst_high_load_data_plane)
+set_tests_properties(tst_high_load_data_plane PROPERTIES LABELS "perf")
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )
