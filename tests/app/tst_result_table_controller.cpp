@@ -7,6 +7,7 @@
 #include <QEventLoop>
 #include <QThread>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <functional>
@@ -57,14 +58,18 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500)
 core::BearingResult makeBearingResult(std::uint64_t sampleIndex = 12,
                                       std::int64_t utcNs =
                                           1'700'000'000'000'000'000LL,
-                                      int bandIndex = 1)
+                                      int bandIndex = 1,
+                                      double bearingAzimuthDeg = 47.0,
+                                      std::vector<std::int64_t> frequenciesHz =
+                                          {3'000'000'000LL},
+                                      std::optional<double> quality = 0.84)
 {
     auto created = core::BearingResult::create(sampleIndex,
                                                utcNs,
                                                bandIndex,
-                                               47.0,
-                                               {3'000'000'000LL},
-                                               0.84);
+                                               bearingAzimuthDeg,
+                                               frequenciesHz,
+                                               quality);
     return *created.value();
 }
 
@@ -139,6 +144,15 @@ public:
     std::vector<infrastructure::DiagnosticEvent> events;
 };
 
+const core::ResultTableRow* findRowByBand(const std::vector<core::ResultTableRow>& rows,
+                                          int bandIndex)
+{
+    const auto it = std::find_if(rows.begin(), rows.end(), [bandIndex](const auto& row) {
+        return row.bandIndex == bandIndex;
+    });
+    return it == rows.end() ? nullptr : &(*it);
+}
+
 void testEmptyAppend(TestRunner& test)
 {
     ResultTableModel model;
@@ -172,7 +186,7 @@ void testAppendValidBearingResult(TestRunner& test)
 
     test.require(delivered, "valid append reaches model");
     test.require(storage.appendCalls == 1, "valid append writes storage");
-    test.require(model.rows().front().bearingAzimuthDeg == 47.0,
+    test.require(std::abs(model.rows().front().bearingAzimuthDeg - 47.0) <= 0.001,
                  "controller preserves calculated bearing azimuth");
     test.require(model.data(model.index(0, 0), ResultTableModel::AzimuthTextRole).toString()
                      == QStringLiteral("47,0°"),
@@ -214,6 +228,130 @@ void testAppendMapsSignalParametersByBand(TestRunner& test)
     test.require(model.rows().front().pulseWidthUs
                      && *model.rows().front().pulseWidthUs == 10'000.0,
                  "controller maps pulse width by band index");
+}
+
+void testAppendAggregatesMultipleBearingResultsByBand(TestRunner& test)
+{
+    ResultTableModel model;
+    FakeResultTableStorage storage;
+    RecordingDiagnosticsSink diagnostics;
+    ResultTableController controller(&model, &storage, &diagnostics);
+
+    app::ResultTableAppendContext context;
+    context.scanSessionId = 42;
+    context.antennaAzimuthDeg = 50.0;
+    context.signalParameters.push_back(processing::SignalParameters{
+        0,
+        3,
+        10'000.0,
+        100'000.0,
+        {1'000'000'000LL, 1'005'000'000LL, 1'010'000'000LL},
+    });
+
+    const auto result = controller.appendBearingResults(
+        context,
+        {
+            makeBearingResult(12,
+                              1'700'000'000'000'000'000LL,
+                              0,
+                              30.0,
+                              {1'000'000'000LL},
+                              0.4),
+            makeBearingResult(13,
+                              1'700'000'001'000'000'000LL,
+                              0,
+                              32.0,
+                              {1'005'000'000LL},
+                              0.8),
+            makeBearingResult(14,
+                              1'700'000'002'000'000'000LL,
+                              0,
+                              31.0,
+                              {1'010'000'000LL},
+                              0.6),
+        });
+
+    test.require(result.success, "aggregated append is accepted");
+    test.require(controller.waitUntilIdle(std::chrono::milliseconds{1500}),
+                 "aggregated append worker finishes");
+    waitUntil([&model] {
+        return model.count() == 1;
+    });
+
+    test.require(model.count() == 1, "same band results produce one result table row");
+    if (model.count() != 1) {
+        return;
+    }
+    test.require(storage.appendCalls == 1, "same band aggregation writes one storage row");
+    const auto& row = model.rows().front();
+    test.require(row.bandIndex == 0, "aggregated row keeps band index");
+    test.require(row.frequenciesHz
+                     == std::vector<std::int64_t>{
+                         1'000'000'000LL,
+                         1'005'000'000LL,
+                         1'010'000'000LL,
+                     },
+                 "aggregated row keeps all unique sorted frequencies");
+    test.require(row.pulseRepetitionPeriodUs && *row.pulseRepetitionPeriodUs == 100'000.0,
+                 "aggregated row maps PRI by band index");
+    test.require(row.pulseWidthUs && *row.pulseWidthUs == 10'000.0,
+                 "aggregated row maps pulse width by band index");
+    test.require(diagnostics.contains("Aggregated 3 bearing results into 1 result table rows"),
+                 "aggregation is diagnosed when row count changes");
+}
+
+void testAppendAggregatesToOneRowPerBand(TestRunner& test)
+{
+    ResultTableModel model;
+    FakeResultTableStorage storage;
+    RecordingDiagnosticsSink diagnostics;
+    ResultTableController controller(&model, &storage, &diagnostics);
+
+    const auto result = controller.appendBearingResults(
+        {42, 50.0},
+        {
+            makeBearingResult(12,
+                              1'700'000'000'000'000'000LL,
+                              0,
+                              30.0,
+                              {1'000'000'000LL},
+                              0.4),
+            makeBearingResult(13,
+                              1'700'000'001'000'000'000LL,
+                              0,
+                              32.0,
+                              {1'005'000'000LL},
+                              0.8),
+            makeBearingResult(14,
+                              1'700'000'002'000'000'000LL,
+                              1,
+                              120.0,
+                              {2'000'000'000LL},
+                              0.7),
+        });
+
+    test.require(result.success, "two-band append is accepted");
+    test.require(controller.waitUntilIdle(std::chrono::milliseconds{1500}),
+                 "two-band append worker finishes");
+    waitUntil([&model] {
+        return model.count() == 2;
+    });
+
+    test.require(model.count() == 2, "two band indexes produce two rows");
+    if (model.count() != 2) {
+        return;
+    }
+    test.require(storage.appendCalls == 2, "two band aggregation writes two storage rows");
+    const auto* band0 = findRowByBand(model.rows(), 0);
+    const auto* band1 = findRowByBand(model.rows(), 1);
+    test.require(band0 != nullptr, "band 0 row exists");
+    test.require(band1 != nullptr, "band 1 row exists");
+    test.require(band0 && band0->frequenciesHz
+                     == std::vector<std::int64_t>{1'000'000'000LL, 1'005'000'000LL},
+                 "band 0 row has aggregated frequencies");
+    test.require(band1 && band1->frequenciesHz
+                     == std::vector<std::int64_t>{2'000'000'000LL},
+                 "band 1 row keeps its frequency");
 }
 
 void testAppendWithoutMatchingSignalParametersKeepsRow(TestRunner& test)
@@ -303,8 +441,8 @@ void testInvalidBearingResultRejected(TestRunner& test)
     test.require(!result.success, "invalid append reports failure");
     test.require(model.count() == 0, "invalid append does not reach model");
     test.require(storage.appendCalls == 0, "invalid append does not call storage");
-    test.require(diagnostics.contains("Rejected invalid result table row"),
-                 "invalid append is diagnosed");
+    test.require(diagnostics.contains("Skipped invalid aggregated bearing result for band 99"),
+                 "invalid aggregate is diagnosed");
 }
 
 void testStorageFailureDoesNotUpdateModel(TestRunner& test)
@@ -413,6 +551,8 @@ int main(int argc, char* argv[])
     testEmptyAppend(test);
     testAppendValidBearingResult(test);
     testAppendMapsSignalParametersByBand(test);
+    testAppendAggregatesMultipleBearingResultsByBand(test);
+    testAppendAggregatesToOneRowPerBand(test);
     testAppendWithoutMatchingSignalParametersKeepsRow(test);
     testInvalidSignalParametersDoNotDropBearingRow(test);
     testInvalidBearingResultRejected(test);

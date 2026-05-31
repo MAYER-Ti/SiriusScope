@@ -1,5 +1,7 @@
 #include "resulttablecontroller.h"
 
+#include "app/scanbandresultaggregator.h"
+
 #include <QMetaObject>
 #include <QThread>
 
@@ -7,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <set>
 #include <utility>
 
 namespace siriusscope::app {
@@ -101,10 +104,32 @@ core::OperationResult ResultTableController::appendBearingResults(
         return core::OperationResult::ok();
     }
 
-    std::vector<core::ResultTableRow> rows;
-    rows.reserve(results.size());
+    const auto aggregatedResults = ScanBandResultAggregator::aggregateByBand(results);
+    if (aggregatedResults.size() != results.size()) {
+        publishInfo(QStringLiteral("Aggregated %1 bearing results into %2 result table rows")
+                        .arg(static_cast<qulonglong>(results.size()))
+                        .arg(static_cast<qulonglong>(aggregatedResults.size())));
+    }
 
+    std::set<int> inputBandIndexes;
+    std::set<int> aggregatedBandIndexes;
     for (const auto& result : results) {
+        inputBandIndexes.insert(result.bandIndex);
+    }
+    for (const auto& result : aggregatedResults) {
+        aggregatedBandIndexes.insert(result.bandIndex);
+    }
+    for (const auto bandIndex : inputBandIndexes) {
+        if (!aggregatedBandIndexes.contains(bandIndex)) {
+            publishWarning(QStringLiteral("Skipped invalid aggregated bearing result for band %1")
+                               .arg(bandIndex));
+        }
+    }
+
+    std::vector<core::ResultTableRow> rows;
+    rows.reserve(aggregatedResults.size());
+
+    for (const auto& result : aggregatedResults) {
         const auto paramsIt =
             std::find_if(context.signalParameters.begin(),
                          context.signalParameters.end(),

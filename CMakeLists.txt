@@ -55,6 +55,8 @@ set(SIRIUSSCOPE_APPLICATION_SOURCES
     src/app/resulttablecontroller.cpp
     src/app/resulttablemodel.h
     src/app/resulttablemodel.cpp
+    src/app/scanbandresultaggregator.h
+    src/app/scanbandresultaggregator.cpp
     src/app/scanacquisitionsession.h
     src/app/scanacquisitionsession.cpp
     src/app/scancontroller.h

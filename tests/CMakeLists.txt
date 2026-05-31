@@ -616,6 +616,22 @@ target_include_directories(tst_diagnostics_service
 
 add_test(NAME tst_diagnostics_service COMMAND tst_diagnostics_service)
 
+add_executable(tst_scan_band_result_aggregator
+    app/tst_scan_band_result_aggregator.cpp
+)
+
+target_link_libraries(tst_scan_band_result_aggregator
+    PRIVATE
+        siriusscope_application
+)
+
+target_include_directories(tst_scan_band_result_aggregator
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_scan_band_result_aggregator COMMAND tst_scan_band_result_aggregator)
+
 add_executable(tst_result_table_model
     app/tst_result_table_model.cpp
 )
@@ -852,6 +868,9 @@ if(WIN32)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_diagnostics_service PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
+        )
+        set_tests_properties(tst_scan_band_result_aggregator PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_qt_bin_dir}"
         )
         set_tests_properties(tst_result_table_model PROPERTIES
