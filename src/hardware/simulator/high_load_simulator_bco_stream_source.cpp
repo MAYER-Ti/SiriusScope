@@ -1,8 +1,11 @@
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
 
+#include "hardware/simulator/simulated_bco_payload_accounting.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -18,6 +21,23 @@ constexpr std::uint64_t kSamplesPerPacket = 256;
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr double kBeamHalfSeparationDeg = 30.0;
 constexpr std::size_t kBeamCount = 2;
+
+std::size_t estimatedSamplesPerSecondFromTarget(const ThroughputTarget& target)
+{
+    const auto samplesPerBatch = samplesPerBatchForTarget(target);
+    const auto batchPeriodMs = std::max<std::int64_t>(1, target.batchPeriod.count());
+    const long double samplesPerSecond =
+        static_cast<long double>(samplesPerBatch) * 1000.0L
+        / static_cast<long double>(batchPeriodMs);
+    if (samplesPerSecond <= 1.0L) {
+        return 1;
+    }
+    const auto maxSize = static_cast<long double>(std::numeric_limits<std::size_t>::max());
+    if (samplesPerSecond >= maxSize) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return static_cast<std::size_t>(std::ceil(samplesPerSecond));
+}
 
 SimulatorBcoLoadConfig makeSimulatorBcoLoadConfig(SimulatorLoadProfile profile)
 {
@@ -47,6 +67,21 @@ SimulatorBcoLoadConfig makeSimulatorBcoLoadConfig(SimulatorLoadProfile profile)
         config.burstMultiplier = 2.0;
         config.burstDuration = std::chrono::milliseconds{20};
         config.calmDuration = std::chrono::milliseconds{80};
+        break;
+    case SimulatorLoadProfile::TargetRawThroughput90MBps:
+        config.throughputTarget = ThroughputTarget{};
+        config.throughputTarget->targetBytesPerSecond = 90'000'000;
+        config.throughputTarget->batchPeriod = std::chrono::milliseconds{10};
+        config.throughputTarget->mode = PayloadAccountingMode::RawBcoBytes;
+        config.throughputTarget->packetModel.packetHeaderBytes = 32;
+        config.throughputTarget->packetModel.sampleRecordBytes = 16;
+        config.throughputTarget->packetModel.packetFooterBytes = 0;
+        config.throughputTarget->packetModel.samplesPerPacket = 256;
+        config.throughputTarget->packetModel.alignmentBytes = 0;
+        config.batchPeriod = config.throughputTarget->batchPeriod;
+        config.samplesPerSecond =
+            estimatedSamplesPerSecondFromTarget(*config.throughputTarget);
+        config.burstModeEnabled = false;
         break;
     }
 
@@ -120,9 +155,10 @@ std::uint64_t packetCountFor(std::size_t sampleCount)
         return 0;
     }
 
+    const auto count = static_cast<std::uint64_t>(sampleCount);
     return std::max<std::uint64_t>(
         1,
-        static_cast<std::uint64_t>(sampleCount) / kSamplesPerPacket);
+        count / kSamplesPerPacket + (count % kSamplesPerPacket == 0 ? 0 : 1));
 }
 
 std::uint64_t saturatedAdd(std::uint64_t value, std::uint64_t increment)
@@ -166,6 +202,19 @@ std::string timebaseMismatchMessage(std::size_t configuredSamplesPerSecond,
            << configuredSamplesPerSecond << ", timeBaseRate="
            << static_cast<double>(samplesPerSecondFromTimeBase(samplePeriodNs))
            << ", samplePeriodNs=" << samplePeriodNs;
+    return stream.str();
+}
+
+std::string throughputTargetMessage(const ThroughputTarget& target)
+{
+    std::ostringstream stream;
+    stream << "high-load simulator target raw throughput: "
+           << target.targetBytesPerSecond << " B/s, batchPeriod="
+           << std::max<std::int64_t>(1, target.batchPeriod.count())
+           << " ms, sampleRecordBytes="
+           << std::max<std::size_t>(1, target.packetModel.sampleRecordBytes)
+           << ", samplesPerPacket="
+           << std::max<std::size_t>(1, target.packetModel.samplesPerPacket);
     return stream.str();
 }
 
@@ -489,6 +538,87 @@ bool pulseAllowsBandSample(std::uint64_t sampleIndex,
                          *pulseConfig);
 }
 
+struct FastSampleTemplate
+{
+    int bandIndex = 0;
+    int beamIndex = 0;
+    int amplitude = core::DomainConstraints::minAmplitude;
+    std::int64_t frequencyOffsetHz = 0;
+    std::int64_t absoluteFrequencyHz = 0;
+};
+
+std::vector<FastSampleTemplate> makeFastSampleTemplates(
+    const std::vector<core::BandConfig>& enabledBands,
+    const SimulatorRadioScene& scene,
+    double antennaAzimuthDeg,
+    int minVisibleAmplitude)
+{
+    std::vector<FastSampleTemplate> templates;
+    templates.reserve(scene.sources.size() * kBeamCount);
+
+    for (const auto& source : scene.sources) {
+        const auto* band =
+            findBandContainingFrequency(enabledBands, source.absoluteFrequencyHz);
+        if (!band) {
+            continue;
+        }
+
+        const auto amplitudes =
+            sourceBeamAmplitudes(source, antennaAzimuthDeg, minVisibleAmplitude);
+        for (int beamIndex = 0; beamIndex < static_cast<int>(kBeamCount); ++beamIndex) {
+            const auto amplitude = amplitudes[static_cast<std::size_t>(beamIndex)];
+            if (!amplitude) {
+                continue;
+            }
+
+            templates.push_back(FastSampleTemplate{
+                band->bandIndex,
+                beamIndex,
+                *amplitude,
+                source.absoluteFrequencyHz - band->centerFrequencyHz,
+                source.absoluteFrequencyHz,
+            });
+        }
+    }
+
+    return templates;
+}
+
+void appendFastContinuousSamples(BcoSampleBlock& block,
+                                 std::size_t maxSampleCount,
+                                 std::uint64_t firstSampleIndex,
+                                 const std::vector<FastSampleTemplate>& templates)
+{
+    if (templates.empty()) {
+        return;
+    }
+
+    block.samples.resize(maxSampleCount);
+    const auto makeSample = [firstSampleIndex](const FastSampleTemplate& item) {
+        core::SignalSample sample;
+        sample.sampleIndex =
+            firstSampleIndex;
+        sample.bandIndex = item.bandIndex;
+        sample.frequencyOffsetHz = item.frequencyOffsetHz;
+        sample.absoluteFrequencyHz = item.absoluteFrequencyHz;
+        sample.amplitude = item.amplitude;
+        sample.beamIndex = item.beamIndex;
+        return sample;
+    };
+
+    const auto firstSample = makeSample(templates.front());
+    if (templates.size() == 1 || maxSampleCount < 2) {
+        std::fill(block.samples.begin(), block.samples.end(), firstSample);
+        return;
+    }
+
+    const auto secondSample = makeSample(templates[1]);
+    const auto split = block.samples.begin()
+        + static_cast<std::ptrdiff_t>((maxSampleCount + 1) / 2);
+    std::fill(block.samples.begin(), split, firstSample);
+    std::fill(split, block.samples.end(), secondSample);
+}
+
 std::size_t appendSourceSamples(BcoSampleBlock& block,
                                 std::size_t maxSampleCount,
                                 const core::BandConfig& band,
@@ -549,10 +679,12 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
 {
     std::vector<SimulatorPulseBandConfig> pulseConfigs;
     std::size_t configuredSamplesPerSecond = 0;
+    std::optional<ThroughputTarget> throughputTarget;
     {
         std::lock_guard lock(m_mutex);
         pulseConfigs = m_loadConfig.pulseBandConfigs;
         configuredSamplesPerSecond = m_loadConfig.samplesPerSecond;
+        throughputTarget = m_loadConfig.throughputTarget;
     }
 
     if (config.bandConfigs.empty()) {
@@ -601,6 +733,15 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
                                         config.timeBase.samplePeriodNs));
     }
 
+    if (throughputTarget) {
+        publish(infrastructure::DiagnosticSeverity::Info,
+                throughputTargetMessage(*throughputTarget));
+        if (samplesPerBatchForTarget(*throughputTarget) == 0) {
+            publish(infrastructure::DiagnosticSeverity::Warning,
+                    "high-load simulator throughput target produced zero samples per batch");
+        }
+    }
+
     std::lock_guard lock(m_mutex);
     if (m_running) {
         return core::OperationResult::failure(
@@ -609,6 +750,10 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
 
     m_streamConfig = config;
     m_metrics = {};
+    if (m_loadConfig.throughputTarget) {
+        m_metrics.targetBytesPerSecond =
+            m_loadConfig.throughputTarget->targetBytesPerSecond;
+    }
     m_nextSampleIndex = config.timeBase.firstSampleIndex;
     m_generatedBatchIndex = 0;
     m_startedAt = {};
@@ -674,10 +819,18 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::stop()
         worker.join();
     }
 
+    BcoSourceMetrics metricsSnapshot;
     {
         std::lock_guard lock(m_mutex);
         m_running = false;
         m_stopRequested = false;
+        metricsSnapshot = m_metrics;
+    }
+
+    if (metricsSnapshot.simulatorBackpressureEvents > 0) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "high-load simulator observed callback backpressure events: "
+                    + std::to_string(metricsSnapshot.simulatorBackpressureEvents));
     }
 
     return core::OperationResult::ok();
@@ -716,14 +869,42 @@ SimulatorRadioScene HighLoadSimulatorBcoStreamSource::radioScene() const
 
 void HighLoadSimulatorBcoStreamSource::generationLoop(SampleBlockCallback callback)
 {
+    auto expectedBatchStart = std::chrono::steady_clock::now();
+    {
+        std::lock_guard lock(m_mutex);
+        if (m_startedAt != std::chrono::steady_clock::time_point{}) {
+            expectedBatchStart = m_startedAt;
+        }
+    }
+
     for (;;) {
         std::uint64_t batchIndex = 0;
+        std::chrono::milliseconds batchPeriod{1};
         {
             std::lock_guard lock(m_mutex);
             if (m_stopRequested) {
                 break;
             }
             batchIndex = m_generatedBatchIndex++;
+            batchPeriod = m_loadConfig.batchPeriod;
+        }
+
+        const auto actualBatchStart = std::chrono::steady_clock::now();
+        if (actualBatchStart > expectedBatchStart) {
+            const auto scheduleLag =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    actualBatchStart - expectedBatchStart);
+            const auto missedDeadlineThreshold =
+                std::max(batchPeriod, std::chrono::milliseconds{5});
+            if (scheduleLag.count() > 0) {
+                std::lock_guard lock(m_mutex);
+                if (scheduleLag > m_metrics.scheduleLagMax) {
+                    m_metrics.scheduleLagMax = scheduleLag;
+                }
+                if (scheduleLag > missedDeadlineThreshold) {
+                    ++m_metrics.missedBatchDeadlines;
+                }
+            }
         }
 
         auto block = generateBlock(samplesPerBatchForCurrentPeriod(batchIndex));
@@ -736,8 +917,16 @@ void HighLoadSimulatorBcoStreamSource::generationLoop(SampleBlockCallback callba
 
         updateMetricsAfterBlock(*block, callbackDuration);
 
+        expectedBatchStart += batchPeriod;
+        const auto afterCallback = std::chrono::steady_clock::now();
+        const auto maxRecoverableLag =
+            std::max(batchPeriod * 10, std::chrono::milliseconds{100});
+        if (afterCallback > expectedBatchStart + maxRecoverableLag) {
+            expectedBatchStart = afterCallback + batchPeriod;
+        }
+
         std::unique_lock lock(m_mutex);
-        if (m_condition.wait_for(lock, m_loadConfig.batchPeriod, [this] {
+        if (m_condition.wait_until(lock, expectedBatchStart, [this] {
                 return m_stopRequested;
             })) {
             break;
@@ -759,6 +948,7 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     SimulatorRadioScene scene;
     double antennaAzimuthDeg = 0.0;
     int minVisibleAmplitude = 0;
+    bool useFastContinuousPath = false;
 
     {
         std::lock_guard lock(m_mutex);
@@ -769,6 +959,9 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
         pulseConfigs = m_loadConfig.pulseBandConfigs;
         scene = m_scene;
         minVisibleAmplitude = m_loadConfig.minVisibleAmplitude;
+        useFastContinuousPath =
+            m_loadConfig.throughputTarget.has_value()
+            && m_loadConfig.pulseBandConfigs.empty();
     }
     if (m_antennaAzimuthProvider) {
         antennaAzimuthDeg = m_antennaAzimuthProvider->currentAzimuthDeg();
@@ -784,7 +977,17 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     auto block = std::make_shared<BcoSampleBlock>();
     block->samples.reserve(sampleCount);
 
-    if (!enabledBands.empty() && !scene.sources.empty() && sampleSlotsInBatch > 0) {
+    if (useFastContinuousPath && !enabledBands.empty() && !scene.sources.empty()
+        && sampleSlotsInBatch > 0) {
+        const auto fastTemplates = makeFastSampleTemplates(enabledBands,
+                                                          scene,
+                                                          antennaAzimuthDeg,
+                                                          minVisibleAmplitude);
+        appendFastContinuousSamples(*block,
+                                    sampleCount,
+                                    batchStartSampleIndex,
+                                    fastTemplates);
+    } else if (!enabledBands.empty() && !scene.sources.empty() && sampleSlotsInBatch > 0) {
         auto sampleIndex = batchStartSampleIndex;
         while (sampleIndex < batchEndSampleIndex && block->samples.size() < sampleCount) {
             if (!pulseConfigs.empty()) {
@@ -870,6 +1073,16 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
 std::size_t HighLoadSimulatorBcoStreamSource::samplesPerBatchForCurrentPeriod(
     std::uint64_t batchIndex) const
 {
+    if (m_loadConfig.throughputTarget) {
+        const auto baseSampleCount =
+            samplesPerBatchForTarget(*m_loadConfig.throughputTarget);
+        if (!m_loadConfig.burstModeEnabled) {
+            return baseSampleCount;
+        }
+        return boundedSizeFrom(static_cast<long double>(baseSampleCount)
+                               * static_cast<long double>(m_loadConfig.burstMultiplier));
+    }
+
     const auto batchPeriodMs = std::max<std::int64_t>(1, m_loadConfig.batchPeriod.count());
     const long double baseSamples =
         static_cast<long double>(m_loadConfig.samplesPerSecond)
@@ -903,25 +1116,48 @@ void HighLoadSimulatorBcoStreamSource::updateMetricsAfterBlock(
     const BcoSampleBlock& block,
     std::chrono::milliseconds callbackDuration)
 {
+    const auto measuredAt = std::chrono::steady_clock::now();
     std::lock_guard lock(m_mutex);
 
     m_metrics.producedSamples += block.stats.sampleCount;
     ++m_metrics.producedBatches;
     m_metrics.lostPackets += block.stats.lostPacketCount;
     m_metrics.malformedPackets += block.stats.malformedPacketCount;
+    m_metrics.producedParsedSamplesPerSecond = m_metrics.producedSamplesPerSecond;
+
+    if (m_loadConfig.throughputTarget) {
+        const auto& target = *m_loadConfig.throughputTarget;
+        m_metrics.targetBytesPerSecond = target.targetBytesPerSecond;
+        m_metrics.producedRawBytes =
+            saturatedAdd(m_metrics.producedRawBytes,
+                         rawBytesForSamples(block.samples.size(), target.packetModel));
+    } else {
+        m_metrics.targetBytesPerSecond = 0;
+        m_metrics.producedRawBytes = 0;
+        m_metrics.producedRawBytesPerSecond = 0.0;
+    }
 
     const auto elapsedSeconds =
-        std::chrono::duration<double>(block.stats.producedAt - m_startedAt).count();
+        std::chrono::duration<double>(measuredAt - m_startedAt).count();
     if (elapsedSeconds > 0.0) {
         m_metrics.producedSamplesPerSecond =
             static_cast<double>(m_metrics.producedSamples) / elapsedSeconds;
+        m_metrics.producedParsedSamplesPerSecond =
+            m_metrics.producedSamplesPerSecond;
         m_metrics.equivalentMegabytesPerSecond =
             m_metrics.producedSamplesPerSecond
             * static_cast<double>(sizeof(core::SignalSample)) / (1024.0 * 1024.0);
+        if (m_loadConfig.throughputTarget) {
+            m_metrics.producedRawBytesPerSecond =
+                static_cast<double>(m_metrics.producedRawBytes) / elapsedSeconds;
+        }
     }
 
     if (callbackDuration > m_metrics.maxCallbackDuration) {
         m_metrics.maxCallbackDuration = callbackDuration;
+    }
+    if (callbackDuration > m_loadConfig.batchPeriod) {
+        ++m_metrics.simulatorBackpressureEvents;
     }
 }
 

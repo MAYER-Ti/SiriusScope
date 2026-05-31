@@ -195,6 +195,17 @@ target_include_directories(tst_high_load_data_plane
 add_test(NAME tst_high_load_data_plane COMMAND tst_high_load_data_plane)
 set_tests_properties(tst_high_load_data_plane PROPERTIES LABELS "perf")
 
+add_executable(tst_simulated_bco_payload_accounting
+    hardware/tst_simulated_bco_payload_accounting.cpp
+)
+
+target_link_libraries(tst_simulated_bco_payload_accounting
+    PRIVATE
+        siriusscope_hardware
+)
+
+add_test(NAME tst_simulated_bco_payload_accounting COMMAND tst_simulated_bco_payload_accounting)
+
 add_executable(tst_simulator_bco_sample_source
     hardware/tst_simulator_bco_sample_source.cpp
 )

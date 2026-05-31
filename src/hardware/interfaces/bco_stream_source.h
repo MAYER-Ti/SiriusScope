@@ -40,7 +40,15 @@ struct BcoSourceMetrics
     std::uint64_t lostPackets = 0;
     std::uint64_t malformedPackets = 0;
     double producedSamplesPerSecond = 0.0;
+    std::uint64_t targetBytesPerSecond = 0;
+    std::uint64_t producedRawBytes = 0;
+    double producedRawBytesPerSecond = 0.0;
+    double producedParsedSamplesPerSecond = 0.0;
+    // Internal in-memory SignalSample throughput equivalent, not raw BCO input.
     double equivalentMegabytesPerSecond = 0.0;
+    std::chrono::milliseconds scheduleLagMax{0};
+    std::uint64_t missedBatchDeadlines = 0;
+    std::uint64_t simulatorBackpressureEvents = 0;
     std::chrono::milliseconds maxCallbackDuration{0};
 };
 

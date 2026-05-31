@@ -3,15 +3,18 @@
 #include "hardware/interfaces/antenna_azimuth_provider.h"
 #include "hardware/interfaces/bco_stream_source.h"
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
+#include "hardware/simulator/simulated_bco_payload_accounting.h"
 #include "pipeline/data_ingest_pipeline.h"
 #include "pipeline/pipeline_metrics.h"
 #include "pipeline/waterfall_row_queue.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -24,6 +27,7 @@ constexpr std::int64_t kSourceMinHz = core::DomainConstraints::minSystemFrequenc
 constexpr std::int64_t kSourceMaxHz = core::DomainConstraints::maxSystemFrequencyHz;
 constexpr int kRenderBinCount = 512;
 constexpr std::uint64_t kRowPeriodNs = 20'000'000;
+constexpr std::uint64_t kTargetRawBytesPerSecond = 90'000'000;
 
 class TestRunner
 {
@@ -89,6 +93,20 @@ std::int64_t nowUtcNs()
         .count();
 }
 
+hardware::ThroughputTarget targetRaw90Mbps()
+{
+    hardware::ThroughputTarget target;
+    target.targetBytesPerSecond = kTargetRawBytesPerSecond;
+    target.batchPeriod = std::chrono::milliseconds{10};
+    target.mode = hardware::PayloadAccountingMode::RawBcoBytes;
+    target.packetModel.packetHeaderBytes = 32;
+    target.packetModel.sampleRecordBytes = 16;
+    target.packetModel.packetFooterBytes = 0;
+    target.packetModel.samplesPerPacket = 256;
+    target.packetModel.alignmentBytes = 0;
+    return target;
+}
+
 std::size_t samplesPerSecondFor(hardware::SimulatorLoadProfile profile)
 {
     switch (profile) {
@@ -100,6 +118,14 @@ std::size_t samplesPerSecondFor(hardware::SimulatorLoadProfile profile)
         return 1'000'000;
     case hardware::SimulatorLoadProfile::Stress150Percent:
         return 1'500'000;
+    case hardware::SimulatorLoadProfile::TargetRawThroughput90MBps: {
+        const auto target = targetRaw90Mbps();
+        const auto samplesPerBatch = hardware::samplesPerBatchForTarget(target);
+        const auto batchPeriodMs = std::max<std::int64_t>(1, target.batchPeriod.count());
+        return std::max<std::size_t>(
+            1,
+            samplesPerBatch * 1000ULL / static_cast<std::uint64_t>(batchPeriodMs));
+    }
     }
 
     return 1;
@@ -124,6 +150,8 @@ std::string profileName(hardware::SimulatorLoadProfile profile)
         return "RealBcoEquivalent";
     case hardware::SimulatorLoadProfile::Stress150Percent:
         return "Stress150Percent";
+    case hardware::SimulatorLoadProfile::TargetRawThroughput90MBps:
+        return "TargetRawThroughput90MBps";
     }
 
     return "Unknown";
@@ -169,11 +197,17 @@ hardware::BcoStreamConfig makeStreamConfig(hardware::SimulatorLoadProfile profil
     return config;
 }
 
-pipeline::DataIngestPipelineConfig makePipelineConfig(const core::TimeBase& timeBase)
+pipeline::DataIngestPipelineConfig makePipelineConfig(
+    const core::TimeBase& timeBase,
+    hardware::SimulatorLoadProfile profile)
 {
     pipeline::DataIngestPipelineConfig config;
     config.blockPool = pipeline::SignalBlockPoolConfig{256, 20'000};
     config.queueCapacity = 256;
+    if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
+        config.blockPool = pipeline::SignalBlockPoolConfig{4, 80'000};
+        config.queueCapacity = 2;
+    }
     config.diagnosticsPublishInterval = std::chrono::milliseconds{1000};
     config.acceptingOnStart = true;
 
@@ -215,14 +249,17 @@ hardware::SimulatorBcoLoadConfig makeLoadConfig(hardware::SimulatorLoadProfile p
 }
 
 AuditResult runAudit(std::chrono::seconds duration,
-                     hardware::SimulatorLoadProfile profile)
+                     hardware::SimulatorLoadProfile profile,
+                     std::chrono::milliseconds flushTimeout = std::chrono::milliseconds{5000},
+                     std::optional<std::uint64_t> maxPipelineIngestedBlocks = std::nullopt)
 {
     AuditResult result;
     result.profileName = profileName(profile);
     result.duration = duration;
 
     const auto streamConfig = makeStreamConfig(profile);
-    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(streamConfig.timeBase));
+    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(streamConfig.timeBase,
+                                                                 profile));
     FixedAntennaAzimuthProvider antenna(45.0);
     hardware::HighLoadSimulatorBcoStreamSource source(makeLoadConfig(profile),
                                                       nullptr,
@@ -242,9 +279,15 @@ AuditResult runAudit(std::chrono::seconds duration,
 
     std::atomic_uint64_t rejectedBlocks{0};
     std::atomic_uint64_t rejectedSamples{0};
+    std::atomic_uint64_t pipelineIngestedBlocks{0};
 
     const auto sourceStarted = source.start([&](hardware::IBcoStreamSource::SampleBlockPtr block) {
         if (!block) {
+            return;
+        }
+        if (maxPipelineIngestedBlocks
+            && pipelineIngestedBlocks.load(std::memory_order_relaxed)
+                >= *maxPipelineIngestedBlocks) {
             return;
         }
 
@@ -259,6 +302,8 @@ AuditResult runAudit(std::chrono::seconds duration,
             rejectedBlocks.fetch_add(1, std::memory_order_relaxed);
             rejectedSamples.fetch_add(static_cast<std::uint64_t>(block->samples.size()),
                                       std::memory_order_relaxed);
+        } else {
+            pipelineIngestedBlocks.fetch_add(1, std::memory_order_relaxed);
         }
     });
     result.sourceStarted = sourceStarted.success;
@@ -270,7 +315,7 @@ AuditResult runAudit(std::chrono::seconds duration,
     const auto sourceStopped = source.stop();
     result.sourceStopped = sourceStopped.success;
 
-    const auto flushed = dataPipeline.flushProcessing(std::chrono::milliseconds{5000});
+    const auto flushed = dataPipeline.flushProcessing(flushTimeout);
     result.flushed = flushed.success;
 
     const auto drainedRows = dataPipeline.drainWaterfallRows(1'000'000);
@@ -301,6 +346,20 @@ void printAuditSummary(const AuditResult& result)
               << result.source.producedSamplesPerSecond << '\n'
               << "  source equivalentMBps = "
               << result.source.equivalentMegabytesPerSecond << '\n'
+              << "  source targetBytesPerSecond = "
+              << result.source.targetBytesPerSecond << '\n'
+              << "  source producedRawBytes = "
+              << result.source.producedRawBytes << '\n'
+              << "  source producedRawBytesPerSecond = "
+              << result.source.producedRawBytesPerSecond << '\n'
+              << "  source producedParsedSamplesPerSecond = "
+              << result.source.producedParsedSamplesPerSecond << '\n'
+              << "  source scheduleLagMaxMs = "
+              << result.source.scheduleLagMax.count() << '\n'
+              << "  source missedBatchDeadlines = "
+              << result.source.missedBatchDeadlines << '\n'
+              << "  source simulatorBackpressureEvents = "
+              << result.source.simulatorBackpressureEvents << '\n'
               << "  source maxCallbackDurationMs = "
               << result.source.maxCallbackDuration.count() << '\n'
               << "  pipeline inputSamples = " << result.pipeline.inputSamples << '\n'
@@ -412,6 +471,36 @@ void highLoadDataPlaneStress(TestRunner& test)
     assertAuditSucceeded(test, result);
 }
 
+void targetRaw90mbpsAccountingSmoke(TestRunner& test)
+{
+    const auto result = runAudit(std::chrono::seconds{3},
+                                 hardware::SimulatorLoadProfile::
+                                     TargetRawThroughput90MBps,
+                                 std::chrono::milliseconds{250},
+                                 std::uint64_t{1});
+    printAuditSummary(result);
+
+    test.require(result.sourceConfigured, "target raw source accepts stream config");
+    test.require(result.pipelineStarted, "target raw data ingest pipeline starts");
+    test.require(result.sourceStarted, "target raw high-load source starts");
+    test.require(result.sourceStopped, "target raw high-load source stops");
+    test.require(result.source.targetBytesPerSecond == kTargetRawBytesPerSecond,
+                 "target raw source reports configured raw byte target");
+    test.require(result.source.producedRawBytes > 0,
+                 "target raw source reports produced raw bytes");
+    test.require(result.source.producedRawBytesPerSecond > 0.0,
+                 "target raw source reports positive raw throughput");
+    test.require(result.source.producedParsedSamplesPerSecond > 0.0,
+                 "target raw source reports positive parsed sample throughput");
+
+    const double relativeError =
+        std::abs(result.source.producedRawBytesPerSecond
+                 - static_cast<double>(kTargetRawBytesPerSecond))
+        / static_cast<double>(kTargetRawBytesPerSecond);
+    test.require(relativeError <= 0.15,
+                 "target raw source stays within 15 percent of 90 MBps smoke target");
+}
+
 } // namespace
 
 int main()
@@ -419,6 +508,7 @@ int main()
     TestRunner test;
 
     highLoadDataPlaneSmoke(test);
+    targetRaw90mbpsAccountingSmoke(test);
     highLoadDataPlaneStress(test);
 
     return test.result();

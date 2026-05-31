@@ -192,6 +192,8 @@ set(SIRIUSSCOPE_HARDWARE_SIMULATOR_SOURCES
     src/hardware/simulator/high_load_simulator_bco_control.cpp
     src/hardware/simulator/high_load_simulator_bco_stream_source.h
     src/hardware/simulator/high_load_simulator_bco_stream_source.cpp
+    src/hardware/simulator/simulated_bco_payload_accounting.h
+    src/hardware/simulator/simulated_bco_payload_accounting.cpp
     src/hardware/simulator/simulator_pulse_config.h
     src/hardware/simulator/simulator_antenna_azimuth_source.h
     src/hardware/simulator/simulator_antenna_azimuth_source.cpp

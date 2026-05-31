@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace siriusscope::hardware {
@@ -21,6 +23,30 @@ enum class SimulatorLoadProfile
     MediumLoad,
     RealBcoEquivalent,
     Stress150Percent,
+    TargetRawThroughput90MBps,
+};
+
+enum class PayloadAccountingMode
+{
+    RawBcoBytes,
+    ParsedSignalSampleBytes,
+};
+
+struct SimulatedBcoPacketModel
+{
+    std::size_t packetHeaderBytes = 32;
+    std::size_t sampleRecordBytes = 16;
+    std::size_t packetFooterBytes = 0;
+    std::size_t samplesPerPacket = 256;
+    std::size_t alignmentBytes = 0;
+};
+
+struct ThroughputTarget
+{
+    std::uint64_t targetBytesPerSecond = 90'000'000;
+    std::chrono::milliseconds batchPeriod{10};
+    PayloadAccountingMode mode = PayloadAccountingMode::RawBcoBytes;
+    SimulatedBcoPacketModel packetModel;
 };
 
 struct SimulatorBcoLoadConfig
@@ -29,6 +55,7 @@ struct SimulatorBcoLoadConfig
 
     std::size_t samplesPerSecond = 1'280;
     std::chrono::milliseconds batchPeriod{100};
+    std::optional<ThroughputTarget> throughputTarget;
 
     bool deterministic = true;
     bool burstModeEnabled = false;
