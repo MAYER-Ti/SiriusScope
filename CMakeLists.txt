@@ -145,6 +145,8 @@ set(SIRIUSSCOPE_PIPELINE_SOURCES
     src/pipeline/signal_block.cpp
     src/pipeline/signal_block_pool.h
     src/pipeline/signal_block_pool.cpp
+    src/pipeline/source_to_pipeline_bridge.h
+    src/pipeline/source_to_pipeline_bridge.cpp
     src/pipeline/signal_parameter_aggregator.h
     src/pipeline/signal_parameter_aggregator.cpp
     src/pipeline/signal_parameter_snapshot.h
@@ -316,6 +318,7 @@ target_link_libraries(siriusscope_pipeline
     PUBLIC
         Threads::Threads
         siriusscope_core
+        siriusscope_hardware_iface
         siriusscope_processing_iface
         siriusscope_infrastructure_iface
 )

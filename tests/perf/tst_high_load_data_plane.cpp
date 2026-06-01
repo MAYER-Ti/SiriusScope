@@ -6,6 +6,7 @@
 #include "hardware/simulator/simulated_bco_payload_accounting.h"
 #include "pipeline/data_ingest_pipeline.h"
 #include "pipeline/pipeline_metrics.h"
+#include "pipeline/source_to_pipeline_bridge.h"
 #include "pipeline/waterfall_row_queue.h"
 
 #include <atomic>
@@ -17,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -72,6 +74,7 @@ struct AuditResult
     std::string profileName;
     std::chrono::seconds duration{0};
     hardware::BcoSourceMetrics source;
+    pipeline::SourceToPipelineBridgeMetrics bridge;
     pipeline::PipelineMetricsSnapshot pipeline;
     pipeline::WaterfallRowQueueMetrics waterfallRows;
     std::uint64_t rejectedBlocks = 0;
@@ -79,8 +82,10 @@ struct AuditResult
     std::size_t drainedWaterfallRows = 0;
     bool sourceConfigured = false;
     bool pipelineStarted = false;
+    bool bridgeStarted = false;
     bool sourceStarted = false;
     bool sourceStopped = false;
+    bool bridgeFlushed = false;
     bool flushed = false;
     bool hasSpectrumSnapshot = false;
     bool hasBearingSnapshot = false;
@@ -239,6 +244,16 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     return config;
 }
 
+pipeline::SourceToPipelineBridgeConfig makeBridgeConfig(
+    hardware::SimulatorLoadProfile profile)
+{
+    pipeline::SourceToPipelineBridgeConfig config;
+    config.queueCapacity =
+        profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps ? 2 : 128;
+    config.overflowPolicy = pipeline::RxOverflowPolicy::DropNewest;
+    return config;
+}
+
 hardware::SimulatorBcoLoadConfig makeLoadConfig(hardware::SimulatorLoadProfile profile)
 {
     hardware::SimulatorBcoLoadConfig config;
@@ -278,33 +293,32 @@ AuditResult runAudit(std::chrono::seconds duration,
         return result;
     }
 
-    std::atomic_uint64_t rejectedBlocks{0};
-    std::atomic_uint64_t rejectedSamples{0};
-    std::atomic_uint64_t pipelineIngestedBlocks{0};
+    pipeline::SourceToPipelineBridge bridge(&dataPipeline, makeBridgeConfig(profile));
+    const auto bridgeStarted = bridge.start();
+    result.bridgeStarted = bridgeStarted.success;
+    if (!bridgeStarted) {
+        dataPipeline.stop();
+        return result;
+    }
+
+    std::atomic_uint64_t submittedBlocks{0};
 
     const auto sourceStarted = source.start([&](hardware::IBcoStreamSource::SampleBlockPtr block) {
         if (!block) {
             return;
         }
-        if (maxPipelineIngestedBlocks
-            && pipelineIngestedBlocks.load(std::memory_order_relaxed)
-                >= *maxPipelineIngestedBlocks) {
-            return;
-        }
-
-        pipeline::SignalBlockMetadata metadata;
-        metadata.firstSampleIndex = block->stats.firstSampleIndex;
-        metadata.lastSampleIndex = block->stats.lastSampleIndex;
-        metadata.producedAt = block->stats.producedAt;
-        metadata.antennaAzimuthDeg = block->stats.antennaAzimuthDeg;
-
-        const auto ingested = dataPipeline.ingestSamples(block->samples, metadata);
-        if (!ingested) {
-            rejectedBlocks.fetch_add(1, std::memory_order_relaxed);
-            rejectedSamples.fetch_add(static_cast<std::uint64_t>(block->samples.size()),
-                                      std::memory_order_relaxed);
+        if (maxPipelineIngestedBlocks) {
+            auto current = submittedBlocks.load(std::memory_order_relaxed);
+            while (current < *maxPipelineIngestedBlocks) {
+                if (submittedBlocks.compare_exchange_weak(current,
+                                                          current + 1,
+                                                          std::memory_order_relaxed)) {
+                    bridge.submit(std::move(block));
+                    return;
+                }
+            }
         } else {
-            pipelineIngestedBlocks.fetch_add(1, std::memory_order_relaxed);
+            bridge.submit(std::move(block));
         }
     });
     result.sourceStarted = sourceStarted.success;
@@ -316,16 +330,21 @@ AuditResult runAudit(std::chrono::seconds duration,
     const auto sourceStopped = source.stop();
     result.sourceStopped = sourceStopped.success;
 
+    const auto bridgeFlushed = bridge.flush(std::chrono::seconds{5});
+    result.bridgeFlushed = bridgeFlushed.success;
+    bridge.stop();
+
     const auto flushed = dataPipeline.flushProcessing(flushTimeout);
     result.flushed = flushed.success;
 
     const auto drainedRows = dataPipeline.drainWaterfallRows(1'000'000);
     result.drainedWaterfallRows = drainedRows.size();
     result.source = source.metrics();
+    result.bridge = bridge.metrics();
     result.pipeline = dataPipeline.metricsSnapshot();
     result.waterfallRows = dataPipeline.waterfallRowQueueMetrics();
-    result.rejectedBlocks = rejectedBlocks.load(std::memory_order_relaxed);
-    result.rejectedSamples = rejectedSamples.load(std::memory_order_relaxed);
+    result.rejectedBlocks = result.bridge.rejectedBlocks;
+    result.rejectedSamples = result.bridge.rejectedSamples;
     result.hasSpectrumSnapshot = dataPipeline.latestSpectrumSnapshot() != nullptr;
     result.hasBearingSnapshot = dataPipeline.latestBearingSnapshot() != nullptr;
     result.hasSignalParameterSnapshot =
@@ -363,6 +382,17 @@ void printAuditSummary(const AuditResult& result)
               << result.source.simulatorBackpressureEvents << '\n'
               << "  source maxCallbackDurationMs = "
               << result.source.maxCallbackDuration.count() << '\n'
+              << "  bridge receivedBlocks = " << result.bridge.receivedBlocks << '\n'
+              << "  bridge enqueuedBlocks = " << result.bridge.enqueuedBlocks << '\n'
+              << "  bridge droppedBlocks = " << result.bridge.droppedBlocks << '\n'
+              << "  bridge ingestedBlocks = " << result.bridge.ingestedBlocks << '\n'
+              << "  bridge rejectedBlocks = " << result.bridge.rejectedBlocks << '\n'
+              << "  bridge queueDepth = " << result.bridge.queueDepth << '\n'
+              << "  bridge queueCapacity = " << result.bridge.queueCapacity << '\n'
+              << "  bridge enqueueLatencyMaxMs = "
+              << result.bridge.enqueueLatencyMax.count() << '\n'
+              << "  bridge ingestLatencyMaxMs = "
+              << result.bridge.ingestLatencyMax.count() << '\n'
               << "  pipeline inputSamples = " << result.pipeline.inputSamples << '\n'
               << "  pipeline processedSamples = " << result.pipeline.processedSamples
               << '\n'
@@ -392,8 +422,10 @@ void assertAuditSucceeded(TestRunner& test, const AuditResult& result)
 {
     test.require(result.sourceConfigured, "source accepts stream config");
     test.require(result.pipelineStarted, "data ingest pipeline starts");
+    test.require(result.bridgeStarted, "source-to-pipeline bridge starts");
     test.require(result.sourceStarted, "high-load source starts");
     test.require(result.sourceStopped, "high-load source stops");
+    test.require(result.bridgeFlushed, "source-to-pipeline bridge flushes");
     test.require(result.flushed, "data ingest pipeline flushes");
 
     test.require(result.source.producedSamples > 0, "source produces samples");
@@ -405,6 +437,18 @@ void assertAuditSucceeded(TestRunner& test, const AuditResult& result)
     test.require(result.source.maxCallbackDuration.count() < 5000,
                  "source callback duration stays bounded");
 
+    test.require(result.bridge.receivedBlocks > 0, "bridge receives source blocks");
+    test.require(result.bridge.enqueuedBlocks > 0, "bridge enqueues source blocks");
+    test.require(result.bridge.droppedBlocks == 0,
+                 "bridge reports no dropped blocks in medium smoke");
+    test.require(result.bridge.rejectedBlocks == 0,
+                 "bridge reports no rejected blocks in medium smoke");
+    test.require(result.bridge.ingestedBlocks == result.bridge.enqueuedBlocks,
+                 "bridge ingests every enqueued block");
+    test.require(result.bridge.ingestedSamples == result.pipeline.inputSamples,
+                 "bridge ingested samples match pipeline input samples");
+    test.require(result.bridge.queueDepth == 0, "bridge queue drains after flush");
+
     test.require(result.pipeline.inputSamples > 0, "pipeline receives samples");
     test.require(result.pipeline.processedSamples > 0, "pipeline processes samples");
     test.require(result.pipeline.inputMegabytesPerSecond > 0.0,
@@ -414,8 +458,8 @@ void assertAuditSucceeded(TestRunner& test, const AuditResult& result)
     test.require(result.pipeline.processedSamples == result.pipeline.inputSamples,
                  "pipeline processes every accepted sample");
 
-    test.require(result.rejectedBlocks == 0, "callback does not reject blocks");
-    test.require(result.rejectedSamples == 0, "callback does not reject samples");
+    test.require(result.rejectedBlocks == 0, "bridge does not reject blocks");
+    test.require(result.rejectedSamples == 0, "bridge does not reject samples");
     test.require(result.pipeline.droppedSamples == 0, "pipeline reports no dropped samples");
     test.require(result.pipeline.droppedBlocks == 0, "pipeline reports no dropped blocks");
     test.require(result.pipeline.queueDroppedBlocks == 0,
@@ -488,8 +532,8 @@ void targetRaw90mbpsAccountingSmoke(TestRunner& test)
     test.require(targetRawBytesPerBatch * 100ULL == kExpectedTargetRawBytesPerSecond,
                  "target raw source expected throughput is closest packet-aligned value below target");
 
-    // This target raw smoke validates source accounting only; full-pipeline
-    // 90 MB/s sustain belongs to later P1 stages.
+    // This target raw smoke validates source accounting only; bridge submission is
+    // capped because full 90 MB/s pipeline sustain belongs to later P1 stages.
     const auto result = runAudit(std::chrono::seconds{3},
                                  hardware::SimulatorLoadProfile::
                                      TargetRawThroughput90MBps,
@@ -499,8 +543,12 @@ void targetRaw90mbpsAccountingSmoke(TestRunner& test)
 
     test.require(result.sourceConfigured, "target raw source accepts stream config");
     test.require(result.pipelineStarted, "target raw data ingest pipeline starts");
+    test.require(result.bridgeStarted, "target raw source-to-pipeline bridge starts");
     test.require(result.sourceStarted, "target raw high-load source starts");
     test.require(result.sourceStopped, "target raw high-load source stops");
+    test.require(result.bridgeFlushed, "target raw source-to-pipeline bridge flushes");
+    test.require(result.bridge.receivedBlocks > 0,
+                 "target raw bridge receives capped source-accounting block");
     test.require(result.source.targetBytesPerSecond == kTargetRawBytesPerSecond,
                  "target raw source reports configured raw byte target");
     test.require(result.source.producedRawBytes > 0,

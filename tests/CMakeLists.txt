@@ -177,6 +177,22 @@ target_include_directories(tst_data_ingest_pipeline
 
 add_test(NAME tst_data_ingest_pipeline COMMAND tst_data_ingest_pipeline)
 
+add_executable(tst_source_to_pipeline_bridge
+    pipeline/tst_source_to_pipeline_bridge.cpp
+)
+
+target_link_libraries(tst_source_to_pipeline_bridge
+    PRIVATE
+        siriusscope_pipeline
+)
+
+target_include_directories(tst_source_to_pipeline_bridge
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_source_to_pipeline_bridge COMMAND tst_source_to_pipeline_bridge)
+
 add_executable(tst_high_load_data_plane
     perf/tst_high_load_data_plane.cpp
 )

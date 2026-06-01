@@ -29,6 +29,12 @@ Signal parameter output is published as immutable `SignalParameterSnapshot` obje
 `SignalParameterAggregator` reuses the processing accumulator inside the data plane and
 publishes compact per-band PRI/PW summaries without returning raw samples to Qt.
 
+`SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
+`DataIngestPipeline::ingestSamples()`. The source callback only submits immutable
+`BcoSampleBlock` pointers into a bounded RX queue; a dedicated bridge worker performs the
+pipeline ingest call and reports received/enqueued/dropped/ingested/rejected block
+metrics. Runtime controller integration remains a separate migration step.
+
 `HighLoadSimulatorBcoStreamSource` is antenna-aware: it reads the current azimuth through
 a Qt-free provider interface, evaluates the shared simulator radio scene against two beam
 axes, and emits beam samples only when the source is visible to that beam. Duplicate
