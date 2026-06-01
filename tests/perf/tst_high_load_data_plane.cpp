@@ -28,6 +28,7 @@ constexpr std::int64_t kSourceMaxHz = core::DomainConstraints::maxSystemFrequenc
 constexpr int kRenderBinCount = 512;
 constexpr std::uint64_t kRowPeriodNs = 20'000'000;
 constexpr std::uint64_t kTargetRawBytesPerSecond = 90'000'000;
+constexpr std::uint64_t kExpectedTargetRawBytesPerSecond = 89'990'400;
 
 class TestRunner
 {
@@ -473,6 +474,22 @@ void highLoadDataPlaneStress(TestRunner& test)
 
 void targetRaw90mbpsAccountingSmoke(TestRunner& test)
 {
+    const auto target = targetRaw90Mbps();
+    const auto targetSamplesPerBatch = hardware::samplesPerBatchForTarget(target);
+    const auto targetRawBytesPerBatch =
+        hardware::rawBytesForSamples(targetSamplesPerBatch, target.packetModel);
+
+    test.require(hardware::packetsPerBatchForTarget(target) == 218,
+                 "target raw source uses packet-aligned batch packet count");
+    test.require(targetSamplesPerBatch == 55'808,
+                 "target raw source uses packet-aligned batch sample count");
+    test.require(targetRawBytesPerBatch == 899'904,
+                 "target raw source accounts packet-aligned raw bytes per batch");
+    test.require(targetRawBytesPerBatch * 100ULL == kExpectedTargetRawBytesPerSecond,
+                 "target raw source expected throughput is closest packet-aligned value below target");
+
+    // This target raw smoke validates source accounting only; full-pipeline
+    // 90 MB/s sustain belongs to later P1 stages.
     const auto result = runAudit(std::chrono::seconds{3},
                                  hardware::SimulatorLoadProfile::
                                      TargetRawThroughput90MBps,

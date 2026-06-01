@@ -1,5 +1,7 @@
 #include "hardware/simulator/simulated_bco_payload_accounting.h"
 
+#include "core/domain_models.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -51,6 +53,30 @@ std::uint64_t ceilDivide(std::uint64_t value, std::uint64_t divisor)
     return value / divisor + (value % divisor == 0 ? 0 : 1);
 }
 
+long double bytesPerBatchForTarget(const ThroughputTarget& target)
+{
+    if (target.targetBytesPerSecond == 0 || target.batchPeriod.count() <= 0) {
+        return 0.0L;
+    }
+
+    return static_cast<long double>(target.targetBytesPerSecond)
+        * static_cast<long double>(target.batchPeriod.count()) / 1000.0L;
+}
+
+std::size_t boundedFloor(long double value)
+{
+    if (value <= 0.0L || !std::isfinite(static_cast<double>(value))) {
+        return 0;
+    }
+
+    const auto maxSize = static_cast<long double>(std::numeric_limits<std::size_t>::max());
+    if (value >= maxSize) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+
+    return static_cast<std::size_t>(std::floor(value));
+}
+
 } // namespace
 
 std::size_t rawBytesPerPacket(const SimulatedBcoPacketModel& model)
@@ -70,31 +96,47 @@ double rawBytesPerSample(const SimulatedBcoPacketModel& model)
         / static_cast<double>(safeSamplesPerPacket(model));
 }
 
+std::size_t samplesPerPacketForModel(const SimulatedBcoPacketModel& model)
+{
+    return safeSamplesPerPacket(model);
+}
+
+std::size_t packetsPerBatchForTarget(const ThroughputTarget& target)
+{
+    const auto bytesPerBatch = bytesPerBatchForTarget(target);
+    if (bytesPerBatch <= 0.0L) {
+        return 0;
+    }
+
+    const auto packetBytes = static_cast<long double>(rawBytesPerPacket(target.packetModel));
+    auto packetCount = boundedFloor(bytesPerBatch / packetBytes);
+    if (packetCount == 0) {
+        packetCount = 1;
+    }
+    return packetCount;
+}
+
+std::size_t samplesPerBatchForPacketTarget(const ThroughputTarget& target)
+{
+    return saturatingMultiplySize(packetsPerBatchForTarget(target),
+                                  samplesPerPacketForModel(target.packetModel));
+}
+
 std::size_t samplesPerBatchForTarget(const ThroughputTarget& target)
 {
-    const auto safeTargetBytesPerSecond =
-        std::max<std::uint64_t>(1, target.targetBytesPerSecond);
-    const auto safeBatchPeriodMs =
-        std::max<std::int64_t>(1, target.batchPeriod.count());
-    const long double bytesPerBatch =
-        static_cast<long double>(safeTargetBytesPerSecond)
-        * static_cast<long double>(safeBatchPeriodMs) / 1000.0L;
-    const long double bytesPerSample =
-        static_cast<long double>(rawBytesPerSample(target.packetModel));
-    if (bytesPerSample <= 0.0L || !std::isfinite(static_cast<double>(bytesPerSample))) {
+    switch (target.mode) {
+    case PayloadAccountingMode::RawBcoBytes:
+        return samplesPerBatchForPacketTarget(target);
+    case PayloadAccountingMode::ParsedSignalSampleBytes:
+        break;
+    }
+
+    const auto bytesPerBatch = bytesPerBatchForTarget(target);
+    if (bytesPerBatch <= 0.0L) {
         return 0;
     }
 
-    const auto samples = std::floor(bytesPerBatch / bytesPerSample);
-    if (samples <= 0.0L) {
-        return 0;
-    }
-    const auto maxSamples = static_cast<long double>(std::numeric_limits<std::size_t>::max());
-    if (samples >= maxSamples) {
-        return std::numeric_limits<std::size_t>::max();
-    }
-
-    return static_cast<std::size_t>(samples);
+    return boundedFloor(bytesPerBatch / static_cast<long double>(sizeof(core::SignalSample)));
 }
 
 std::uint64_t rawBytesForSamples(std::size_t sampleCount,

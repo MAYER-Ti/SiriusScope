@@ -149,16 +149,23 @@ std::size_t boundedSizeFrom(long double value)
     return static_cast<std::size_t>(std::ceil(value));
 }
 
-std::uint64_t packetCountFor(std::size_t sampleCount)
+std::uint64_t packetCountFor(std::size_t sampleCount,
+                             const std::optional<ThroughputTarget>& target)
 {
     if (sampleCount == 0) {
         return 0;
     }
 
+    std::uint64_t samplesPerPacket = kSamplesPerPacket;
+    if (target && target->mode == PayloadAccountingMode::RawBcoBytes) {
+        samplesPerPacket =
+            static_cast<std::uint64_t>(samplesPerPacketForModel(target->packetModel));
+    }
+
     const auto count = static_cast<std::uint64_t>(sampleCount);
     return std::max<std::uint64_t>(
         1,
-        count / kSamplesPerPacket + (count % kSamplesPerPacket == 0 ? 0 : 1));
+        count / samplesPerPacket + (count % samplesPerPacket == 0 ? 0 : 1));
 }
 
 std::uint64_t saturatedAdd(std::uint64_t value, std::uint64_t increment)
@@ -594,29 +601,23 @@ void appendFastContinuousSamples(BcoSampleBlock& block,
     }
 
     block.samples.resize(maxSampleCount);
-    const auto makeSample = [firstSampleIndex](const FastSampleTemplate& item) {
-        core::SignalSample sample;
+    std::size_t templateIndex = 0;
+    for (std::size_t i = 0; i < maxSampleCount; ++i) {
+        const auto& item = templates[templateIndex];
+        auto& sample = block.samples[i];
         sample.sampleIndex =
-            firstSampleIndex;
+            saturatedAdd(firstSampleIndex, static_cast<std::uint64_t>(i));
         sample.bandIndex = item.bandIndex;
         sample.frequencyOffsetHz = item.frequencyOffsetHz;
         sample.absoluteFrequencyHz = item.absoluteFrequencyHz;
         sample.amplitude = item.amplitude;
         sample.beamIndex = item.beamIndex;
-        return sample;
-    };
 
-    const auto firstSample = makeSample(templates.front());
-    if (templates.size() == 1 || maxSampleCount < 2) {
-        std::fill(block.samples.begin(), block.samples.end(), firstSample);
-        return;
+        ++templateIndex;
+        if (templateIndex == templates.size()) {
+            templateIndex = 0;
+        }
     }
-
-    const auto secondSample = makeSample(templates[1]);
-    const auto split = block.samples.begin()
-        + static_cast<std::ptrdiff_t>((maxSampleCount + 1) / 2);
-    std::fill(block.samples.begin(), split, firstSample);
-    std::fill(split, block.samples.end(), secondSample);
 }
 
 std::size_t appendSourceSamples(BcoSampleBlock& block,
@@ -1052,8 +1053,13 @@ std::shared_ptr<const BcoSampleBlock> HighLoadSimulatorBcoStreamSource::generate
     }
 
     const auto actualSampleCount = block->samples.size();
+    std::optional<ThroughputTarget> throughputTarget;
+    {
+        std::lock_guard lock(m_mutex);
+        throughputTarget = m_loadConfig.throughputTarget;
+    }
     block->stats.sampleCount = static_cast<std::uint64_t>(actualSampleCount);
-    block->stats.packetCount = packetCountFor(actualSampleCount);
+    block->stats.packetCount = packetCountFor(actualSampleCount, throughputTarget);
     block->stats.lostPacketCount = 0;
     block->stats.malformedPacketCount = 0;
     block->stats.producedAt = std::chrono::steady_clock::now();

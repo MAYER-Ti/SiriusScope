@@ -1,5 +1,7 @@
 #include "hardware/simulator/simulated_bco_payload_accounting.h"
 
+#include "core/domain_models.h"
+
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -67,8 +69,14 @@ void testRawBytesPerSample(TestRunner& test)
 void testSamplesPerBatchForTarget(TestRunner& test)
 {
     const auto samplesPerBatch = hardware::samplesPerBatchForTarget(defaultTarget());
-    test.require(samplesPerBatch == 55'813,
-                 "target samples per batch floors raw byte budget");
+    test.require(hardware::packetsPerBatchForTarget(defaultTarget()) == 218,
+                 "target packets per batch floors raw byte budget");
+    test.require(hardware::samplesPerBatchForPacketTarget(defaultTarget()) == 55'808,
+                 "target packet sample count is packet aligned");
+    test.require(samplesPerBatch == 55'808,
+                 "target samples per batch dispatches to packet accounting");
+    test.require(samplesPerBatch % 256 == 0,
+                 "target samples per batch is aligned to samples per packet");
 }
 
 void testRawBytesForSamplesUsesFullPackets(TestRunner& test)
@@ -78,6 +86,23 @@ void testRawBytesForSamplesUsesFullPackets(TestRunner& test)
                  "one full packet accounts to one raw packet");
     test.require(hardware::rawBytesForSamples(257, model) == 8256,
                  "partial second packet accounts as a full raw packet");
+    test.require(hardware::rawBytesForSamples(55'808, model) == 218ULL * 4128ULL,
+                 "packet-aligned target samples account to target packets");
+    test.require(hardware::rawBytesForSamples(55'813, model) == 219ULL * 4128ULL,
+                 "non-aligned target samples round up to next packet");
+}
+
+void testParsedSignalSampleAccountingMode(TestRunner& test)
+{
+    hardware::ThroughputTarget target;
+    target.mode = hardware::PayloadAccountingMode::ParsedSignalSampleBytes;
+    target.targetBytesPerSecond =
+        static_cast<std::uint64_t>(sizeof(core::SignalSample)) * 1000ULL;
+    target.batchPeriod = std::chrono::milliseconds{1000};
+    target.packetModel = defaultPacketModel();
+
+    test.require(hardware::samplesPerBatchForTarget(target) == 1000,
+                 "parsed sample accounting uses SignalSample size");
 }
 
 void testInvalidConfigUsesSafeMinimums(TestRunner& test)
@@ -115,6 +140,7 @@ int main()
     testRawBytesPerSample(test);
     testSamplesPerBatchForTarget(test);
     testRawBytesForSamplesUsesFullPackets(test);
+    testParsedSignalSampleAccountingMode(test);
     testInvalidConfigUsesSafeMinimums(test);
 
     return test.result();

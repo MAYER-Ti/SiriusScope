@@ -1,6 +1,7 @@
 #include "hardware/data_source_factory.h"
 #include "hardware/interfaces/antenna_azimuth_provider.h"
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
+#include "hardware/simulator/simulated_bco_payload_accounting.h"
 
 #include <algorithm>
 #include <cmath>
@@ -118,6 +119,14 @@ hardware::SimulatorBcoLoadConfig makePulseLoadConfig()
     loadConfig.profile = hardware::SimulatorLoadProfile::UiDemo;
     loadConfig.samplesPerSecond = 1'000'000;
     loadConfig.batchPeriod = std::chrono::milliseconds{1};
+    return loadConfig;
+}
+
+hardware::SimulatorBcoLoadConfig makeTargetRawLoadConfig()
+{
+    hardware::SimulatorBcoLoadConfig loadConfig;
+    loadConfig.profile = hardware::SimulatorLoadProfile::TargetRawThroughput90MBps;
+    loadConfig.minVisibleAmplitude = 1;
     return loadConfig;
 }
 
@@ -573,6 +582,55 @@ void testRuntimePulseConfigUpdateAppliesToNextBlocks(TestRunner& test)
                  "source applies disabled pulse config to following block");
 }
 
+void testTargetRawFastPathAssignsMonotonicSampleIndexes(TestRunner& test)
+{
+    auto config = makeValidConfig();
+    config.timeBase.firstSampleIndex = 1000;
+
+    hardware::HighLoadSimulatorBcoStreamSource source(makeTargetRawLoadConfig());
+    const auto configureResult = source.configure(config);
+
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    const bool arrived = configureResult.success
+        && collectBlocks(source, 1, blocks, std::chrono::milliseconds{1000});
+
+    test.require(configureResult.success, "target raw source accepts stream config");
+    test.require(arrived, "target raw source emits a fast-path block");
+    test.require(!blocks.empty() && blocks.front() != nullptr,
+                 "target raw block is available");
+    if (blocks.empty() || !blocks.front()) {
+        return;
+    }
+
+    const auto& block = *blocks.front();
+    const hardware::ThroughputTarget target;
+
+    test.require(block.samples.size() == hardware::samplesPerBatchForTarget(target),
+                 "target raw block uses packet-aligned sample count");
+    test.require(block.samples.size() > 1000,
+                 "target raw block has enough samples to audit indexes");
+    test.require(block.stats.sampleCount == block.samples.size(),
+                 "target raw stats sample count matches samples");
+    test.require(block.stats.firstSampleIndex == 1000,
+                 "target raw stats start at timebase first sample index");
+    test.require(block.stats.lastSampleIndex
+                     == block.stats.firstSampleIndex + block.samples.size() - 1,
+                 "target raw stats cover generated sample range");
+    test.require(block.stats.packetCount == hardware::packetsPerBatchForTarget(target),
+                 "target raw stats packet count uses throughput packet model");
+
+    bool contiguousSampleIndexes = true;
+    for (std::size_t i = 0; i < block.samples.size(); ++i) {
+        if (block.samples[i].sampleIndex
+            != block.stats.firstSampleIndex + static_cast<std::uint64_t>(i)) {
+            contiguousSampleIndexes = false;
+            break;
+        }
+    }
+    test.require(contiguousSampleIndexes,
+                 "target raw fast path sampleIndex is contiguous");
+}
+
 void testConfigurePublishesTimebaseMismatchWarning(TestRunner& test)
 {
     auto loadConfig = makePulseLoadConfig();
@@ -651,6 +709,7 @@ int main()
     testStopIsIdempotent(test);
     testPulseConfigsCanBeUpdated(test);
     testRuntimePulseConfigUpdateAppliesToNextBlocks(test);
+    testTargetRawFastPathAssignsMonotonicSampleIndexes(test);
     testConfigurePublishesTimebaseMismatchWarning(test);
     testConfigureDoesNotWarnWhenTimebaseMatchesThroughput(test);
     testFactoryCreatesHighLoadSimulator(test);
