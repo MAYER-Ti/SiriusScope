@@ -100,6 +100,12 @@ void SignalParameterAccumulator::closePulse(BandSignalAccumulator& state) const
 
     const auto pulse = *state.currentPulse;
     state.currentPulse.reset();
+    recordPulse(state, pulse);
+}
+
+void SignalParameterAccumulator::recordPulse(BandSignalAccumulator& state,
+                                             const CurrentPulse& pulse) const
+{
     if (!shouldKeepPulse(pulse, m_config)) {
         return;
     }
@@ -116,7 +122,24 @@ void SignalParameterAccumulator::closePulse(BandSignalAccumulator& state) const
     state.previousPulseFirstSampleIndex = pulse.firstSampleIndex;
 
     ++state.pulseCount;
-    state.frequenciesHz.push_back(pulse.representativeFrequencyHz);
+    recordRepresentativeFrequency(state.frequenciesHz, pulse.representativeFrequencyHz);
+}
+
+void SignalParameterAccumulator::recordRepresentativeFrequency(
+    std::vector<std::int64_t>& frequenciesHz,
+    std::int64_t frequencyHz) const
+{
+    if (!m_config.uniqueFrequencies) {
+        frequenciesHz.push_back(frequencyHz);
+        return;
+    }
+
+    const auto insertion = std::lower_bound(frequenciesHz.begin(),
+                                            frequenciesHz.end(),
+                                            frequencyHz);
+    if (insertion == frequenciesHz.end() || *insertion != frequencyHz) {
+        frequenciesHz.insert(insertion, frequencyHz);
+    }
 }
 
 std::size_t SignalParameterAccumulator::finalizedPulseCount(
@@ -151,6 +174,23 @@ void SignalParameterAccumulator::ingest(const std::vector<core::SignalSample>& s
 
 void SignalParameterAccumulator::ingest(std::span<const core::SignalSample> samples)
 {
+    if (m_config.ingestMode == SignalParameterIngestMode::Streaming) {
+        ingestStreaming(samples);
+        return;
+    }
+
+    ingestSorted(samples);
+}
+
+void SignalParameterAccumulator::ingestStreaming(std::span<const core::SignalSample> samples)
+{
+    for (const auto& sample : samples) {
+        ingestOneSample(sample);
+    }
+}
+
+void SignalParameterAccumulator::ingestSorted(std::span<const core::SignalSample> samples)
+{
     if (samples.empty()) {
         return;
     }
@@ -159,36 +199,41 @@ void SignalParameterAccumulator::ingest(std::span<const core::SignalSample> samp
     std::sort(orderedSamples.begin(), orderedSamples.end(), sampleLess);
 
     for (const auto& sample : orderedSamples) {
-        if (!hasValidSample(sample)) {
-            ++m_rejectedSampleCount;
-            continue;
-        }
-
-        auto& state = m_bands[sample.bandIndex];
-        if (state.lastAcceptedSampleIndex && sample.sampleIndex < *state.lastAcceptedSampleIndex) {
-            ++m_rejectedSampleCount;
-            continue;
-        }
-
-        ++m_acceptedSampleCount;
-        state.lastAcceptedSampleIndex = sample.sampleIndex;
-
-        if (!state.currentPulse) {
-            state.currentPulse = makePulse(sample);
-            continue;
-        }
-
-        const auto previousSampleIndex = state.currentPulse->lastSeenSampleIndex;
-        const auto gap =
-            sample.sampleIndex > previousSampleIndex ? sample.sampleIndex - previousSampleIndex : 0;
-        if (gap == 0 || gap <= m_config.maxIntraPulseGapSamples) {
-            appendSample(*state.currentPulse, sample);
-            continue;
-        }
-
-        closePulse(state);
-        state.currentPulse = makePulse(sample);
+        ingestOneSample(sample);
     }
+}
+
+void SignalParameterAccumulator::ingestOneSample(const core::SignalSample& sample)
+{
+    if (!hasValidSample(sample)) {
+        ++m_rejectedSampleCount;
+        return;
+    }
+
+    auto& state = m_bands[sample.bandIndex];
+    if (state.lastAcceptedSampleIndex && sample.sampleIndex < *state.lastAcceptedSampleIndex) {
+        ++m_rejectedSampleCount;
+        return;
+    }
+
+    ++m_acceptedSampleCount;
+    state.lastAcceptedSampleIndex = sample.sampleIndex;
+
+    if (!state.currentPulse) {
+        state.currentPulse = makePulse(sample);
+        return;
+    }
+
+    const auto previousSampleIndex = state.currentPulse->lastSeenSampleIndex;
+    const auto gap =
+        sample.sampleIndex > previousSampleIndex ? sample.sampleIndex - previousSampleIndex : 0;
+    if (gap == 0 || gap <= m_config.maxIntraPulseGapSamples) {
+        appendSample(*state.currentPulse, sample);
+        return;
+    }
+
+    closePulse(state);
+    state.currentPulse = makePulse(sample);
 }
 
 std::vector<SignalParameters> SignalParameterAccumulator::finalize() const
@@ -197,29 +242,42 @@ std::vector<SignalParameters> SignalParameterAccumulator::finalize() const
     result.reserve(m_bands.size());
 
     for (const auto& [bandIndex, sourceState] : m_bands) {
-        auto state = sourceState;
-        closePulse(state);
-        if (state.pulseCount == 0) {
+        auto pulseCount = sourceState.pulseCount;
+        auto pulseWidthSumUs = sourceState.pulseWidthSumUs;
+        auto pulseRepetitionPeriodSumUs = sourceState.pulseRepetitionPeriodSumUs;
+        auto pulseRepetitionPeriodCount = sourceState.pulseRepetitionPeriodCount;
+        auto previousPulseFirstSampleIndex = sourceState.previousPulseFirstSampleIndex;
+        auto frequenciesHz = sourceState.frequenciesHz;
+
+        if (sourceState.currentPulse && shouldKeepPulse(*sourceState.currentPulse, m_config)) {
+            const auto& pulse = *sourceState.currentPulse;
+            const auto widthSamples = pulse.lastSampleIndex - pulse.firstSampleIndex + 1;
+            pulseWidthSumUs += samplesToMicroseconds(widthSamples, m_config.samplePeriodNs);
+
+            if (previousPulseFirstSampleIndex) {
+                const auto priSamples = pulse.firstSampleIndex - *previousPulseFirstSampleIndex;
+                pulseRepetitionPeriodSumUs += samplesToMicroseconds(priSamples,
+                                                                    m_config.samplePeriodNs);
+                ++pulseRepetitionPeriodCount;
+            }
+
+            ++pulseCount;
+            recordRepresentativeFrequency(frequenciesHz, pulse.representativeFrequencyHz);
+        }
+
+        if (pulseCount == 0) {
             continue;
         }
 
-        auto frequenciesHz = std::move(state.frequenciesHz);
-        if (m_config.uniqueFrequencies) {
-            std::sort(frequenciesHz.begin(), frequenciesHz.end());
-            frequenciesHz.erase(std::unique(frequenciesHz.begin(), frequenciesHz.end()),
-                                frequenciesHz.end());
-        }
-
         std::optional<double> priUs;
-        if (state.pulseRepetitionPeriodCount > 0) {
-            priUs = state.pulseRepetitionPeriodSumUs
-                / static_cast<double>(state.pulseRepetitionPeriodCount);
+        if (pulseRepetitionPeriodCount > 0) {
+            priUs = pulseRepetitionPeriodSumUs / static_cast<double>(pulseRepetitionPeriodCount);
         }
 
         result.push_back(SignalParameters{
             bandIndex,
-            state.pulseCount,
-            state.pulseWidthSumUs / static_cast<double>(state.pulseCount),
+            pulseCount,
+            pulseWidthSumUs / static_cast<double>(pulseCount),
             priUs,
             std::move(frequenciesHz),
         });

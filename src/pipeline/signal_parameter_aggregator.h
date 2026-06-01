@@ -11,9 +11,12 @@
 
 namespace siriusscope::pipeline {
 
+processing::SignalParameterEstimatorConfig defaultSignalParameterAggregatorEstimatorConfig();
+
 struct SignalParameterAggregatorConfig
 {
-    processing::SignalParameterEstimatorConfig estimatorConfig;
+    processing::SignalParameterEstimatorConfig estimatorConfig =
+        defaultSignalParameterAggregatorEstimatorConfig();
 };
 
 struct SignalParameterAggregationResult

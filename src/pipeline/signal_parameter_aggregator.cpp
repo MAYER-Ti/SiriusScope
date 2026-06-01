@@ -21,6 +21,13 @@ std::uint64_t saturatedDelta(std::size_t after, std::size_t before)
 
 } // namespace
 
+processing::SignalParameterEstimatorConfig defaultSignalParameterAggregatorEstimatorConfig()
+{
+    processing::SignalParameterEstimatorConfig config;
+    config.ingestMode = processing::SignalParameterIngestMode::Streaming;
+    return config;
+}
+
 SignalParameterAggregator::SignalParameterAggregator(SignalParameterAggregatorConfig config)
     : m_config(std::move(config))
     , m_accumulator(m_config.estimatorConfig)

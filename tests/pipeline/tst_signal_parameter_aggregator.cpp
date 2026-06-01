@@ -159,6 +159,52 @@ void testBandsCalculatedIndependently(TestRunner& test)
                  "multi-band snapshot contains band 1");
 }
 
+void testDefaultAggregatorUsesStreamingIngest(TestRunner& test)
+{
+    pipeline::SignalParameterAggregator aggregator(microsecondConfig());
+    const std::vector<core::SignalSample> samples{
+        sample(10),
+        sample(12),
+        sample(11),
+    };
+
+    const auto result = aggregator.consume(samples);
+    const auto snapshot = result.snapshot;
+
+    test.require(snapshot != nullptr, "streaming default publishes snapshot");
+    test.require(result.acceptedSampleDelta == 2,
+                 "streaming default accepts monotonic sample delta");
+    test.require(result.rejectedSampleDelta == 1,
+                 "streaming default rejects out-of-order per-band sample delta");
+    test.require(snapshot && snapshot->acceptedSampleCount == 2,
+                 "streaming default snapshot counts accepted samples");
+    test.require(snapshot && snapshot->rejectedSampleCount == 1,
+                 "streaming default snapshot counts rejected samples");
+}
+
+void testStreamingIngestHandlesLargeMonotonicBlock(TestRunner& test)
+{
+    constexpr std::uint64_t sampleCount = 50'000;
+
+    pipeline::SignalParameterAggregator aggregator(microsecondConfig());
+    std::vector<core::SignalSample> samples;
+    samples.reserve(sampleCount);
+    for (std::uint64_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+        samples.push_back(sample(sampleIndex));
+    }
+
+    const auto result = aggregator.consume(samples);
+    const auto snapshot = result.snapshot;
+
+    test.require(snapshot != nullptr, "large streaming block publishes snapshot");
+    test.require(result.acceptedSampleDelta == sampleCount,
+                 "large streaming block accepts all sample deltas");
+    test.require(result.rejectedSampleDelta == 0,
+                 "large streaming block rejects no monotonic samples");
+    test.require(snapshot && snapshot->acceptedSampleCount == sampleCount,
+                 "large streaming block snapshot counts accepted samples");
+}
+
 } // namespace
 
 int main()
@@ -169,6 +215,8 @@ int main()
     testOnePulseGivesPulseWidthWithoutPri(test);
     testTwoPulsesGivePriAndAveragePulseWidth(test);
     testBandsCalculatedIndependently(test);
+    testDefaultAggregatorUsesStreamingIngest(test);
+    testStreamingIngestHandlesLargeMonotonicBlock(test);
 
     return test.result();
 }

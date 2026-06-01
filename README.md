@@ -139,6 +139,10 @@ smoke. To run the uncapped full pipeline audit from PowerShell:
 The audit also prints per-aggregator latency breakdown to identify the next optimization
 target.
 
+Signal parameter estimation uses a streaming ingest path in the data plane to avoid
+copying and sorting each high-load block. The legacy sorted mode remains available for
+unordered inputs and tests.
+
 ```powershell
 $env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
 ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure

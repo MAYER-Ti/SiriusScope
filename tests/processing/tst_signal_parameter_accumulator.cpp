@@ -75,6 +75,13 @@ SignalParameterEstimatorConfig microsecondSampleConfig()
     return config;
 }
 
+SignalParameterEstimatorConfig streamingMicrosecondSampleConfig()
+{
+    auto config = microsecondSampleConfig();
+    config.ingestMode = SignalParameterIngestMode::Streaming;
+    return config;
+}
+
 void testEmptyAccumulatorReturnsNoParameters(TestRunner& test)
 {
     const SignalParameterAccumulator accumulator;
@@ -187,6 +194,75 @@ void testBandsAreCalculatedIndependently(TestRunner& test)
     }
 }
 
+void testStreamingEqualsSortedForMonotonicPerBandInput(TestRunner& test)
+{
+    const std::vector<SignalSample> samples{
+        makeSample(10, 0, 1'000'000'000LL),
+        makeSample(11, 0, 1'000'000'000LL),
+        makeSample(12, 0, 1'000'000'000LL),
+        makeSample(15, 1, 1'500'000'000LL),
+        makeSample(16, 1, 1'500'000'000LL),
+        makeSample(30, 0, 1'100'000'000LL),
+        makeSample(31, 0, 1'100'000'000LL),
+        makeSample(40, 1, 1'600'000'000LL),
+        makeSample(41, 1, 1'600'000'000LL),
+        makeSample(42, 1, 1'600'000'000LL),
+    };
+
+    SignalParameterAccumulator sorted(microsecondSampleConfig());
+    sorted.ingest(samples);
+
+    SignalParameterAccumulator streaming(streamingMicrosecondSampleConfig());
+    streaming.ingest(samples);
+
+    const auto sortedResult = sorted.finalize();
+    const auto streamingResult = streaming.finalize();
+
+    test.require(sortedResult.size() == streamingResult.size(),
+                 "streaming and sorted monotonic result sizes match");
+    for (int bandIndex = 0; bandIndex < 2; ++bandIndex) {
+        const auto* sortedBand = findParameters(sortedResult, bandIndex);
+        const auto* streamingBand = findParameters(streamingResult, bandIndex);
+        test.require(sortedBand != nullptr, "sorted monotonic band estimate exists");
+        test.require(streamingBand != nullptr, "streaming monotonic band estimate exists");
+        if (sortedBand && streamingBand) {
+            test.require(sameParameters(*sortedBand, *streamingBand),
+                         "streaming monotonic band parameters match sorted mode");
+        }
+    }
+}
+
+void testStreamingRejectsOutOfOrderSamplePerBand(TestRunner& test)
+{
+    SignalParameterAccumulator accumulator(streamingMicrosecondSampleConfig());
+    accumulator.ingest({makeSample(10), makeSample(12), makeSample(11)});
+
+    test.require(accumulator.acceptedSampleCount() == 2,
+                 "streaming accepts only monotonic per-band samples");
+    test.require(accumulator.rejectedSampleCount() == 1,
+                 "streaming rejects out-of-order per-band sample");
+}
+
+void testSortedAcceptsOutOfOrderInput(TestRunner& test)
+{
+    SignalParameterAccumulator accumulator(microsecondSampleConfig());
+    accumulator.ingest({makeSample(10), makeSample(12), makeSample(11)});
+
+    const auto result = accumulator.finalize();
+
+    test.require(accumulator.acceptedSampleCount() == 3,
+                 "sorted mode accepts out-of-order input after sorting");
+    test.require(accumulator.rejectedSampleCount() == 0,
+                 "sorted mode does not reject sortable out-of-order input");
+    test.require(result.size() == 1, "sorted out-of-order input produces one estimate");
+    if (!result.empty()) {
+        test.require(result.front().pulseCount == 1,
+                     "sorted out-of-order input stays in one pulse");
+        test.require(nearly(result.front().pulseWidthUs, 3.0),
+                     "sorted out-of-order input calculates PW after sorting");
+    }
+}
+
 void testDuplicateSampleIndexWithDifferentBeamStaysInsideOnePulse(TestRunner& test)
 {
     SignalParameterAccumulator accumulator(microsecondSampleConfig());
@@ -284,6 +360,9 @@ int main()
     testStreamingBatchesMatchOneBatch(test);
     testBandsAreCalculatedIndependently(test);
     testDuplicateSampleIndexWithDifferentBeamStaysInsideOnePulse(test);
+    testStreamingEqualsSortedForMonotonicPerBandInput(test);
+    testStreamingRejectsOutOfOrderSamplePerBand(test);
+    testSortedAcceptsOutOfOrderInput(test);
     testInvalidSamplesAreRejected(test);
     testUniqueFrequencyConfigIsAppliedOnFinalize(test);
 

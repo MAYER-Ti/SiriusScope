@@ -19,6 +19,7 @@ public:
     void reset();
     void ingest(const std::vector<core::SignalSample>& samples);
     void ingest(std::span<const core::SignalSample> samples);
+    void ingestStreaming(std::span<const core::SignalSample> samples);
     std::vector<SignalParameters> finalize() const;
 
     std::size_t acceptedSampleCount() const noexcept;
@@ -57,6 +58,11 @@ private:
     static bool shouldKeepPulse(const CurrentPulse& pulse,
                                 const SignalParameterEstimatorConfig& config) noexcept;
     void closePulse(BandSignalAccumulator& state) const;
+    void recordPulse(BandSignalAccumulator& state, const CurrentPulse& pulse) const;
+    void recordRepresentativeFrequency(std::vector<std::int64_t>& frequenciesHz,
+                                       std::int64_t frequencyHz) const;
+    void ingestSorted(std::span<const core::SignalSample> samples);
+    void ingestOneSample(const core::SignalSample& sample);
     std::size_t finalizedPulseCount(const BandSignalAccumulator& state) const noexcept;
 
     SignalParameterEstimatorConfig m_config;

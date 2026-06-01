@@ -34,6 +34,12 @@ enum class PulseGroupingMode
     AdaptiveGap,
 };
 
+enum class SignalParameterIngestMode
+{
+    SortByBandAndSample,
+    Streaming,
+};
+
 struct SignalParameterEstimatorConfig
 {
     std::uint64_t samplePeriodNs = core::DomainConstraints::defaultSamplePeriodNs;
@@ -41,6 +47,7 @@ struct SignalParameterEstimatorConfig
     std::size_t minSamplesPerPulse = 1;
     bool uniqueFrequencies = true;
     PulseGroupingMode groupingMode = PulseGroupingMode::AdaptiveGap;
+    SignalParameterIngestMode ingestMode = SignalParameterIngestMode::SortByBandAndSample;
     std::uint64_t minInterPulseGapSamples = 0;
     std::uint64_t maxPulseWidthSamples = 0;
 };
