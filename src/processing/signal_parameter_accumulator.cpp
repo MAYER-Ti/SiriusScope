@@ -32,6 +32,12 @@ bool hasValidSample(const core::SignalSample& sample)
         && hasValidBeamIndex(sample) && hasValidFrequency(sample);
 }
 
+bool hasTrustedMapBandIndexStorageRange(int bandIndex)
+{
+    const auto defaultBandCount = core::defaultRuntimeCapabilities().bandCount;
+    return bandIndex >= 0 && defaultBandCount > 0 && bandIndex < defaultBandCount;
+}
+
 bool sampleLess(const core::SignalSample& lhs, const core::SignalSample& rhs)
 {
     if (lhs.bandIndex != rhs.bandIndex) {
@@ -151,6 +157,85 @@ std::size_t SignalParameterAccumulator::finalizedPulseCount(
     return state.pulseCount;
 }
 
+void SignalParameterAccumulator::prepareBandVectorStorage()
+{
+    if (m_config.bandStateMode != SignalParameterBandStateMode::FixedBandIndexVector) {
+        m_bandVector.clear();
+        m_bandVectorUsed.clear();
+        return;
+    }
+
+    if (m_config.bandStateCapacity == 0) {
+        const auto defaultBandCount = core::defaultRuntimeCapabilities().bandCount;
+        if (defaultBandCount > 0) {
+            m_config.bandStateCapacity = static_cast<std::size_t>(defaultBandCount);
+        }
+    }
+
+    m_bandVector.resize(m_config.bandStateCapacity);
+    m_bandVectorUsed.assign(m_config.bandStateCapacity, false);
+}
+
+SignalParameterAccumulator::BandSignalAccumulator* SignalParameterAccumulator::stateForBand(
+    int bandIndex)
+{
+    if (m_config.bandStateMode == SignalParameterBandStateMode::FixedBandIndexVector) {
+        if (bandIndex < 0) {
+            return nullptr;
+        }
+
+        const auto vectorIndex = static_cast<std::size_t>(bandIndex);
+        if (vectorIndex >= m_config.bandStateCapacity
+            || vectorIndex >= m_bandVector.size()
+            || vectorIndex >= m_bandVectorUsed.size()) {
+            return nullptr;
+        }
+
+        m_bandVectorUsed[vectorIndex] = true;
+        return &m_bandVector[vectorIndex];
+    }
+
+    return &m_bands[bandIndex];
+}
+
+const SignalParameterAccumulator::BandSignalAccumulator*
+SignalParameterAccumulator::stateForBandIfUsed(int bandIndex) const
+{
+    if (m_config.bandStateMode == SignalParameterBandStateMode::FixedBandIndexVector) {
+        if (bandIndex < 0) {
+            return nullptr;
+        }
+
+        const auto vectorIndex = static_cast<std::size_t>(bandIndex);
+        if (vectorIndex >= m_bandVector.size() || vectorIndex >= m_bandVectorUsed.size()
+            || !m_bandVectorUsed[vectorIndex]) {
+            return nullptr;
+        }
+
+        return &m_bandVector[vectorIndex];
+    }
+
+    const auto found = m_bands.find(bandIndex);
+    return found == m_bands.end() ? nullptr : &found->second;
+}
+
+template <typename Fn>
+void SignalParameterAccumulator::forEachUsedBandState(Fn&& fn) const
+{
+    if (m_config.bandStateMode == SignalParameterBandStateMode::FixedBandIndexVector) {
+        for (std::size_t index = 0; index < m_bandVector.size(); ++index) {
+            if (index < m_bandVectorUsed.size() && m_bandVectorUsed[index]) {
+                fn(static_cast<int>(index), m_bandVector[index]);
+            }
+        }
+        return;
+    }
+
+    for (const auto& [bandIndex, state] : m_bands) {
+        fn(bandIndex, state);
+    }
+}
+
 SignalParameterAccumulator::SignalParameterAccumulator(SignalParameterEstimatorConfig config)
     : m_config(std::move(config))
 {
@@ -158,11 +243,25 @@ SignalParameterAccumulator::SignalParameterAccumulator(SignalParameterEstimatorC
     m_config.maxIntraPulseGapSamples =
         std::max<std::uint64_t>(1, m_config.maxIntraPulseGapSamples);
     m_config.minSamplesPerPulse = std::max<std::size_t>(1, m_config.minSamplesPerPulse);
+    prepareBandVectorStorage();
 }
 
 void SignalParameterAccumulator::reset()
 {
     m_bands.clear();
+    if (m_config.bandStateMode == SignalParameterBandStateMode::FixedBandIndexVector) {
+        if (m_bandVector.size() != m_config.bandStateCapacity
+            || m_bandVectorUsed.size() != m_config.bandStateCapacity) {
+            prepareBandVectorStorage();
+        }
+        for (auto& state : m_bandVector) {
+            state = {};
+        }
+        std::fill(m_bandVectorUsed.begin(), m_bandVectorUsed.end(), false);
+    } else {
+        m_bandVector.clear();
+        m_bandVectorUsed.clear();
+    }
     m_acceptedSampleCount = 0;
     m_rejectedSampleCount = 0;
 }
@@ -184,6 +283,13 @@ void SignalParameterAccumulator::ingest(std::span<const core::SignalSample> samp
 
 void SignalParameterAccumulator::ingestStreaming(std::span<const core::SignalSample> samples)
 {
+    if (m_config.validationMode == SignalParameterValidationMode::TrustedValidatedSamples) {
+        for (const auto& sample : samples) {
+            ingestOneTrustedSample(sample);
+        }
+        return;
+    }
+
     for (const auto& sample : samples) {
         ingestOneSample(sample);
     }
@@ -199,7 +305,11 @@ void SignalParameterAccumulator::ingestSorted(std::span<const core::SignalSample
     std::sort(orderedSamples.begin(), orderedSamples.end(), sampleLess);
 
     for (const auto& sample : orderedSamples) {
-        ingestOneSample(sample);
+        if (m_config.validationMode == SignalParameterValidationMode::TrustedValidatedSamples) {
+            ingestOneTrustedSample(sample);
+        } else {
+            ingestOneSample(sample);
+        }
     }
 }
 
@@ -210,7 +320,35 @@ void SignalParameterAccumulator::ingestOneSample(const core::SignalSample& sampl
         return;
     }
 
-    auto& state = m_bands[sample.bandIndex];
+    auto* state = stateForBand(sample.bandIndex);
+    if (!state) {
+        ++m_rejectedSampleCount;
+        return;
+    }
+
+    ingestValidSample(*state, sample);
+}
+
+void SignalParameterAccumulator::ingestOneTrustedSample(const core::SignalSample& sample)
+{
+    if (m_config.bandStateMode == SignalParameterBandStateMode::MapByBandIndex
+        && !hasTrustedMapBandIndexStorageRange(sample.bandIndex)) {
+        ++m_rejectedSampleCount;
+        return;
+    }
+
+    auto* state = stateForBand(sample.bandIndex);
+    if (!state) {
+        ++m_rejectedSampleCount;
+        return;
+    }
+
+    ingestValidSample(*state, sample);
+}
+
+void SignalParameterAccumulator::ingestValidSample(BandSignalAccumulator& state,
+                                                   const core::SignalSample& sample)
+{
     if (state.lastAcceptedSampleIndex && sample.sampleIndex < *state.lastAcceptedSampleIndex) {
         ++m_rejectedSampleCount;
         return;
@@ -239,9 +377,11 @@ void SignalParameterAccumulator::ingestOneSample(const core::SignalSample& sampl
 std::vector<SignalParameters> SignalParameterAccumulator::finalize() const
 {
     std::vector<SignalParameters> result;
-    result.reserve(m_bands.size());
+    result.reserve(m_config.bandStateMode == SignalParameterBandStateMode::FixedBandIndexVector
+                       ? m_bandVector.size()
+                       : m_bands.size());
 
-    for (const auto& [bandIndex, sourceState] : m_bands) {
+    forEachUsedBandState([&](int bandIndex, const BandSignalAccumulator& sourceState) {
         auto pulseCount = sourceState.pulseCount;
         auto pulseWidthSumUs = sourceState.pulseWidthSumUs;
         auto pulseRepetitionPeriodSumUs = sourceState.pulseRepetitionPeriodSumUs;
@@ -266,7 +406,7 @@ std::vector<SignalParameters> SignalParameterAccumulator::finalize() const
         }
 
         if (pulseCount == 0) {
-            continue;
+            return;
         }
 
         std::optional<double> priUs;
@@ -281,7 +421,7 @@ std::vector<SignalParameters> SignalParameterAccumulator::finalize() const
             priUs,
             std::move(frequenciesHz),
         });
-    }
+    });
 
     return result;
 }
@@ -299,10 +439,10 @@ std::size_t SignalParameterAccumulator::rejectedSampleCount() const noexcept
 std::size_t SignalParameterAccumulator::pulseCount() const noexcept
 {
     std::size_t count = 0;
-    for (const auto& [bandIndex, state] : m_bands) {
+    forEachUsedBandState([&](int bandIndex, const BandSignalAccumulator& state) {
         (void) bandIndex;
         count += finalizedPulseCount(state);
-    }
+    });
     return count;
 }
 

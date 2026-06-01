@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace siriusscope::pipeline {
 
@@ -49,9 +50,15 @@ private:
     };
 
     void updateBandSpans(std::span<const core::SignalSample> samples);
+    void prepareBandSpanVectorStorage();
+    void resetBandSpanStorage();
+    BandSampleSpan* spanForBand(int bandIndex);
+    const BandSampleSpan* spanForBandIfUsed(int bandIndex) const;
 
     SignalParameterAggregatorConfig m_config;
     processing::SignalParameterAccumulator m_accumulator;
+    std::vector<BandSampleSpan> m_bandSpanVector;
+    std::vector<bool> m_bandSpanVectorUsed;
     std::map<int, BandSampleSpan> m_bandSpans;
     mutable std::uint64_t m_nextSequenceId = 1;
 };

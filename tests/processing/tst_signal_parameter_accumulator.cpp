@@ -82,6 +82,16 @@ SignalParameterEstimatorConfig streamingMicrosecondSampleConfig()
     return config;
 }
 
+SignalParameterEstimatorConfig trustedStreamingVectorMicrosecondSampleConfig(
+    std::size_t bandStateCapacity = 5)
+{
+    auto config = streamingMicrosecondSampleConfig();
+    config.validationMode = SignalParameterValidationMode::TrustedValidatedSamples;
+    config.bandStateMode = SignalParameterBandStateMode::FixedBandIndexVector;
+    config.bandStateCapacity = bandStateCapacity;
+    return config;
+}
+
 void testEmptyAccumulatorReturnsNoParameters(TestRunner& test)
 {
     const SignalParameterAccumulator accumulator;
@@ -243,6 +253,115 @@ void testStreamingRejectsOutOfOrderSamplePerBand(TestRunner& test)
                  "streaming rejects out-of-order per-band sample");
 }
 
+void testTrustedStreamingVectorMatchesValidatedStreaming(TestRunner& test)
+{
+    const std::vector<SignalSample> samples{
+        makeSample(10, 0, 1'000'000'000LL),
+        makeSample(11, 0, 1'000'000'000LL),
+        makeSample(30, 0, 1'100'000'000LL),
+        makeSample(31, 0, 1'100'000'000LL),
+        makeSample(12, 1, 1'500'000'000LL),
+        makeSample(13, 1, 1'500'000'000LL),
+        makeSample(40, 1, 1'600'000'000LL),
+        makeSample(41, 1, 1'600'000'000LL),
+    };
+
+    SignalParameterAccumulator validated(streamingMicrosecondSampleConfig());
+    validated.ingest(samples);
+
+    SignalParameterAccumulator trusted(trustedStreamingVectorMicrosecondSampleConfig());
+    trusted.ingest(samples);
+
+    const auto validatedResult = validated.finalize();
+    const auto trustedResult = trusted.finalize();
+
+    test.require(validatedResult.size() == trustedResult.size(),
+                 "trusted vector result count matches validated streaming");
+    test.require(validated.acceptedSampleCount() == trusted.acceptedSampleCount(),
+                 "trusted vector accepted count matches validated streaming");
+    test.require(validated.rejectedSampleCount() == 0,
+                 "validated streaming rejects no valid trusted-equivalence samples");
+    test.require(trusted.rejectedSampleCount() == 0,
+                 "trusted vector rejects no valid trusted-equivalence samples");
+
+    for (int bandIndex = 0; bandIndex < 2; ++bandIndex) {
+        const auto* validatedBand = findParameters(validatedResult, bandIndex);
+        const auto* trustedBand = findParameters(trustedResult, bandIndex);
+        test.require(validatedBand != nullptr, "validated trusted-equivalence band exists");
+        test.require(trustedBand != nullptr, "trusted vector trusted-equivalence band exists");
+        if (validatedBand && trustedBand) {
+            test.require(sameParameters(*validatedBand, *trustedBand),
+                         "trusted vector parameters match validated streaming");
+        }
+    }
+}
+
+void testTrustedVectorRejectsOutOfCapacityBand(TestRunner& test)
+{
+    SignalParameterAccumulator accumulator(
+        trustedStreamingVectorMicrosecondSampleConfig(2));
+    accumulator.ingest({makeSample(10, 0), makeSample(11, 3)});
+
+    test.require(accumulator.acceptedSampleCount() == 1,
+                 "trusted vector accepts in-capacity band sample");
+    test.require(accumulator.rejectedSampleCount() == 1,
+                 "trusted vector rejects out-of-capacity band sample");
+}
+
+void testTrustedMapRejectsOutOfRangeBand(TestRunner& test)
+{
+    auto config = streamingMicrosecondSampleConfig();
+    config.validationMode = SignalParameterValidationMode::TrustedValidatedSamples;
+    config.bandStateMode = SignalParameterBandStateMode::MapByBandIndex;
+
+    SignalParameterAccumulator accumulator(config);
+    accumulator.ingest({makeSample(10, 0), makeSample(11, 99)});
+
+    test.require(accumulator.acceptedSampleCount() == 1,
+                 "trusted map accepts in-range band sample");
+    test.require(accumulator.rejectedSampleCount() == 1,
+                 "trusted map rejects out-of-range band sample");
+}
+
+void testTrustedStreamingRejectsOutOfOrderSamplePerBand(TestRunner& test)
+{
+    SignalParameterAccumulator accumulator(trustedStreamingVectorMicrosecondSampleConfig());
+    accumulator.ingest({makeSample(10), makeSample(12), makeSample(11)});
+
+    test.require(accumulator.acceptedSampleCount() == 2,
+                 "trusted streaming accepts only monotonic per-band samples");
+    test.require(accumulator.rejectedSampleCount() == 1,
+                 "trusted streaming rejects out-of-order per-band sample");
+}
+
+void testTrustedStreamingVectorHandlesLargeMonotonicBlock(TestRunner& test)
+{
+    constexpr std::uint64_t sampleCount = 50'000;
+    constexpr int bandCount = 4;
+
+    std::vector<SignalSample> samples;
+    samples.reserve(sampleCount);
+    for (std::uint64_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+        const auto bandIndex = static_cast<int>(sampleIndex % bandCount);
+        samples.push_back(makeSample(sampleIndex,
+                                     bandIndex,
+                                     1'000'000'000LL
+                                         + static_cast<std::int64_t>(bandIndex)
+                                             * 100'000'000LL));
+    }
+
+    SignalParameterAccumulator accumulator(
+        trustedStreamingVectorMicrosecondSampleConfig(bandCount));
+    accumulator.ingest(samples);
+
+    test.require(accumulator.acceptedSampleCount() == sampleCount,
+                 "trusted vector large block accepts all monotonic samples");
+    test.require(accumulator.rejectedSampleCount() == 0,
+                 "trusted vector large block rejects no monotonic samples");
+    test.require(!accumulator.finalize().empty(),
+                 "trusted vector large block produces signal parameters");
+}
+
 void testSortedAcceptsOutOfOrderInput(TestRunner& test)
 {
     SignalParameterAccumulator accumulator(microsecondSampleConfig());
@@ -362,6 +481,11 @@ int main()
     testDuplicateSampleIndexWithDifferentBeamStaysInsideOnePulse(test);
     testStreamingEqualsSortedForMonotonicPerBandInput(test);
     testStreamingRejectsOutOfOrderSamplePerBand(test);
+    testTrustedStreamingVectorMatchesValidatedStreaming(test);
+    testTrustedVectorRejectsOutOfCapacityBand(test);
+    testTrustedMapRejectsOutOfRangeBand(test);
+    testTrustedStreamingRejectsOutOfOrderSamplePerBand(test);
+    testTrustedStreamingVectorHandlesLargeMonotonicBlock(test);
     testSortedAcceptsOutOfOrderInput(test);
     testInvalidSamplesAreRejected(test);
     testUniqueFrequencyConfigIsAppliedOnFinalize(test);

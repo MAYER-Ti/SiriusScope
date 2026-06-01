@@ -40,6 +40,18 @@ enum class SignalParameterIngestMode
     Streaming,
 };
 
+enum class SignalParameterValidationMode
+{
+    ValidateEachSample,
+    TrustedValidatedSamples,
+};
+
+enum class SignalParameterBandStateMode
+{
+    MapByBandIndex,
+    FixedBandIndexVector,
+};
+
 struct SignalParameterEstimatorConfig
 {
     std::uint64_t samplePeriodNs = core::DomainConstraints::defaultSamplePeriodNs;
@@ -48,6 +60,10 @@ struct SignalParameterEstimatorConfig
     bool uniqueFrequencies = true;
     PulseGroupingMode groupingMode = PulseGroupingMode::AdaptiveGap;
     SignalParameterIngestMode ingestMode = SignalParameterIngestMode::SortByBandAndSample;
+    SignalParameterValidationMode validationMode =
+        SignalParameterValidationMode::ValidateEachSample;
+    SignalParameterBandStateMode bandStateMode = SignalParameterBandStateMode::MapByBandIndex;
+    std::size_t bandStateCapacity = 0;
     std::uint64_t minInterPulseGapSamples = 0;
     std::uint64_t maxPulseWidthSamples = 0;
 };

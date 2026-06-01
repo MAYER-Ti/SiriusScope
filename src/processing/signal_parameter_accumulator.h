@@ -61,11 +61,20 @@ private:
     void recordPulse(BandSignalAccumulator& state, const CurrentPulse& pulse) const;
     void recordRepresentativeFrequency(std::vector<std::int64_t>& frequenciesHz,
                                        std::int64_t frequencyHz) const;
+    void prepareBandVectorStorage();
+    BandSignalAccumulator* stateForBand(int bandIndex);
+    const BandSignalAccumulator* stateForBandIfUsed(int bandIndex) const;
+    template <typename Fn>
+    void forEachUsedBandState(Fn&& fn) const;
     void ingestSorted(std::span<const core::SignalSample> samples);
     void ingestOneSample(const core::SignalSample& sample);
+    void ingestOneTrustedSample(const core::SignalSample& sample);
+    void ingestValidSample(BandSignalAccumulator& state, const core::SignalSample& sample);
     std::size_t finalizedPulseCount(const BandSignalAccumulator& state) const noexcept;
 
     SignalParameterEstimatorConfig m_config;
+    std::vector<BandSignalAccumulator> m_bandVector;
+    std::vector<bool> m_bandVectorUsed;
     std::map<int, BandSignalAccumulator> m_bands;
     std::size_t m_acceptedSampleCount = 0;
     std::size_t m_rejectedSampleCount = 0;

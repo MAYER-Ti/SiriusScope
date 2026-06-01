@@ -182,15 +182,44 @@ void testDefaultAggregatorUsesStreamingIngest(TestRunner& test)
                  "streaming default snapshot counts rejected samples");
 }
 
+void testDefaultAggregatorRejectsOutOfCapacityBand(TestRunner& test)
+{
+    const auto defaultBandCount = core::defaultRuntimeCapabilities().bandCount;
+    pipeline::SignalParameterAggregator aggregator(microsecondConfig());
+    const std::vector<core::SignalSample> samples{
+        sample(10, 0),
+        sample(11, defaultBandCount),
+    };
+
+    const auto result = aggregator.consume(samples);
+    const auto snapshot = result.snapshot;
+
+    test.require(snapshot != nullptr, "out-of-capacity consume publishes snapshot");
+    test.require(result.acceptedSampleDelta == 1,
+                 "default trusted vector accepts in-capacity band sample");
+    test.require(result.rejectedSampleDelta == 1,
+                 "default trusted vector rejects out-of-capacity band sample");
+    test.require(snapshot && snapshot->acceptedSampleCount == 1,
+                 "out-of-capacity snapshot counts accepted samples");
+    test.require(snapshot && snapshot->rejectedSampleCount == 1,
+                 "out-of-capacity snapshot counts rejected samples");
+}
+
 void testStreamingIngestHandlesLargeMonotonicBlock(TestRunner& test)
 {
     constexpr std::uint64_t sampleCount = 50'000;
+    constexpr int bandCount = 4;
 
     pipeline::SignalParameterAggregator aggregator(microsecondConfig());
     std::vector<core::SignalSample> samples;
     samples.reserve(sampleCount);
     for (std::uint64_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
-        samples.push_back(sample(sampleIndex));
+        const auto bandIndex = static_cast<int>(sampleIndex % bandCount);
+        samples.push_back(sample(sampleIndex,
+                                 bandIndex,
+                                 3'000'000'000LL
+                                     + static_cast<std::int64_t>(bandIndex)
+                                         * 100'000'000LL));
     }
 
     const auto result = aggregator.consume(samples);
@@ -216,6 +245,7 @@ int main()
     testTwoPulsesGivePriAndAveragePulseWidth(test);
     testBandsCalculatedIndependently(test);
     testDefaultAggregatorUsesStreamingIngest(test);
+    testDefaultAggregatorRejectsOutOfCapacityBand(test);
     testStreamingIngestHandlesLargeMonotonicBlock(test);
 
     return test.result();

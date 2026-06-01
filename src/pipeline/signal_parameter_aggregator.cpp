@@ -14,9 +14,34 @@ bool hasValidSample(const core::SignalSample& sample)
         && core::validateSystemFrequency(sample.absoluteFrequencyHz).isValid();
 }
 
+bool hasTrustedMapBandIndexStorageRange(int bandIndex)
+{
+    const auto defaultBandCount = core::defaultRuntimeCapabilities().bandCount;
+    return bandIndex >= 0 && defaultBandCount > 0 && bandIndex < defaultBandCount;
+}
+
 std::uint64_t saturatedDelta(std::size_t after, std::size_t before)
 {
     return after >= before ? static_cast<std::uint64_t>(after - before) : 0;
+}
+
+void normalizeFixedBandCapacity(processing::SignalParameterEstimatorConfig& config)
+{
+    if (config.bandStateMode != processing::SignalParameterBandStateMode::FixedBandIndexVector
+        || config.bandStateCapacity != 0) {
+        return;
+    }
+
+    const auto defaultBandCount = core::defaultRuntimeCapabilities().bandCount;
+    if (defaultBandCount > 0) {
+        config.bandStateCapacity = static_cast<std::size_t>(defaultBandCount);
+    }
+}
+
+SignalParameterAggregatorConfig normalizeConfig(SignalParameterAggregatorConfig config)
+{
+    normalizeFixedBandCapacity(config.estimatorConfig);
+    return config;
 }
 
 } // namespace
@@ -25,27 +50,31 @@ processing::SignalParameterEstimatorConfig defaultSignalParameterAggregatorEstim
 {
     processing::SignalParameterEstimatorConfig config;
     config.ingestMode = processing::SignalParameterIngestMode::Streaming;
+    config.validationMode = processing::SignalParameterValidationMode::TrustedValidatedSamples;
+    config.bandStateMode = processing::SignalParameterBandStateMode::FixedBandIndexVector;
+    normalizeFixedBandCapacity(config);
     return config;
 }
 
 SignalParameterAggregator::SignalParameterAggregator(SignalParameterAggregatorConfig config)
-    : m_config(std::move(config))
+    : m_config(normalizeConfig(std::move(config)))
     , m_accumulator(m_config.estimatorConfig)
 {
+    prepareBandSpanVectorStorage();
 }
 
 void SignalParameterAggregator::reset()
 {
     m_accumulator.reset();
-    m_bandSpans.clear();
+    resetBandSpanStorage();
     m_nextSequenceId = 1;
 }
 
 void SignalParameterAggregator::setConfig(SignalParameterAggregatorConfig config)
 {
-    m_config = std::move(config);
+    m_config = normalizeConfig(std::move(config));
     m_accumulator = processing::SignalParameterAccumulator(m_config.estimatorConfig);
-    m_bandSpans.clear();
+    prepareBandSpanVectorStorage();
     m_nextSequenceId = 1;
 }
 
@@ -99,10 +128,10 @@ std::shared_ptr<const SignalParameterSnapshot> SignalParameterAggregator::makeSn
         summary.pulseWidthUs = parameter.pulseWidthUs;
         summary.pulseCount = static_cast<std::uint64_t>(parameter.pulseCount);
 
-        const auto span = m_bandSpans.find(parameter.bandIndex);
-        if (span != m_bandSpans.end() && span->second.hasSamples) {
-            summary.firstSampleIndex = span->second.firstSampleIndex;
-            summary.lastSampleIndex = span->second.lastSampleIndex;
+        const auto* span = spanForBandIfUsed(parameter.bandIndex);
+        if (span && span->hasSamples) {
+            summary.firstSampleIndex = span->firstSampleIndex;
+            summary.lastSampleIndex = span->lastSampleIndex;
         }
 
         snapshot->bands.push_back(std::move(summary));
@@ -113,22 +142,117 @@ std::shared_ptr<const SignalParameterSnapshot> SignalParameterAggregator::makeSn
 
 void SignalParameterAggregator::updateBandSpans(std::span<const core::SignalSample> samples)
 {
+    const bool trustedSamples = m_config.estimatorConfig.validationMode
+        == processing::SignalParameterValidationMode::TrustedValidatedSamples;
+    const bool trustedMapBandState = trustedSamples
+        && m_config.estimatorConfig.bandStateMode
+            == processing::SignalParameterBandStateMode::MapByBandIndex;
+
     for (const auto& sample : samples) {
-        if (!hasValidSample(sample)) {
+        if (!trustedSamples && !hasValidSample(sample)) {
+            continue;
+        }
+        if (trustedMapBandState && !hasTrustedMapBandIndexStorageRange(sample.bandIndex)) {
             continue;
         }
 
-        auto& span = m_bandSpans[sample.bandIndex];
-        if (!span.hasSamples) {
-            span.firstSampleIndex = sample.sampleIndex;
-            span.lastSampleIndex = sample.sampleIndex;
-            span.hasSamples = true;
+        auto* span = spanForBand(sample.bandIndex);
+        if (!span) {
             continue;
         }
 
-        span.firstSampleIndex = std::min(span.firstSampleIndex, sample.sampleIndex);
-        span.lastSampleIndex = std::max(span.lastSampleIndex, sample.sampleIndex);
+        if (!span->hasSamples) {
+            span->firstSampleIndex = sample.sampleIndex;
+            span->lastSampleIndex = sample.sampleIndex;
+            span->hasSamples = true;
+            continue;
+        }
+
+        span->firstSampleIndex = std::min(span->firstSampleIndex, sample.sampleIndex);
+        span->lastSampleIndex = std::max(span->lastSampleIndex, sample.sampleIndex);
     }
+}
+
+void SignalParameterAggregator::prepareBandSpanVectorStorage()
+{
+    m_bandSpans.clear();
+
+    if (m_config.estimatorConfig.bandStateMode
+        != processing::SignalParameterBandStateMode::FixedBandIndexVector) {
+        m_bandSpanVector.clear();
+        m_bandSpanVectorUsed.clear();
+        return;
+    }
+
+    normalizeFixedBandCapacity(m_config.estimatorConfig);
+    m_bandSpanVector.resize(m_config.estimatorConfig.bandStateCapacity);
+    m_bandSpanVectorUsed.assign(m_config.estimatorConfig.bandStateCapacity, false);
+}
+
+void SignalParameterAggregator::resetBandSpanStorage()
+{
+    m_bandSpans.clear();
+
+    if (m_config.estimatorConfig.bandStateMode
+        != processing::SignalParameterBandStateMode::FixedBandIndexVector) {
+        m_bandSpanVector.clear();
+        m_bandSpanVectorUsed.clear();
+        return;
+    }
+
+    if (m_bandSpanVector.size() != m_config.estimatorConfig.bandStateCapacity
+        || m_bandSpanVectorUsed.size() != m_config.estimatorConfig.bandStateCapacity) {
+        prepareBandSpanVectorStorage();
+    }
+
+    for (auto& span : m_bandSpanVector) {
+        span = {};
+    }
+    std::fill(m_bandSpanVectorUsed.begin(), m_bandSpanVectorUsed.end(), false);
+}
+
+SignalParameterAggregator::BandSampleSpan* SignalParameterAggregator::spanForBand(int bandIndex)
+{
+    if (m_config.estimatorConfig.bandStateMode
+        == processing::SignalParameterBandStateMode::FixedBandIndexVector) {
+        if (bandIndex < 0) {
+            return nullptr;
+        }
+
+        const auto vectorIndex = static_cast<std::size_t>(bandIndex);
+        if (vectorIndex >= m_config.estimatorConfig.bandStateCapacity
+            || vectorIndex >= m_bandSpanVector.size()
+            || vectorIndex >= m_bandSpanVectorUsed.size()) {
+            return nullptr;
+        }
+
+        m_bandSpanVectorUsed[vectorIndex] = true;
+        return &m_bandSpanVector[vectorIndex];
+    }
+
+    return &m_bandSpans[bandIndex];
+}
+
+const SignalParameterAggregator::BandSampleSpan*
+SignalParameterAggregator::spanForBandIfUsed(int bandIndex) const
+{
+    if (m_config.estimatorConfig.bandStateMode
+        == processing::SignalParameterBandStateMode::FixedBandIndexVector) {
+        if (bandIndex < 0) {
+            return nullptr;
+        }
+
+        const auto vectorIndex = static_cast<std::size_t>(bandIndex);
+        if (vectorIndex >= m_bandSpanVector.size() || vectorIndex >= m_bandSpanVectorUsed.size()
+            || !m_bandSpanVectorUsed[vectorIndex]) {
+            return nullptr;
+        }
+
+        return &m_bandSpanVector[vectorIndex];
+    }
+
+    const auto found = m_bandSpans.find(bandIndex);
+    return found == m_bandSpans.end() ? nullptr : &found->second;
 }
 
 } // namespace siriusscope::pipeline
