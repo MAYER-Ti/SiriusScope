@@ -131,5 +131,26 @@ Run CTest from the configured build directory:
 ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
+### Full 90 MB/s Data-Plane Audit
+
+The regular test suite keeps `TargetRawThroughput90MBps` capped as a source-accounting
+smoke. To run the uncapped full pipeline audit from PowerShell:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+```
+
+To require zero drops and no simulator backpressure:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
+```
+
 For performance-sensitive work, also follow the high-load acceptance criteria in
 `docs/development/build-and-test.md`.
