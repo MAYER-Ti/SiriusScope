@@ -11,6 +11,18 @@
 
 namespace siriusscope::pipeline {
 
+struct LatencyStats
+{
+    std::uint64_t count = 0;
+    double totalMs = 0.0;
+    double maxMs = 0.0;
+
+    double averageMs() const noexcept
+    {
+        return count == 0 ? 0.0 : totalMs / static_cast<double>(count);
+    }
+};
+
 struct PipelineMetricsSnapshot
 {
     std::uint64_t inputBlocks = 0;
@@ -26,6 +38,17 @@ struct PipelineMetricsSnapshot
     double storageLatencyMaxMs = 0.0;
     double guiSnapshotFps = 0.0;
     double maxBlockAgeMs = 0.0;
+    LatencyStats processBlockLatency;
+    LatencyStats waterfallAggregationLatency;
+    LatencyStats spectrumAggregationLatency;
+    LatencyStats bearingAggregationLatency;
+    LatencyStats signalParameterAggregationLatency;
+    LatencyStats waterfallRowPublishLatency;
+    LatencyStats spectrumSnapshotPublishLatency;
+    LatencyStats bearingSnapshotPublishLatency;
+    LatencyStats signalParameterSnapshotPublishLatency;
+    std::uint64_t processedBlockSamplesTotal = 0;
+    double averageSamplesPerProcessedBlock = 0.0;
     std::uint64_t producedWaterfallRows = 0;
     std::uint64_t producedWaterfallSnapshots = 0;
     std::uint64_t waterfallQueuedRows = 0;
@@ -77,7 +100,18 @@ public:
     void recordDroppedBlock(std::size_t sampleCount);
     void recordProcessedBlock(std::size_t sampleCount,
                               std::chrono::milliseconds blockAge,
-                              std::chrono::milliseconds processingLatency);
+                              std::chrono::steady_clock::duration processingLatency);
+    void recordProcessBlockLatency(std::chrono::steady_clock::duration elapsed,
+                                   std::size_t sampleCount);
+    void recordWaterfallAggregationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumAggregationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingAggregationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterAggregationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordWaterfallRowPublishLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumSnapshotPublishLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingSnapshotPublishLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterSnapshotPublishLatency(
+        std::chrono::steady_clock::duration elapsed);
     void recordWaterfallAggregation(std::uint64_t producedRows,
                                     std::uint64_t producedSnapshots,
                                     std::uint64_t invalidFrequencySamples,
@@ -104,6 +138,8 @@ public:
 
 private:
     static double megabytesForSamples(std::uint64_t sampleCount);
+    static double millisecondsFor(std::chrono::steady_clock::duration elapsed);
+    static void recordLatency(LatencyStats& stats, double elapsedMs);
 
     mutable std::mutex m_mutex;
     std::chrono::steady_clock::time_point m_startedAt = std::chrono::steady_clock::now();
@@ -134,6 +170,16 @@ private:
     std::chrono::milliseconds m_spectrumAggregationLatencyMax{0};
     std::chrono::milliseconds m_bearingAggregationLatencyMax{0};
     std::chrono::milliseconds m_maxBlockAge{0};
+    LatencyStats m_processBlockLatency;
+    LatencyStats m_waterfallAggregationLatency;
+    LatencyStats m_spectrumAggregationLatency;
+    LatencyStats m_bearingAggregationLatency;
+    LatencyStats m_signalParameterAggregationLatency;
+    LatencyStats m_waterfallRowPublishLatency;
+    LatencyStats m_spectrumSnapshotPublishLatency;
+    LatencyStats m_bearingSnapshotPublishLatency;
+    LatencyStats m_signalParameterSnapshotPublishLatency;
+    std::uint64_t m_processedBlockSamplesTotal = 0;
 };
 
 } // namespace siriusscope::pipeline

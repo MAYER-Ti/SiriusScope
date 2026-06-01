@@ -81,6 +81,22 @@ target_include_directories(tst_pipeline
 
 add_test(NAME tst_pipeline COMMAND tst_pipeline)
 
+add_executable(tst_pipeline_metrics
+    pipeline/tst_pipeline_metrics.cpp
+)
+
+target_link_libraries(tst_pipeline_metrics
+    PRIVATE
+        siriusscope_pipeline
+)
+
+target_include_directories(tst_pipeline_metrics
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME tst_pipeline_metrics COMMAND tst_pipeline_metrics)
+
 add_executable(tst_waterfall_aggregator
     pipeline/tst_waterfall_aggregator.cpp
 )

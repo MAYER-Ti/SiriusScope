@@ -77,13 +77,17 @@ private:
     void processBlock(const SignalBlock& block);
     void publishWaterfallRows(WaterfallAggregationResult result,
                               WaterfallAggregatorConfig config,
-                              std::chrono::milliseconds aggregationLatency);
+                              std::chrono::milliseconds aggregationLatency,
+                              std::chrono::steady_clock::duration* publishLatency = nullptr);
     void publishSpectrumSnapshots(SpectrumAggregationResult result,
-                                  std::chrono::milliseconds aggregationLatency);
+                                  std::chrono::milliseconds aggregationLatency,
+                                  std::chrono::steady_clock::duration* publishLatency = nullptr);
     void publishBearingSnapshots(BearingAggregationResult result,
-                                 std::chrono::milliseconds aggregationLatency);
+                                 std::chrono::milliseconds aggregationLatency,
+                                 std::chrono::steady_clock::duration* publishLatency = nullptr);
     void publishSignalParameterSnapshots(SignalParameterAggregationResult result,
-                                         std::chrono::milliseconds aggregationLatency);
+                                         std::chrono::milliseconds aggregationLatency,
+                                         std::chrono::steady_clock::duration* publishLatency = nullptr);
     void flushWaterfallRows();
     void flushSpectrumSnapshots();
     void flushBearingSnapshots();

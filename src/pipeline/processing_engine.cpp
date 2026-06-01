@@ -6,6 +6,11 @@
 #include <utility>
 
 namespace siriusscope::pipeline {
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+} // namespace
 
 ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
                                    PipelineMetrics* metrics,
@@ -202,9 +207,9 @@ void ProcessingEngine::workerLoop()
 
 void ProcessingEngine::processBlock(const SignalBlock& block)
 {
-    const auto startedAt = std::chrono::steady_clock::now();
+    const auto startedAt = Clock::now();
     const auto producedAt = block.producedAt();
-    const auto blockAge = producedAt == std::chrono::steady_clock::time_point{}
+    const auto blockAge = producedAt == Clock::time_point{}
         ? std::chrono::milliseconds{0}
         : std::chrono::duration_cast<std::chrono::milliseconds>(startedAt - producedAt);
 
@@ -232,99 +237,147 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
 
     WaterfallAggregationResult waterfallResult;
     WaterfallAggregatorConfig waterfallConfig;
-    const auto waterfallAggregationStartedAt = std::chrono::steady_clock::now();
+    const auto waterfallAggregationStartedAt = Clock::now();
     {
         std::lock_guard waterfallLock(m_waterfallMutex);
         waterfallResult = m_waterfallAggregator.consume(block);
         waterfallConfig = m_waterfallAggregator.config();
     }
+    const auto waterfallAggregationElapsed = Clock::now() - waterfallAggregationStartedAt;
     const auto waterfallAggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - waterfallAggregationStartedAt);
+            waterfallAggregationElapsed);
+    if (m_metrics) {
+        m_metrics->recordWaterfallAggregationLatency(waterfallAggregationElapsed);
+    }
 
     SpectrumAggregationResult spectrumResult;
-    const auto spectrumAggregationStartedAt = std::chrono::steady_clock::now();
+    const auto spectrumAggregationStartedAt = Clock::now();
     {
         std::lock_guard spectrumLock(m_spectrumMutex);
         spectrumResult = m_spectrumAggregator.consume(block);
     }
+    const auto spectrumAggregationElapsed = Clock::now() - spectrumAggregationStartedAt;
     const auto spectrumAggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - spectrumAggregationStartedAt);
+            spectrumAggregationElapsed);
+    if (m_metrics) {
+        m_metrics->recordSpectrumAggregationLatency(spectrumAggregationElapsed);
+    }
 
     BearingAggregationResult bearingResult;
-    const auto bearingAggregationStartedAt = std::chrono::steady_clock::now();
+    const auto bearingAggregationStartedAt = Clock::now();
     {
         std::lock_guard bearingLock(m_bearingMutex);
         bearingResult = m_bearingAggregator.consume(block);
     }
+    const auto bearingAggregationElapsed = Clock::now() - bearingAggregationStartedAt;
     const auto bearingAggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - bearingAggregationStartedAt);
+            bearingAggregationElapsed);
+    if (m_metrics) {
+        m_metrics->recordBearingAggregationLatency(bearingAggregationElapsed);
+    }
 
     SignalParameterAggregationResult signalParameterResult;
-    const auto signalParameterAggregationStartedAt = std::chrono::steady_clock::now();
+    const auto signalParameterAggregationStartedAt = Clock::now();
     {
         std::lock_guard signalParameterLock(m_signalParameterMutex);
         signalParameterResult = m_signalParameterAggregator.consume(block);
     }
+    const auto signalParameterAggregationElapsed =
+        Clock::now() - signalParameterAggregationStartedAt;
     const auto signalParameterAggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - signalParameterAggregationStartedAt);
-
-    const auto finishedAt = std::chrono::steady_clock::now();
-    const auto processingLatency =
-        std::chrono::duration_cast<std::chrono::milliseconds>(finishedAt - startedAt);
+            signalParameterAggregationElapsed);
     if (m_metrics) {
-        m_metrics->recordProcessedBlock(block.sampleCount(), blockAge, processingLatency);
+        m_metrics->recordSignalParameterAggregationLatency(signalParameterAggregationElapsed);
+    }
+
+    Clock::duration waterfallPublishLatency{};
+    publishWaterfallRows(std::move(waterfallResult),
+                         std::move(waterfallConfig),
+                         waterfallAggregationLatency,
+                         &waterfallPublishLatency);
+    if (m_metrics) {
+        m_metrics->recordWaterfallRowPublishLatency(waterfallPublishLatency);
+    }
+
+    Clock::duration spectrumPublishLatency{};
+    publishSpectrumSnapshots(std::move(spectrumResult),
+                             spectrumAggregationLatency,
+                             &spectrumPublishLatency);
+    if (m_metrics) {
+        m_metrics->recordSpectrumSnapshotPublishLatency(spectrumPublishLatency);
+    }
+
+    Clock::duration bearingPublishLatency{};
+    publishBearingSnapshots(std::move(bearingResult),
+                            bearingAggregationLatency,
+                            &bearingPublishLatency);
+    if (m_metrics) {
+        m_metrics->recordBearingSnapshotPublishLatency(bearingPublishLatency);
+    }
+
+    Clock::duration signalParameterPublishLatency{};
+    publishSignalParameterSnapshots(std::move(signalParameterResult),
+                                    signalParameterAggregationLatency,
+                                    &signalParameterPublishLatency);
+    if (m_metrics) {
+        m_metrics->recordSignalParameterSnapshotPublishLatency(
+            signalParameterPublishLatency);
+    }
+
+    {
+        std::lock_guard lock(m_mutex);
+        ++m_summary.processedBlocks;
+        m_summary.processedSamples += static_cast<std::uint64_t>(block.sampleCount());
+        if (sawSample || block.sampleCount() == 0) {
+            if (m_summary.processedBlocks == 1) {
+                m_summary.firstSampleIndex = firstSampleIndex;
+                m_summary.lastSampleIndex = lastSampleIndex;
+            } else {
+                m_summary.firstSampleIndex =
+                    std::min(m_summary.firstSampleIndex, firstSampleIndex);
+                m_summary.lastSampleIndex =
+                    std::max(m_summary.lastSampleIndex, lastSampleIndex);
+            }
+        }
+
+        for (const auto& [key, value] : aggregates) {
+            const auto found =
+                std::find_if(m_summary.bandBeamSummaries.begin(),
+                             m_summary.bandBeamSummaries.end(),
+                             [&value](const auto& existing) {
+                                 return existing.bandIndex == value.bandIndex
+                                     && existing.beamIndex == value.beamIndex;
+                             });
+            if (found == m_summary.bandBeamSummaries.end()) {
+                m_summary.bandBeamSummaries.push_back(value);
+            } else {
+                found->sampleCount += value.sampleCount;
+                found->maxAmplitude = std::max(found->maxAmplitude, value.maxAmplitude);
+            }
+        }
+    }
+
+    const auto processingElapsed = Clock::now() - startedAt;
+    const auto processingLatency =
+        std::chrono::duration_cast<std::chrono::milliseconds>(processingElapsed);
+    if (m_metrics) {
+        m_metrics->recordProcessedBlock(block.sampleCount(), blockAge, processingElapsed);
     }
     if (m_diagnostics) {
         m_diagnostics->recordProcessingLatency(processingLatency);
-    }
-    publishWaterfallRows(std::move(waterfallResult),
-                         std::move(waterfallConfig),
-                         waterfallAggregationLatency);
-    publishSpectrumSnapshots(std::move(spectrumResult), spectrumAggregationLatency);
-    publishBearingSnapshots(std::move(bearingResult), bearingAggregationLatency);
-    publishSignalParameterSnapshots(std::move(signalParameterResult),
-                                    signalParameterAggregationLatency);
-
-    std::lock_guard lock(m_mutex);
-    ++m_summary.processedBlocks;
-    m_summary.processedSamples += static_cast<std::uint64_t>(block.sampleCount());
-    if (sawSample || block.sampleCount() == 0) {
-        if (m_summary.processedBlocks == 1) {
-            m_summary.firstSampleIndex = firstSampleIndex;
-            m_summary.lastSampleIndex = lastSampleIndex;
-        } else {
-            m_summary.firstSampleIndex =
-                std::min(m_summary.firstSampleIndex, firstSampleIndex);
-            m_summary.lastSampleIndex =
-                std::max(m_summary.lastSampleIndex, lastSampleIndex);
-        }
-    }
-
-    for (const auto& [key, value] : aggregates) {
-        const auto found =
-            std::find_if(m_summary.bandBeamSummaries.begin(),
-                         m_summary.bandBeamSummaries.end(),
-                         [&value](const auto& existing) {
-                             return existing.bandIndex == value.bandIndex
-                                 && existing.beamIndex == value.beamIndex;
-                         });
-        if (found == m_summary.bandBeamSummaries.end()) {
-            m_summary.bandBeamSummaries.push_back(value);
-        } else {
-            found->sampleCount += value.sampleCount;
-            found->maxAmplitude = std::max(found->maxAmplitude, value.maxAmplitude);
-        }
     }
 }
 
 void ProcessingEngine::publishWaterfallRows(WaterfallAggregationResult result,
                                             WaterfallAggregatorConfig config,
-                                            std::chrono::milliseconds aggregationLatency)
+                                            std::chrono::milliseconds aggregationLatency,
+                                            std::chrono::steady_clock::duration* publishLatency)
 {
+    const auto publishStartedAt = Clock::now();
     WaterfallRowQueuePushResult pushResult;
     const bool hasRows = !result.rows.empty();
     if (hasRows && m_waterfallRows) {
@@ -346,6 +399,9 @@ void ProcessingEngine::publishWaterfallRows(WaterfallAggregationResult result,
     } else if (hasRows) {
         std::lock_guard waterfallLock(m_waterfallMutex);
         ++m_nextWaterfallSourceSnapshotSequenceId;
+    }
+    if (publishLatency) {
+        *publishLatency = Clock::now() - publishStartedAt;
     }
 
     const std::uint64_t producedSnapshots = hasRows ? 1 : 0;
@@ -378,8 +434,10 @@ void ProcessingEngine::publishWaterfallRows(WaterfallAggregationResult result,
 
 void ProcessingEngine::publishSpectrumSnapshots(
     SpectrumAggregationResult result,
-    std::chrono::milliseconds aggregationLatency)
+    std::chrono::milliseconds aggregationLatency,
+    std::chrono::steady_clock::duration* publishLatency)
 {
+    const auto publishStartedAt = Clock::now();
     const auto producedSnapshots =
         static_cast<std::uint64_t>(result.snapshots.size());
     std::uint64_t latestSequence = 0;
@@ -391,6 +449,9 @@ void ProcessingEngine::publishSpectrumSnapshots(
         if (m_spectrumSnapshots) {
             m_spectrumSnapshots->publish(snapshot);
         }
+    }
+    if (publishLatency) {
+        *publishLatency = Clock::now() - publishStartedAt;
     }
 
     if (m_metrics) {
@@ -410,8 +471,10 @@ void ProcessingEngine::publishSpectrumSnapshots(
 
 void ProcessingEngine::publishBearingSnapshots(
     BearingAggregationResult result,
-    std::chrono::milliseconds aggregationLatency)
+    std::chrono::milliseconds aggregationLatency,
+    std::chrono::steady_clock::duration* publishLatency)
 {
+    const auto publishStartedAt = Clock::now();
     const auto producedSnapshots =
         static_cast<std::uint64_t>(result.snapshots.size());
     for (const auto& snapshot : result.snapshots) {
@@ -421,6 +484,9 @@ void ProcessingEngine::publishBearingSnapshots(
         if (m_bearingSnapshots) {
             m_bearingSnapshots->publish(snapshot);
         }
+    }
+    if (publishLatency) {
+        *publishLatency = Clock::now() - publishStartedAt;
     }
 
     if (m_metrics) {
@@ -447,11 +513,16 @@ void ProcessingEngine::publishBearingSnapshots(
 
 void ProcessingEngine::publishSignalParameterSnapshots(
     SignalParameterAggregationResult result,
-    std::chrono::milliseconds aggregationLatency)
+    std::chrono::milliseconds aggregationLatency,
+    std::chrono::steady_clock::duration* publishLatency)
 {
+    const auto publishStartedAt = Clock::now();
     (void)aggregationLatency;
     if (result.snapshot && m_signalParameterSnapshots) {
         m_signalParameterSnapshots->publish(std::move(result.snapshot));
+    }
+    if (publishLatency) {
+        *publishLatency = Clock::now() - publishStartedAt;
     }
 }
 
@@ -459,7 +530,7 @@ void ProcessingEngine::flushWaterfallRows()
 {
     WaterfallAggregationResult result;
     WaterfallAggregatorConfig config;
-    const auto aggregationStartedAt = std::chrono::steady_clock::now();
+    const auto aggregationStartedAt = Clock::now();
     {
         std::lock_guard waterfallLock(m_waterfallMutex);
         result = m_waterfallAggregator.flush();
@@ -467,35 +538,35 @@ void ProcessingEngine::flushWaterfallRows()
     }
     const auto aggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - aggregationStartedAt);
+            Clock::now() - aggregationStartedAt);
     publishWaterfallRows(std::move(result), std::move(config), aggregationLatency);
 }
 
 void ProcessingEngine::flushSpectrumSnapshots()
 {
     SpectrumAggregationResult result;
-    const auto aggregationStartedAt = std::chrono::steady_clock::now();
+    const auto aggregationStartedAt = Clock::now();
     {
         std::lock_guard spectrumLock(m_spectrumMutex);
         result = m_spectrumAggregator.flush();
     }
     const auto aggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - aggregationStartedAt);
+            Clock::now() - aggregationStartedAt);
     publishSpectrumSnapshots(std::move(result), aggregationLatency);
 }
 
 void ProcessingEngine::flushBearingSnapshots()
 {
     BearingAggregationResult result;
-    const auto aggregationStartedAt = std::chrono::steady_clock::now();
+    const auto aggregationStartedAt = Clock::now();
     {
         std::lock_guard bearingLock(m_bearingMutex);
         result = m_bearingAggregator.flush();
     }
     const auto aggregationLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - aggregationStartedAt);
+            Clock::now() - aggregationStartedAt);
     publishBearingSnapshots(std::move(result), aggregationLatency);
 }
 

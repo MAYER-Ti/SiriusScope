@@ -136,6 +136,9 @@ ctest --test-dir build/win-mingw-debug --output-on-failure
 The regular test suite keeps `TargetRawThroughput90MBps` capped as a source-accounting
 smoke. To run the uncapped full pipeline audit from PowerShell:
 
+The audit also prints per-aggregator latency breakdown to identify the next optimization
+target.
+
 ```powershell
 $env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
 ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure

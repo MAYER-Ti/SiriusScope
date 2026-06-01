@@ -9,6 +9,7 @@
 #include "pipeline/source_to_pipeline_bridge.h"
 #include "pipeline/waterfall_row_queue.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -92,6 +93,12 @@ struct AuditResult
     bool hasSignalParameterSnapshot = false;
 };
 
+struct LatencyStage
+{
+    const char* name = "";
+    pipeline::LatencyStats stats;
+};
+
 enum class AuditPipelineSizing
 {
     Default,
@@ -147,6 +154,48 @@ bool targetRawPipelineTestEnabled()
 bool strictTargetRawPipelineSustainRequired()
 {
     return envFlagEnabled("SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS");
+}
+
+std::vector<LatencyStage> stageLatencies(const pipeline::PipelineMetricsSnapshot& metrics)
+{
+    return {
+        {"WaterfallAggregator", metrics.waterfallAggregationLatency},
+        {"SpectrumAggregator", metrics.spectrumAggregationLatency},
+        {"BearingAggregator", metrics.bearingAggregationLatency},
+        {"SignalParameterAggregator", metrics.signalParameterAggregationLatency},
+        {"WaterfallRowPublish", metrics.waterfallRowPublishLatency},
+        {"SpectrumSnapshotPublish", metrics.spectrumSnapshotPublishLatency},
+        {"BearingSnapshotPublish", metrics.bearingSnapshotPublishLatency},
+        {"SignalParameterSnapshotPublish", metrics.signalParameterSnapshotPublishLatency},
+    };
+}
+
+void printBottleneckHint(const AuditResult& result)
+{
+    const auto stages = stageLatencies(result.pipeline);
+    const auto hasRecordedLatency =
+        std::any_of(stages.begin(), stages.end(), [](const LatencyStage& stage) {
+            return stage.stats.count > 0;
+        });
+    if (!hasRecordedLatency) {
+        std::cout << "Likely bottleneck stage by avg latency: n/a\n"
+                  << "Likely bottleneck stage by max latency: n/a\n";
+        return;
+    }
+
+    const auto byAverage = std::max_element(
+        stages.begin(), stages.end(), [](const LatencyStage& left, const LatencyStage& right) {
+            return left.stats.averageMs() < right.stats.averageMs();
+        });
+    const auto byMax = std::max_element(
+        stages.begin(), stages.end(), [](const LatencyStage& left, const LatencyStage& right) {
+            return left.stats.maxMs < right.stats.maxMs;
+        });
+
+    std::cout << "Likely bottleneck stage by avg latency: " << byAverage->name
+              << " (" << byAverage->stats.averageMs() << " ms)\n"
+              << "Likely bottleneck stage by max latency: " << byMax->name
+              << " (" << byMax->stats.maxMs << " ms)\n";
 }
 
 std::size_t samplesPerSecondFor(hardware::SimulatorLoadProfile profile)
@@ -495,6 +544,39 @@ void printAuditSummary(const AuditResult& result)
               << "  maxBlockAgeMs = " << result.pipeline.maxBlockAgeMs << '\n'
               << "  processingLatencyMaxMs = "
               << result.pipeline.processingLatencyMaxMs << '\n'
+              << "Processing latency breakdown:\n"
+              << "  totalProcessBlockMs avg/max = "
+              << result.pipeline.processBlockLatency.averageMs() << "/"
+              << result.pipeline.processBlockLatency.maxMs << '\n'
+              << "  waterfallMs avg/max = "
+              << result.pipeline.waterfallAggregationLatency.averageMs() << "/"
+              << result.pipeline.waterfallAggregationLatency.maxMs << '\n'
+              << "  spectrumMs avg/max = "
+              << result.pipeline.spectrumAggregationLatency.averageMs() << "/"
+              << result.pipeline.spectrumAggregationLatency.maxMs << '\n'
+              << "  bearingMs avg/max = "
+              << result.pipeline.bearingAggregationLatency.averageMs() << "/"
+              << result.pipeline.bearingAggregationLatency.maxMs << '\n'
+              << "  signalParametersMs avg/max = "
+              << result.pipeline.signalParameterAggregationLatency.averageMs() << "/"
+              << result.pipeline.signalParameterAggregationLatency.maxMs << '\n'
+              << "  waterfallRowPublishMs avg/max = "
+              << result.pipeline.waterfallRowPublishLatency.averageMs() << "/"
+              << result.pipeline.waterfallRowPublishLatency.maxMs << '\n'
+              << "  spectrumSnapshotPublishMs avg/max = "
+              << result.pipeline.spectrumSnapshotPublishLatency.averageMs() << "/"
+              << result.pipeline.spectrumSnapshotPublishLatency.maxMs << '\n'
+              << "  bearingSnapshotPublishMs avg/max = "
+              << result.pipeline.bearingSnapshotPublishLatency.averageMs() << "/"
+              << result.pipeline.bearingSnapshotPublishLatency.maxMs << '\n'
+              << "  signalParameterSnapshotPublishMs avg/max = "
+              << result.pipeline.signalParameterSnapshotPublishLatency.averageMs() << "/"
+              << result.pipeline.signalParameterSnapshotPublishLatency.maxMs << '\n'
+              << "  processedBlocks = " << result.pipeline.processedBlocks << '\n'
+              << "  processedSamples = "
+              << result.pipeline.processedBlockSamplesTotal << '\n'
+              << "  avgSamplesPerBlock = "
+              << result.pipeline.averageSamplesPerProcessedBlock << '\n'
               << "  producedWaterfallRows = "
               << result.pipeline.producedWaterfallRows << '\n'
               << "  drainedWaterfallRows = " << result.drainedWaterfallRows << '\n'
@@ -512,6 +594,7 @@ void printAuditSummary(const AuditResult& result)
               << (result.hasSignalParameterSnapshot ? "true" : "false") << '\n'
               << "  rejectedBlocks = " << result.rejectedBlocks << '\n'
               << "  rejectedSamples = " << result.rejectedSamples << '\n';
+    printBottleneckHint(result);
 }
 
 void printSustainWarning(const std::string& message)

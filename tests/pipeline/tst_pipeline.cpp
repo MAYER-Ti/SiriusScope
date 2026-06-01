@@ -234,6 +234,28 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
                  "pipeline metrics count produced bearing estimates");
     test.require(metricsSnapshot.completeBearingCandidates > 0,
                  "pipeline metrics count complete bearing candidates");
+    test.require(metricsSnapshot.processBlockLatency.count == 1,
+                 "pipeline metrics count process block latency samples");
+    test.require(metricsSnapshot.waterfallAggregationLatency.count == 1,
+                 "pipeline metrics count waterfall aggregation latency samples");
+    test.require(metricsSnapshot.spectrumAggregationLatency.count == 1,
+                 "pipeline metrics count spectrum aggregation latency samples");
+    test.require(metricsSnapshot.bearingAggregationLatency.count == 1,
+                 "pipeline metrics count bearing aggregation latency samples");
+    test.require(metricsSnapshot.signalParameterAggregationLatency.count == 1,
+                 "pipeline metrics count signal parameter aggregation latency samples");
+    test.require(metricsSnapshot.waterfallRowPublishLatency.count == 1,
+                 "pipeline metrics count waterfall row publish latency samples");
+    test.require(metricsSnapshot.spectrumSnapshotPublishLatency.count == 1,
+                 "pipeline metrics count spectrum snapshot publish latency samples");
+    test.require(metricsSnapshot.bearingSnapshotPublishLatency.count == 1,
+                 "pipeline metrics count bearing snapshot publish latency samples");
+    test.require(metricsSnapshot.signalParameterSnapshotPublishLatency.count == 1,
+                 "pipeline metrics count signal parameter snapshot publish latency samples");
+    test.require(metricsSnapshot.processedBlockSamplesTotal == 3,
+                 "pipeline metrics count samples measured by process block latency");
+    test.require(metricsSnapshot.averageSamplesPerProcessedBlock == 3.0,
+                 "pipeline metrics expose average samples per processed block");
     test.require(spectrumSnapshot
                      && metricsSnapshot.latestSpectrumSnapshotSequence
                          == spectrumSnapshot->sequenceId,

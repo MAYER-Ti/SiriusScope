@@ -37,6 +37,16 @@ void PipelineMetrics::reset()
     m_spectrumAggregationLatencyMax = std::chrono::milliseconds{0};
     m_bearingAggregationLatencyMax = std::chrono::milliseconds{0};
     m_maxBlockAge = std::chrono::milliseconds{0};
+    m_processBlockLatency = {};
+    m_waterfallAggregationLatency = {};
+    m_spectrumAggregationLatency = {};
+    m_bearingAggregationLatency = {};
+    m_signalParameterAggregationLatency = {};
+    m_waterfallRowPublishLatency = {};
+    m_spectrumSnapshotPublishLatency = {};
+    m_bearingSnapshotPublishLatency = {};
+    m_signalParameterSnapshotPublishLatency = {};
+    m_processedBlockSamplesTotal = 0;
 }
 
 void PipelineMetrics::recordInputBlock(std::size_t sampleCount,
@@ -62,13 +72,81 @@ void PipelineMetrics::recordDroppedBlock(std::size_t sampleCount)
 
 void PipelineMetrics::recordProcessedBlock(std::size_t sampleCount,
                                            std::chrono::milliseconds blockAge,
-                                           std::chrono::milliseconds processingLatency)
+                                           std::chrono::steady_clock::duration processingLatency)
 {
+    const auto processingLatencyMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(processingLatency);
     std::lock_guard lock(m_mutex);
     ++m_processedBlocks;
     m_processedSamples += static_cast<std::uint64_t>(sampleCount);
     m_maxBlockAge = std::max(m_maxBlockAge, blockAge);
-    m_processingLatencyMax = std::max(m_processingLatencyMax, processingLatency);
+    m_processingLatencyMax = std::max(m_processingLatencyMax, processingLatencyMs);
+    recordLatency(m_processBlockLatency, millisecondsFor(processingLatency));
+    m_processedBlockSamplesTotal += static_cast<std::uint64_t>(sampleCount);
+}
+
+void PipelineMetrics::recordProcessBlockLatency(std::chrono::steady_clock::duration elapsed,
+                                                std::size_t sampleCount)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_processBlockLatency, millisecondsFor(elapsed));
+    m_processedBlockSamplesTotal += static_cast<std::uint64_t>(sampleCount);
+}
+
+void PipelineMetrics::recordWaterfallAggregationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_waterfallAggregationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumAggregationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumAggregationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingAggregationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingAggregationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterAggregationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterAggregationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordWaterfallRowPublishLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_waterfallRowPublishLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumSnapshotPublishLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumSnapshotPublishLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingSnapshotPublishLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingSnapshotPublishLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterSnapshotPublishLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterSnapshotPublishLatency, millisecondsFor(elapsed));
 }
 
 void PipelineMetrics::recordWaterfallAggregation(
@@ -150,6 +228,20 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.rxLatencyMaxMs = static_cast<double>(m_rxLatencyMax.count());
     snapshot.processingLatencyMaxMs = static_cast<double>(m_processingLatencyMax.count());
     snapshot.maxBlockAgeMs = static_cast<double>(m_maxBlockAge.count());
+    snapshot.processBlockLatency = m_processBlockLatency;
+    snapshot.waterfallAggregationLatency = m_waterfallAggregationLatency;
+    snapshot.spectrumAggregationLatency = m_spectrumAggregationLatency;
+    snapshot.bearingAggregationLatency = m_bearingAggregationLatency;
+    snapshot.signalParameterAggregationLatency = m_signalParameterAggregationLatency;
+    snapshot.waterfallRowPublishLatency = m_waterfallRowPublishLatency;
+    snapshot.spectrumSnapshotPublishLatency = m_spectrumSnapshotPublishLatency;
+    snapshot.bearingSnapshotPublishLatency = m_bearingSnapshotPublishLatency;
+    snapshot.signalParameterSnapshotPublishLatency = m_signalParameterSnapshotPublishLatency;
+    snapshot.processedBlockSamplesTotal = m_processedBlockSamplesTotal;
+    snapshot.averageSamplesPerProcessedBlock = m_processBlockLatency.count == 0
+        ? 0.0
+        : static_cast<double>(m_processedBlockSamplesTotal)
+            / static_cast<double>(m_processBlockLatency.count);
     snapshot.producedWaterfallRows = m_producedWaterfallRows;
     snapshot.producedWaterfallSnapshots = m_producedWaterfallSnapshots;
     snapshot.waterfallQueuedRows = waterfallRowMetrics.pushedRows;
@@ -202,6 +294,18 @@ double PipelineMetrics::megabytesForSamples(std::uint64_t sampleCount)
 {
     return static_cast<double>(sampleCount) * static_cast<double>(sizeof(core::SignalSample))
         / (1024.0 * 1024.0);
+}
+
+double PipelineMetrics::millisecondsFor(std::chrono::steady_clock::duration elapsed)
+{
+    return std::chrono::duration<double, std::milli>(elapsed).count();
+}
+
+void PipelineMetrics::recordLatency(LatencyStats& stats, double elapsedMs)
+{
+    ++stats.count;
+    stats.totalMs += elapsedMs;
+    stats.maxMs = std::max(stats.maxMs, elapsedMs);
 }
 
 } // namespace siriusscope::pipeline
