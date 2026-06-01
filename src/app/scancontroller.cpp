@@ -680,6 +680,10 @@ void ScanController::completeScan()
                                                       "ScanController: processing flush before "
                                                       "bearing calculation failed: "
                                                           + flushResult.message);
+                                              } else if (m_processingFlushControl) {
+                                                  acceptSignalParameterSnapshot(
+                                                      m_processingFlushControl
+                                                          ->latestSignalParameterSnapshot());
                                               }
                                               finalizeCompletedScan(sessionId);
                                           },

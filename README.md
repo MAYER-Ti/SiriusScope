@@ -141,7 +141,9 @@ target.
 
 Signal parameter estimation uses trusted streaming mode with fixed band-state storage
 for internally generated high-load samples. The validated sorted mode remains available
-for unordered or untrusted inputs and tests.
+for unordered or untrusted inputs and tests. Signal parameter snapshots are throttled in
+the data plane, and a final snapshot is forced during processing flush so ResultTable
+receives complete PRI/PW at scan completion.
 
 ```powershell
 $env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"

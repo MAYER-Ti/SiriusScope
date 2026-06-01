@@ -6,6 +6,8 @@
 namespace siriusscope::pipeline {
 namespace {
 
+using Clock = std::chrono::steady_clock;
+
 bool hasValidSample(const core::SignalSample& sample)
 {
     return core::validateAmplitude(sample.amplitude).isValid()
@@ -68,6 +70,9 @@ void SignalParameterAggregator::reset()
     m_accumulator.reset();
     resetBandSpanStorage();
     m_nextSequenceId = 1;
+    m_lastSnapshotAt = {};
+    m_snapshotDirty = false;
+    m_forceNextSnapshot = true;
 }
 
 void SignalParameterAggregator::setConfig(SignalParameterAggregatorConfig config)
@@ -76,6 +81,9 @@ void SignalParameterAggregator::setConfig(SignalParameterAggregatorConfig config
     m_accumulator = processing::SignalParameterAccumulator(m_config.estimatorConfig);
     prepareBandSpanVectorStorage();
     m_nextSequenceId = 1;
+    m_lastSnapshotAt = {};
+    m_snapshotDirty = false;
+    m_forceNextSnapshot = true;
 }
 
 SignalParameterAggregationResult SignalParameterAggregator::consume(const SignalBlock& block)
@@ -95,15 +103,34 @@ SignalParameterAggregationResult SignalParameterAggregator::consume(
     const auto rejectedBefore = m_accumulator.rejectedSampleCount();
     const auto pulseCountBefore = m_accumulator.pulseCount();
 
-    updateBandSpans(samples);
-    m_accumulator.ingest(samples);
+    if (usesStreamingSinglePass()) {
+        for (const auto& sample : samples) {
+            const auto ingestResult = m_accumulator.ingestSample(sample);
+            if (ingestResult == processing::SignalParameterSampleIngestResult::Accepted) {
+                updateBandSpanForSample(sample);
+            }
+        }
+    } else {
+        updateBandSpans(samples);
+        m_accumulator.ingest(samples);
+    }
 
     result.acceptedSampleDelta =
         saturatedDelta(m_accumulator.acceptedSampleCount(), acceptedBefore);
     result.rejectedSampleDelta =
         saturatedDelta(m_accumulator.rejectedSampleCount(), rejectedBefore);
     result.pulseCountDelta = saturatedDelta(m_accumulator.pulseCount(), pulseCountBefore);
-    result.snapshot = makeSnapshot();
+
+    if (result.acceptedSampleDelta > 0 || result.rejectedSampleDelta > 0
+        || result.pulseCountDelta > 0) {
+        m_snapshotDirty = true;
+    }
+
+    const auto now = Clock::now();
+    if (shouldPublishSnapshot(now)) {
+        result.snapshot = makeSnapshot();
+        markSnapshotPublished(now);
+    }
     return result;
 }
 
@@ -140,6 +167,14 @@ std::shared_ptr<const SignalParameterSnapshot> SignalParameterAggregator::makeSn
     return snapshot;
 }
 
+std::shared_ptr<const SignalParameterSnapshot> SignalParameterAggregator::forceSnapshot()
+{
+    const auto now = Clock::now();
+    auto snapshot = makeSnapshot();
+    markSnapshotPublished(now);
+    return snapshot;
+}
+
 void SignalParameterAggregator::updateBandSpans(std::span<const core::SignalSample> samples)
 {
     const bool trustedSamples = m_config.estimatorConfig.validationMode
@@ -156,21 +191,60 @@ void SignalParameterAggregator::updateBandSpans(std::span<const core::SignalSamp
             continue;
         }
 
-        auto* span = spanForBand(sample.bandIndex);
-        if (!span) {
-            continue;
-        }
-
-        if (!span->hasSamples) {
-            span->firstSampleIndex = sample.sampleIndex;
-            span->lastSampleIndex = sample.sampleIndex;
-            span->hasSamples = true;
-            continue;
-        }
-
-        span->firstSampleIndex = std::min(span->firstSampleIndex, sample.sampleIndex);
-        span->lastSampleIndex = std::max(span->lastSampleIndex, sample.sampleIndex);
+        updateBandSpanForSample(sample);
     }
+}
+
+void SignalParameterAggregator::updateBandSpanForSample(const core::SignalSample& sample)
+{
+    auto* span = spanForBand(sample.bandIndex);
+    if (!span) {
+        return;
+    }
+
+    if (!span->hasSamples) {
+        span->firstSampleIndex = sample.sampleIndex;
+        span->lastSampleIndex = sample.sampleIndex;
+        span->hasSamples = true;
+        return;
+    }
+
+    span->firstSampleIndex = std::min(span->firstSampleIndex, sample.sampleIndex);
+    span->lastSampleIndex = std::max(span->lastSampleIndex, sample.sampleIndex);
+}
+
+bool SignalParameterAggregator::usesStreamingSinglePass() const noexcept
+{
+    return m_config.estimatorConfig.ingestMode
+        == processing::SignalParameterIngestMode::Streaming;
+}
+
+bool SignalParameterAggregator::shouldPublishSnapshot(Clock::time_point now) const
+{
+    if (m_config.publishSnapshotEveryBlock) {
+        return true;
+    }
+    if (m_forceNextSnapshot) {
+        return true;
+    }
+    if (!m_snapshotDirty) {
+        return false;
+    }
+    if (m_config.snapshotPeriod.count() <= 0) {
+        return true;
+    }
+    if (m_lastSnapshotAt == Clock::time_point{}) {
+        return true;
+    }
+
+    return now - m_lastSnapshotAt >= m_config.snapshotPeriod;
+}
+
+void SignalParameterAggregator::markSnapshotPublished(Clock::time_point now)
+{
+    m_lastSnapshotAt = now;
+    m_snapshotDirty = false;
+    m_forceNextSnapshot = false;
 }
 
 void SignalParameterAggregator::prepareBandSpanVectorStorage()

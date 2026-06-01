@@ -308,6 +308,7 @@ core::OperationResult WaterfallController::flushProcessing(std::chrono::millisec
 
     const auto result = m_dataIngestPipeline->flushProcessing(timeout);
     if (result) {
+        m_dataIngestPipeline->forceSignalParameterSnapshot();
         pollWaterfallRows();
     }
     return result;
@@ -328,6 +329,12 @@ void WaterfallController::flushProcessingAsync(std::chrono::milliseconds timeout
     QTimer::singleShot(0, this, [this, timeout, callback = std::move(callback)]() mutable {
         callback(flushProcessing(timeout));
     });
+}
+
+std::shared_ptr<const pipeline::SignalParameterSnapshot>
+WaterfallController::latestSignalParameterSnapshot() const
+{
+    return m_dataIngestPipeline ? m_dataIngestPipeline->latestSignalParameterSnapshot() : nullptr;
 }
 
 void WaterfallController::startHistoryWorker()

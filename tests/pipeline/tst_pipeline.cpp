@@ -230,6 +230,8 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
                  "pipeline metrics count produced spectrum snapshots");
     test.require(metricsSnapshot.producedBearingSnapshots > 0,
                  "pipeline metrics count produced bearing snapshots");
+    test.require(metricsSnapshot.producedSignalParameterSnapshots > 0,
+                 "pipeline metrics count produced signal parameter snapshots");
     test.require(metricsSnapshot.producedBearingEstimates > 0,
                  "pipeline metrics count produced bearing estimates");
     test.require(metricsSnapshot.completeBearingCandidates > 0,

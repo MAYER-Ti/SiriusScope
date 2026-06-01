@@ -67,6 +67,7 @@ public:
     std::shared_ptr<const SpectrumSnapshot> latestSpectrumSnapshot() const;
     std::shared_ptr<const BearingSnapshot> latestBearingSnapshot() const;
     std::shared_ptr<const SignalParameterSnapshot> latestSignalParameterSnapshot() const;
+    std::shared_ptr<const SignalParameterSnapshot> forceSignalParameterSnapshot();
     void configureWaterfall(WaterfallAggregatorConfig config);
     void configureSpectrum(SpectrumAggregatorConfig config);
     void configureBearing(BearingAggregatorConfig config);

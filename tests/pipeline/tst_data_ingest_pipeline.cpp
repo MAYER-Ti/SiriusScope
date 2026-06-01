@@ -93,6 +93,57 @@ void testDataPipelinePublishesSignalParameterSnapshot(TestRunner& test)
                  "data pipeline snapshot calculates PRI");
 }
 
+void testDataPipelineForceSignalParameterSnapshotPublishesThrottledSamples(TestRunner& test)
+{
+    auto config = makeConfig();
+    config.signalParameters.snapshotPeriod = std::chrono::hours{1};
+    pipeline::DataIngestPipeline dataPipeline(config);
+
+    const auto started = dataPipeline.start();
+    const std::vector<core::SignalSample> firstBlock{
+        sample(10),
+        sample(11),
+    };
+    const std::vector<core::SignalSample> secondBlock{
+        sample(20),
+        sample(21),
+        sample(22),
+    };
+
+    const auto firstIngested = dataPipeline.ingestSamples(firstBlock);
+    const auto firstFlushed = dataPipeline.flushProcessing(std::chrono::milliseconds{1500});
+    const auto initialSnapshot = dataPipeline.latestSignalParameterSnapshot();
+    const auto secondIngested = dataPipeline.ingestSamples(secondBlock);
+    const auto secondFlushed = dataPipeline.flushProcessing(std::chrono::milliseconds{1500});
+    const auto throttledLatest = dataPipeline.latestSignalParameterSnapshot();
+    const auto forcedSnapshot = dataPipeline.forceSignalParameterSnapshot();
+    const auto latestSnapshot = dataPipeline.latestSignalParameterSnapshot();
+    dataPipeline.stop();
+
+    test.require(started.success, "data pipeline starts for forced snapshot test");
+    test.require(firstIngested.success && secondIngested.success,
+                 "data pipeline ingests forced snapshot blocks");
+    test.require(firstFlushed.success && secondFlushed.success,
+                 "data pipeline flushes forced snapshot blocks");
+    test.require(initialSnapshot != nullptr,
+                 "data pipeline publishes initial throttled snapshot");
+    test.require(initialSnapshot && initialSnapshot->acceptedSampleCount == 2,
+                 "initial throttled snapshot includes first block");
+    test.require(throttledLatest && initialSnapshot
+                     && throttledLatest->sequenceId == initialSnapshot->sequenceId,
+                 "second block does not publish before signal parameter cadence");
+    test.require(forcedSnapshot != nullptr,
+                 "data pipeline forceSignalParameterSnapshot returns snapshot");
+    test.require(forcedSnapshot && forcedSnapshot->acceptedSampleCount == 5,
+                 "forced data pipeline snapshot includes throttled samples");
+    test.require(latestSnapshot && forcedSnapshot
+                     && latestSnapshot->sequenceId == forcedSnapshot->sequenceId,
+                 "forced data pipeline snapshot is published as latest");
+    test.require(forcedSnapshot && !forcedSnapshot->bands.empty()
+                     && forcedSnapshot->bands.front().pulseCount == 2,
+                 "forced data pipeline snapshot contains complete pulse summary");
+}
+
 } // namespace
 
 int main()
@@ -100,6 +151,7 @@ int main()
     TestRunner test;
 
     testDataPipelinePublishesSignalParameterSnapshot(test);
+    testDataPipelineForceSignalParameterSnapshotPublishesThrottledSamples(test);
 
     return test.result();
 }

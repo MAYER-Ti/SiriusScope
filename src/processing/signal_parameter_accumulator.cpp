@@ -283,15 +283,8 @@ void SignalParameterAccumulator::ingest(std::span<const core::SignalSample> samp
 
 void SignalParameterAccumulator::ingestStreaming(std::span<const core::SignalSample> samples)
 {
-    if (m_config.validationMode == SignalParameterValidationMode::TrustedValidatedSamples) {
-        for (const auto& sample : samples) {
-            ingestOneTrustedSample(sample);
-        }
-        return;
-    }
-
     for (const auto& sample : samples) {
-        ingestOneSample(sample);
+        (void) ingestSample(sample);
     }
 }
 
@@ -305,53 +298,62 @@ void SignalParameterAccumulator::ingestSorted(std::span<const core::SignalSample
     std::sort(orderedSamples.begin(), orderedSamples.end(), sampleLess);
 
     for (const auto& sample : orderedSamples) {
-        if (m_config.validationMode == SignalParameterValidationMode::TrustedValidatedSamples) {
-            ingestOneTrustedSample(sample);
-        } else {
-            ingestOneSample(sample);
-        }
+        (void) ingestSample(sample);
     }
 }
 
-void SignalParameterAccumulator::ingestOneSample(const core::SignalSample& sample)
+SignalParameterSampleIngestResult SignalParameterAccumulator::ingestSample(
+    const core::SignalSample& sample)
+{
+    if (m_config.validationMode == SignalParameterValidationMode::TrustedValidatedSamples) {
+        return ingestOneTrustedSample(sample);
+    }
+
+    return ingestOneSample(sample);
+}
+
+SignalParameterSampleIngestResult SignalParameterAccumulator::ingestOneSample(
+    const core::SignalSample& sample)
 {
     if (!hasValidSample(sample)) {
         ++m_rejectedSampleCount;
-        return;
+        return SignalParameterSampleIngestResult::Rejected;
     }
 
     auto* state = stateForBand(sample.bandIndex);
     if (!state) {
         ++m_rejectedSampleCount;
-        return;
+        return SignalParameterSampleIngestResult::Rejected;
     }
 
-    ingestValidSample(*state, sample);
+    return ingestValidSample(*state, sample);
 }
 
-void SignalParameterAccumulator::ingestOneTrustedSample(const core::SignalSample& sample)
+SignalParameterSampleIngestResult SignalParameterAccumulator::ingestOneTrustedSample(
+    const core::SignalSample& sample)
 {
     if (m_config.bandStateMode == SignalParameterBandStateMode::MapByBandIndex
         && !hasTrustedMapBandIndexStorageRange(sample.bandIndex)) {
         ++m_rejectedSampleCount;
-        return;
+        return SignalParameterSampleIngestResult::Rejected;
     }
 
     auto* state = stateForBand(sample.bandIndex);
     if (!state) {
         ++m_rejectedSampleCount;
-        return;
+        return SignalParameterSampleIngestResult::Rejected;
     }
 
-    ingestValidSample(*state, sample);
+    return ingestValidSample(*state, sample);
 }
 
-void SignalParameterAccumulator::ingestValidSample(BandSignalAccumulator& state,
-                                                   const core::SignalSample& sample)
+SignalParameterSampleIngestResult SignalParameterAccumulator::ingestValidSample(
+    BandSignalAccumulator& state,
+    const core::SignalSample& sample)
 {
     if (state.lastAcceptedSampleIndex && sample.sampleIndex < *state.lastAcceptedSampleIndex) {
         ++m_rejectedSampleCount;
-        return;
+        return SignalParameterSampleIngestResult::Rejected;
     }
 
     ++m_acceptedSampleCount;
@@ -359,7 +361,7 @@ void SignalParameterAccumulator::ingestValidSample(BandSignalAccumulator& state,
 
     if (!state.currentPulse) {
         state.currentPulse = makePulse(sample);
-        return;
+        return SignalParameterSampleIngestResult::Accepted;
     }
 
     const auto previousSampleIndex = state.currentPulse->lastSeenSampleIndex;
@@ -367,11 +369,12 @@ void SignalParameterAccumulator::ingestValidSample(BandSignalAccumulator& state,
         sample.sampleIndex > previousSampleIndex ? sample.sampleIndex - previousSampleIndex : 0;
     if (gap == 0 || gap <= m_config.maxIntraPulseGapSamples) {
         appendSample(*state.currentPulse, sample);
-        return;
+        return SignalParameterSampleIngestResult::Accepted;
     }
 
     closePulse(state);
     state.currentPulse = makePulse(sample);
+    return SignalParameterSampleIngestResult::Accepted;
 }
 
 std::vector<SignalParameters> SignalParameterAccumulator::finalize() const

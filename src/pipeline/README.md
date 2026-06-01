@@ -27,7 +27,9 @@ snapshots and passes low-volume summaries to `ScanController` only while a scan 
 
 Signal parameter output is published as immutable `SignalParameterSnapshot` objects.
 `SignalParameterAggregator` reuses the processing accumulator inside the data plane and
-publishes compact per-band PRI/PW summaries without returning raw samples to Qt.
+publishes compact per-band PRI/PW summaries without returning raw samples to Qt. Signal
+parameter snapshots are throttled in the data plane, and processing flush can force a
+final snapshot so scan completion receives complete PRI/PW summaries.
 
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable

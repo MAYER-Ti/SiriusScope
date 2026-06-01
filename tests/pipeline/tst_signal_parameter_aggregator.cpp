@@ -1,6 +1,7 @@
 #include "pipeline/signal_parameter_aggregator.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -234,6 +235,118 @@ void testStreamingIngestHandlesLargeMonotonicBlock(TestRunner& test)
                  "large streaming block snapshot counts accepted samples");
 }
 
+void testSnapshotCadenceThrottlesAfterInitialSnapshot(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPeriod = std::chrono::hours{1};
+    config.publishSnapshotEveryBlock = false;
+    pipeline::SignalParameterAggregator aggregator(config);
+    const std::vector<core::SignalSample> firstBlock{sample(10)};
+    const std::vector<core::SignalSample> secondBlock{sample(20)};
+
+    const auto first = aggregator.consume(firstBlock);
+    const auto second = aggregator.consume(secondBlock);
+    const auto forced = aggregator.forceSnapshot();
+
+    test.require(first.snapshot != nullptr,
+                 "cadence publishes first non-empty signal parameter snapshot");
+    test.require(second.snapshot == nullptr,
+                 "cadence suppresses immediate second signal parameter snapshot");
+    test.require(second.acceptedSampleDelta == 1,
+                 "cadence does not suppress accepted sample delta");
+    test.require(forced != nullptr, "forceSnapshot returns snapshot after throttled consume");
+    test.require(forced && forced->acceptedSampleCount == 2,
+                 "forceSnapshot includes throttled samples");
+}
+
+void testPublishSnapshotEveryBlockPreservesOldBehavior(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPeriod = std::chrono::hours{1};
+    config.publishSnapshotEveryBlock = true;
+    pipeline::SignalParameterAggregator aggregator(config);
+    const std::vector<core::SignalSample> firstBlock{sample(10)};
+    const std::vector<core::SignalSample> secondBlock{sample(20)};
+
+    const auto first = aggregator.consume(firstBlock);
+    const auto second = aggregator.consume(secondBlock);
+
+    test.require(first.snapshot != nullptr,
+                 "publishSnapshotEveryBlock publishes first snapshot");
+    test.require(second.snapshot != nullptr,
+                 "publishSnapshotEveryBlock publishes second snapshot");
+}
+
+void testNonPositiveSnapshotPeriodPublishesEveryBlock(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPeriod = std::chrono::milliseconds{0};
+    pipeline::SignalParameterAggregator aggregator(config);
+    const std::vector<core::SignalSample> firstBlock{sample(10)};
+    const std::vector<core::SignalSample> secondBlock{sample(20)};
+
+    const auto first = aggregator.consume(firstBlock);
+    const auto second = aggregator.consume(secondBlock);
+
+    test.require(first.snapshot != nullptr,
+                 "zero snapshot period publishes first snapshot");
+    test.require(second.snapshot != nullptr,
+                 "zero snapshot period publishes every block");
+}
+
+void testForceSnapshotReturnsLatestAccumulatedData(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPeriod = std::chrono::hours{1};
+    pipeline::SignalParameterAggregator aggregator(config);
+    const std::vector<core::SignalSample> firstBlock{sample(10), sample(11)};
+    const std::vector<core::SignalSample> secondBlock{sample(20), sample(21), sample(22)};
+
+    (void) aggregator.consume(firstBlock);
+    const auto throttled = aggregator.consume(secondBlock);
+    const auto snapshot = aggregator.forceSnapshot();
+    const auto* band0 = snapshot ? findBand(*snapshot, 0) : nullptr;
+
+    test.require(throttled.snapshot == nullptr,
+                 "forceSnapshot test has throttled intermediate consume");
+    test.require(snapshot != nullptr, "forceSnapshot returns latest snapshot");
+    test.require(snapshot && snapshot->acceptedSampleCount == 5,
+                 "forceSnapshot counts all accumulated samples");
+    test.require(band0 != nullptr, "forceSnapshot contains accumulated band");
+    if (!band0) {
+        return;
+    }
+
+    test.require(band0->pulseCount == 2,
+                 "forceSnapshot counts pulses from throttled block");
+    test.require(band0->pulseWidthUs && nearly(*band0->pulseWidthUs, 2.5),
+                 "forceSnapshot calculates latest average PW");
+    test.require(band0->pulseRepetitionPeriodUs
+                     && nearly(*band0->pulseRepetitionPeriodUs, 10.0),
+                 "forceSnapshot calculates latest PRI");
+}
+
+void testStreamingSinglePassSpanIgnoresRejectedSamples(TestRunner& test)
+{
+    pipeline::SignalParameterAggregator aggregator(microsecondConfig());
+    const std::vector<core::SignalSample> samples{sample(10), sample(12), sample(9)};
+    const auto result = aggregator.consume(samples);
+    const auto snapshot = aggregator.forceSnapshot();
+    const auto* band0 = snapshot ? findBand(*snapshot, 0) : nullptr;
+
+    test.require(result.acceptedSampleDelta == 2,
+                 "single-pass span test accepts monotonic samples");
+    test.require(result.rejectedSampleDelta == 1,
+                 "single-pass span test rejects out-of-order sample");
+    test.require(band0 != nullptr, "single-pass span snapshot contains band 0");
+    if (!band0) {
+        return;
+    }
+
+    test.require(band0->firstSampleIndex == 10 && band0->lastSampleIndex == 12,
+                 "single-pass span ignores rejected out-of-order sample");
+}
+
 } // namespace
 
 int main()
@@ -247,6 +360,11 @@ int main()
     testDefaultAggregatorUsesStreamingIngest(test);
     testDefaultAggregatorRejectsOutOfCapacityBand(test);
     testStreamingIngestHandlesLargeMonotonicBlock(test);
+    testSnapshotCadenceThrottlesAfterInitialSnapshot(test);
+    testPublishSnapshotEveryBlockPreservesOldBehavior(test);
+    testNonPositiveSnapshotPeriodPublishesEveryBlock(test);
+    testForceSnapshotReturnsLatestAccumulatedData(test);
+    testStreamingSinglePassSpanIgnoresRejectedSamples(test);
 
     return test.result();
 }

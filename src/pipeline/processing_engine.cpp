@@ -173,6 +173,24 @@ void ProcessingEngine::setSignalParameterConfig(SignalParameterAggregatorConfig 
     m_signalParameterAggregator.setConfig(std::move(config));
 }
 
+std::shared_ptr<const SignalParameterSnapshot> ProcessingEngine::forceSignalParameterSnapshot()
+{
+    std::shared_ptr<const SignalParameterSnapshot> snapshot;
+    {
+        std::lock_guard signalParameterLock(m_signalParameterMutex);
+        snapshot = m_signalParameterAggregator.forceSnapshot();
+    }
+
+    if (snapshot && m_signalParameterSnapshots) {
+        m_signalParameterSnapshots->publish(snapshot);
+    }
+    if (snapshot && m_metrics) {
+        m_metrics->recordSignalParameterSnapshotProduced(1);
+    }
+
+    return snapshot;
+}
+
 void ProcessingEngine::workerLoop()
 {
     for (;;) {
@@ -518,11 +536,15 @@ void ProcessingEngine::publishSignalParameterSnapshots(
 {
     const auto publishStartedAt = Clock::now();
     (void)aggregationLatency;
+    const std::uint64_t producedSnapshots = result.snapshot ? 1 : 0;
     if (result.snapshot && m_signalParameterSnapshots) {
         m_signalParameterSnapshots->publish(std::move(result.snapshot));
     }
     if (publishLatency) {
         *publishLatency = Clock::now() - publishStartedAt;
+    }
+    if (m_metrics) {
+        m_metrics->recordSignalParameterSnapshotProduced(producedSnapshots);
     }
 }
 

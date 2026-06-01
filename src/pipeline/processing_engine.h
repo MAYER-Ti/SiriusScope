@@ -71,6 +71,7 @@ public:
     void setSpectrumConfig(SpectrumAggregatorConfig config);
     void setBearingConfig(BearingAggregatorConfig config);
     void setSignalParameterConfig(SignalParameterAggregatorConfig config);
+    std::shared_ptr<const SignalParameterSnapshot> forceSignalParameterSnapshot();
 
 private:
     void workerLoop();

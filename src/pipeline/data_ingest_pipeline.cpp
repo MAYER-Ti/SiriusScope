@@ -174,6 +174,11 @@ std::shared_ptr<const SignalParameterSnapshot> DataIngestPipeline::latestSignalP
     return m_signalParameterSnapshots.latest();
 }
 
+std::shared_ptr<const SignalParameterSnapshot> DataIngestPipeline::forceSignalParameterSnapshot()
+{
+    return m_engine.forceSignalParameterSnapshot();
+}
+
 void DataIngestPipeline::configureWaterfall(WaterfallAggregatorConfig config)
 {
     m_config.waterfall = config;

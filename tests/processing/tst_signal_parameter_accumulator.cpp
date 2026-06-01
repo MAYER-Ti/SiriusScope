@@ -334,6 +334,27 @@ void testTrustedStreamingRejectsOutOfOrderSamplePerBand(TestRunner& test)
                  "trusted streaming rejects out-of-order per-band sample");
 }
 
+void testIngestSampleReportsAcceptedAndRejectedSamples(TestRunner& test)
+{
+    SignalParameterAccumulator accumulator(
+        trustedStreamingVectorMicrosecondSampleConfig(2));
+
+    const auto accepted = accumulator.ingestSample(makeSample(10, 0));
+    const auto outOfOrder = accumulator.ingestSample(makeSample(9, 0));
+    const auto outOfCapacity = accumulator.ingestSample(makeSample(11, 3));
+
+    test.require(accepted == SignalParameterSampleIngestResult::Accepted,
+                 "ingestSample reports accepted sample");
+    test.require(outOfOrder == SignalParameterSampleIngestResult::Rejected,
+                 "ingestSample reports out-of-order sample rejection");
+    test.require(outOfCapacity == SignalParameterSampleIngestResult::Rejected,
+                 "ingestSample reports out-of-capacity sample rejection");
+    test.require(accumulator.acceptedSampleCount() == 1,
+                 "ingestSample accepted count matches results");
+    test.require(accumulator.rejectedSampleCount() == 2,
+                 "ingestSample rejected count matches results");
+}
+
 void testTrustedStreamingVectorHandlesLargeMonotonicBlock(TestRunner& test)
 {
     constexpr std::uint64_t sampleCount = 50'000;
@@ -485,6 +506,7 @@ int main()
     testTrustedVectorRejectsOutOfCapacityBand(test);
     testTrustedMapRejectsOutOfRangeBand(test);
     testTrustedStreamingRejectsOutOfOrderSamplePerBand(test);
+    testIngestSampleReportsAcceptedAndRejectedSamples(test);
     testTrustedStreamingVectorHandlesLargeMonotonicBlock(test);
     testSortedAcceptsOutOfOrderInput(test);
     testInvalidSamplesAreRejected(test);

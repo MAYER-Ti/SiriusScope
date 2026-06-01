@@ -835,6 +835,60 @@ void testStopRecordingFreezesDataPlaneAcceptance(TestRunner& test)
                  "data plane stops accepting source blocks after stopRecording");
 }
 
+void testFlushProcessingForcesSignalParameterSnapshot(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    auto pipelineConfig = makePipelineConfig();
+    pipelineConfig.signalParameters.snapshotPeriod = std::chrono::hours{1};
+    pipeline::DataIngestPipeline dataPipeline(pipelineConfig, &diagnostics);
+    const auto bands = makeBandConfigs();
+
+    app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = 8;
+    app::WaterfallController controller(&viewport,
+                                        &source,
+                                        bands,
+                                        &storage,
+                                        &diagnostics,
+                                        config,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        &dataPipeline);
+
+    controller.start();
+    controller.startRecording();
+    controller.startLiveSource();
+    source.emitBlock(makeBlock({makeSample(bands, 10, 0, 0, 90),
+                                makeSample(bands, 11, 0, 0, 90)}));
+    const auto firstFlushed = controller.flushProcessing(std::chrono::milliseconds{1500});
+    const auto firstSnapshot = controller.latestSignalParameterSnapshot();
+
+    source.emitBlock(makeBlock({makeSample(bands, 20, 0, 0, 90),
+                                makeSample(bands, 21, 0, 0, 90),
+                                makeSample(bands, 22, 0, 0, 90)}));
+    const auto secondFlushed = controller.flushProcessing(std::chrono::milliseconds{1500});
+    const auto forcedSnapshot = controller.latestSignalParameterSnapshot();
+
+    test.require(firstFlushed.success && secondFlushed.success,
+                 "waterfall controller flush succeeds for forced signal snapshot test");
+    test.require(firstSnapshot != nullptr,
+                 "waterfall controller publishes initial signal parameter snapshot");
+    test.require(firstSnapshot && firstSnapshot->acceptedSampleCount == 2,
+                 "initial signal parameter snapshot includes first source block");
+    test.require(forcedSnapshot != nullptr,
+                 "waterfall controller exposes forced signal parameter snapshot");
+    test.require(forcedSnapshot && forcedSnapshot->acceptedSampleCount == 5,
+                 "waterfall controller forced snapshot includes throttled source block");
+    test.require(forcedSnapshot && firstSnapshot
+                     && forcedSnapshot->sequenceId > firstSnapshot->sequenceId,
+                 "forced signal parameter snapshot advances sequence");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -856,6 +910,7 @@ int main(int argc, char *argv[])
     testHighLoadPathDoesNotPublishRawBuses(test);
     testHighLoadPathDoesNotCopyBlocksToSpectrumWorker(test);
     testStopRecordingFreezesDataPlaneAcceptance(test);
+    testFlushProcessingForcesSignalParameterSnapshot(test);
 
     return test.result();
 }

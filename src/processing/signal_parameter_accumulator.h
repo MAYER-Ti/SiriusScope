@@ -20,6 +20,7 @@ public:
     void ingest(const std::vector<core::SignalSample>& samples);
     void ingest(std::span<const core::SignalSample> samples);
     void ingestStreaming(std::span<const core::SignalSample> samples);
+    SignalParameterSampleIngestResult ingestSample(const core::SignalSample& sample);
     std::vector<SignalParameters> finalize() const;
 
     std::size_t acceptedSampleCount() const noexcept;
@@ -67,9 +68,10 @@ private:
     template <typename Fn>
     void forEachUsedBandState(Fn&& fn) const;
     void ingestSorted(std::span<const core::SignalSample> samples);
-    void ingestOneSample(const core::SignalSample& sample);
-    void ingestOneTrustedSample(const core::SignalSample& sample);
-    void ingestValidSample(BandSignalAccumulator& state, const core::SignalSample& sample);
+    SignalParameterSampleIngestResult ingestOneSample(const core::SignalSample& sample);
+    SignalParameterSampleIngestResult ingestOneTrustedSample(const core::SignalSample& sample);
+    SignalParameterSampleIngestResult ingestValidSample(BandSignalAccumulator& state,
+                                                        const core::SignalSample& sample);
     std::size_t finalizedPulseCount(const BandSignalAccumulator& state) const noexcept;
 
     SignalParameterEstimatorConfig m_config;

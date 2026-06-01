@@ -52,6 +52,12 @@ enum class SignalParameterBandStateMode
     FixedBandIndexVector,
 };
 
+enum class SignalParameterSampleIngestResult
+{
+    Accepted,
+    Rejected,
+};
+
 struct SignalParameterEstimatorConfig
 {
     std::uint64_t samplePeriodNs = core::DomainConstraints::defaultSamplePeriodNs;

@@ -586,6 +586,8 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.producedSpectrumSnapshots << '\n'
               << "  producedBearingSnapshots = "
               << result.pipeline.producedBearingSnapshots << '\n'
+              << "  producedSignalParameterSnapshots = "
+              << result.pipeline.producedSignalParameterSnapshots << '\n'
               << "  hasSpectrumSnapshot = "
               << (result.hasSpectrumSnapshot ? "true" : "false") << '\n'
               << "  hasBearingSnapshot = "
@@ -704,6 +706,8 @@ void assertAuditSucceeded(TestRunner& test, const AuditResult& result)
     test.require(result.hasBearingSnapshot, "pipeline publishes bearing snapshot");
     test.require(result.hasSignalParameterSnapshot,
                  "pipeline publishes signal parameter snapshot");
+    test.require(result.pipeline.producedSignalParameterSnapshots > 0,
+                 "pipeline metrics count produced signal parameter snapshots");
 }
 
 void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
@@ -762,6 +766,8 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
                  "target raw full pipeline publishes spectrum snapshot");
     test.require(result.hasSignalParameterSnapshot,
                  "target raw full pipeline publishes signal parameter snapshot");
+    test.require(result.pipeline.producedSignalParameterSnapshots > 0,
+                 "target raw full pipeline metrics count signal parameter snapshots");
     if (result.pipeline.producedBearingSnapshots > 0) {
         test.require(result.hasBearingSnapshot,
                      "target raw full pipeline publishes bearing snapshot");

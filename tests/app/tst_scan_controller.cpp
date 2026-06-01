@@ -325,6 +325,12 @@ public:
         callback(core::OperationResult::ok());
     }
 
+    std::shared_ptr<const pipeline::SignalParameterSnapshot> latestSignalParameterSnapshot()
+        const override
+    {
+        return latestSnapshot;
+    }
+
     void completePendingFlush(core::OperationResult result = core::OperationResult::ok())
     {
         if (!pendingCallback) {
@@ -341,6 +347,7 @@ public:
     bool deferAsyncCallback = false;
     std::function<void()> onFlush;
     FlushCallback pendingCallback;
+    std::shared_ptr<const pipeline::SignalParameterSnapshot> latestSnapshot;
     std::vector<std::string>* events = nullptr;
 };
 
@@ -1163,6 +1170,52 @@ void testSignalParameterSnapshotFeedsCompletedScan(TestRunner& test)
                  "data-plane PRI reaches result table context");
 }
 
+void testFlushControlSignalParameterSnapshotFeedsCompletedScan(TestRunner& test)
+{
+    ControllerFixture fixture;
+    fixture.flushControl.latestSnapshot = makeSignalParameterSnapshot(7);
+    int parameterCount = -1;
+    QObject::connect(&fixture.controller,
+                     &app::ScanController::signalParametersCalculated,
+                     [&](qulonglong, int count) {
+                         parameterCount = count;
+                     });
+
+    fixture.azimuthSource.emitAzimuth(0.0);
+    waitUntil([&fixture] {
+        return std::abs(fixture.controller.currentAzimuthDeg()) < 0.001;
+    });
+
+    fixture.controller.startScan(0.0, 20.0, 10.0);
+    fixture.controller.acceptBearingSnapshotSummary(makeBearingSnapshot(1, 42.0, 0.8));
+    fixture.azimuthSource.emitAzimuth(20.0);
+
+    const bool appended = waitUntil([&fixture] {
+        return fixture.resultTableSink.appendCalls == 1;
+    });
+    const auto* band0 = findSignalParameters(fixture.resultTableSink.lastSignalParameters, 0);
+
+    test.require(appended,
+                 "completed scan appends result table rows after flush snapshot handoff");
+    test.require(fixture.flushControl.flushCalls > 0,
+                 "completed scan flushes processing before finalization");
+    test.require(parameterCount == 1,
+                 "completed scan emits forced data-plane signal parameter count");
+    test.require(band0 != nullptr,
+                 "result table receives forced signal parameter snapshot from flush control");
+    if (!band0) {
+        return;
+    }
+
+    test.require(band0->pulseCount == 2,
+                 "forced flush signal parameter pulse count reaches result table");
+    test.require(std::abs(band0->pulseWidthUs - 2.5) < 0.001,
+                 "forced flush PW reaches result table");
+    test.require(band0->pulseRepetitionPeriodUs
+                     && std::abs(*band0->pulseRepetitionPeriodUs - 10.0) < 0.001,
+                 "forced flush PRI reaches result table");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -1190,6 +1243,7 @@ int main(int argc, char *argv[])
     testBearingSnapshotSummaryIgnoredWhenInactive(test);
     testBearingSnapshotSummaryFeedsActiveScan(test);
     testSignalParameterSnapshotFeedsCompletedScan(test);
+    testFlushControlSignalParameterSnapshotFeedsCompletedScan(test);
 
     return test.result();
 }

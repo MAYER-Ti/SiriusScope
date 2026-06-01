@@ -117,6 +117,8 @@ public:
     core::OperationResult flushProcessing(std::chrono::milliseconds timeout) override;
     void flushProcessingAsync(std::chrono::milliseconds timeout,
                               FlushCallback callback) override;
+    std::shared_ptr<const pipeline::SignalParameterSnapshot> latestSignalParameterSnapshot()
+        const override;
 
     Q_INVOKABLE QVariantList visibleTimeTicks(int pixelHeight) const;
     Q_INVOKABLE void scrollHistory(int wheelSteps);
