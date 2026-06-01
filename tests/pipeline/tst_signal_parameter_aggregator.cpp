@@ -104,6 +104,8 @@ void testOnePulseGivesPulseWidthWithoutPri(TestRunner& test)
     const auto snapshot = result.snapshot;
     const auto* band0 = snapshot ? findBand(*snapshot, 0) : nullptr;
 
+    test.require(result.usedTrustedFixedBandFastPath,
+                 "one-pulse default consume uses trusted fixed-band fast path");
     test.require(snapshot != nullptr, "one-pulse consume publishes signal parameter snapshot");
     test.require(band0 != nullptr, "one-pulse snapshot contains band 0");
     if (!band0) {
@@ -185,6 +187,8 @@ void testDefaultAggregatorUsesStreamingIngest(TestRunner& test)
     const auto result = aggregator.consume(samples);
     const auto snapshot = result.snapshot;
 
+    test.require(result.usedTrustedFixedBandFastPath,
+                 "streaming default uses trusted fixed-band fast path");
     test.require(snapshot != nullptr, "streaming default publishes snapshot");
     test.require(result.acceptedSampleDelta == 2,
                  "streaming default accepts monotonic sample delta");
@@ -208,6 +212,8 @@ void testDefaultAggregatorRejectsOutOfCapacityBand(TestRunner& test)
     const auto result = aggregator.consume(samples);
     const auto snapshot = result.snapshot;
 
+    test.require(result.usedTrustedFixedBandFastPath,
+                 "out-of-capacity default uses trusted fixed-band fast path");
     test.require(snapshot != nullptr, "out-of-capacity consume publishes snapshot");
     test.require(result.acceptedSampleDelta == 1,
                  "default trusted vector accepts in-capacity band sample");
@@ -217,6 +223,10 @@ void testDefaultAggregatorRejectsOutOfCapacityBand(TestRunner& test)
                  "out-of-capacity snapshot counts accepted samples");
     test.require(snapshot && snapshot->rejectedSampleCount == 1,
                  "out-of-capacity snapshot counts rejected samples");
+    test.require(snapshot && snapshot->bands.size() == 1,
+                 "out-of-capacity snapshot excludes invalid band");
+    test.require(snapshot && findBand(*snapshot, defaultBandCount) == nullptr,
+                 "out-of-capacity snapshot has no invalid band summary");
 }
 
 void testStreamingIngestHandlesLargeMonotonicBlock(TestRunner& test)
@@ -239,6 +249,8 @@ void testStreamingIngestHandlesLargeMonotonicBlock(TestRunner& test)
     const auto result = aggregator.consume(samples);
     const auto snapshot = result.snapshot;
 
+    test.require(result.usedTrustedFixedBandFastPath,
+                 "large streaming block uses trusted fixed-band fast path");
     test.require(snapshot != nullptr, "large streaming block publishes snapshot");
     test.require(result.acceptedSampleDelta == sampleCount,
                  "large streaming block accepts all sample deltas");
@@ -246,6 +258,37 @@ void testStreamingIngestHandlesLargeMonotonicBlock(TestRunner& test)
                  "large streaming block rejects no monotonic samples");
     test.require(snapshot && snapshot->acceptedSampleCount == sampleCount,
                  "large streaming block snapshot counts accepted samples");
+}
+
+void testLegacyModesDoNotUseTrustedFixedBandFastPath(TestRunner& test)
+{
+    auto validatedConfig = microsecondConfig();
+    validatedConfig.estimatorConfig.validationMode =
+        processing::SignalParameterValidationMode::ValidateEachSample;
+    pipeline::SignalParameterAggregator validated(validatedConfig);
+    const std::vector<core::SignalSample> validatedSamples{sample(10)};
+    const auto validatedResult = validated.consume(validatedSamples);
+
+    auto trustedMapConfig = microsecondConfig();
+    trustedMapConfig.estimatorConfig.bandStateMode =
+        processing::SignalParameterBandStateMode::MapByBandIndex;
+    pipeline::SignalParameterAggregator trustedMap(trustedMapConfig);
+    const std::vector<core::SignalSample> trustedMapSamples{sample(10)};
+    const auto trustedMapResult = trustedMap.consume(trustedMapSamples);
+
+    auto sortedConfig = microsecondConfig();
+    sortedConfig.estimatorConfig.ingestMode =
+        processing::SignalParameterIngestMode::SortByBandAndSample;
+    pipeline::SignalParameterAggregator sorted(sortedConfig);
+    const std::vector<core::SignalSample> sortedSamples{sample(10)};
+    const auto sortedResult = sorted.consume(sortedSamples);
+
+    test.require(!validatedResult.usedTrustedFixedBandFastPath,
+                 "validated streaming mode does not use trusted fixed-band fast path");
+    test.require(!trustedMapResult.usedTrustedFixedBandFastPath,
+                 "trusted map mode does not use trusted fixed-band fast path");
+    test.require(!sortedResult.usedTrustedFixedBandFastPath,
+                 "sorted mode does not use trusted fixed-band fast path");
 }
 
 void testSnapshotCadenceThrottlesAfterInitialSnapshot(TestRunner& test)
@@ -353,6 +396,8 @@ void testStreamingSinglePassSpanIgnoresRejectedSamples(TestRunner& test)
 
     test.require(result.acceptedSampleDelta == 2,
                  "single-pass span test accepts monotonic samples");
+    test.require(result.usedTrustedFixedBandFastPath,
+                 "single-pass span test uses trusted fixed-band fast path");
     test.require(result.rejectedSampleDelta == 1,
                  "single-pass span test rejects out-of-order sample");
     test.require(band0 != nullptr, "single-pass span snapshot contains band 0");
@@ -493,6 +538,7 @@ int main()
     testDefaultAggregatorUsesStreamingIngest(test);
     testDefaultAggregatorRejectsOutOfCapacityBand(test);
     testStreamingIngestHandlesLargeMonotonicBlock(test);
+    testLegacyModesDoNotUseTrustedFixedBandFastPath(test);
     testSnapshotCadenceThrottlesAfterInitialSnapshot(test);
     testPublishSnapshotEveryBlockPreservesOldBehavior(test);
     testNonPositiveSnapshotPeriodPublishesEveryBlock(test);

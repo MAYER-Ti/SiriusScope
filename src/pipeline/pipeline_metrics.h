@@ -82,6 +82,7 @@ struct PipelineMetricsSnapshot
     std::uint64_t missingBeam1Candidates = 0;
     double bearingAggregationLatencyMaxMs = 0.0;
     std::uint64_t producedSignalParameterSnapshots = 0;
+    std::uint64_t signalParameterTrustedFixedBandFastPathBlocks = 0;
     std::size_t queueDepth = 0;
     std::size_t queueCapacity = 0;
     std::uint64_t queuePushedBlocks = 0;
@@ -142,6 +143,7 @@ public:
                                   std::uint64_t missingBeam1Candidates,
                                   std::chrono::milliseconds aggregationLatency);
     void recordSignalParameterSnapshotProduced(std::uint64_t producedSnapshots);
+    void recordSignalParameterTrustedFixedBandFastPathBlock();
 
     PipelineMetricsSnapshot snapshot(
         const BoundedBlockQueueMetrics& queueMetrics,
@@ -177,6 +179,7 @@ private:
     std::uint64_t m_missingBeam0Candidates = 0;
     std::uint64_t m_missingBeam1Candidates = 0;
     std::uint64_t m_producedSignalParameterSnapshots = 0;
+    std::uint64_t m_signalParameterTrustedFixedBandFastPathBlocks = 0;
     std::chrono::milliseconds m_rxLatencyMax{0};
     std::chrono::milliseconds m_processingLatencyMax{0};
     std::chrono::milliseconds m_aggregationLatencyMax{0};

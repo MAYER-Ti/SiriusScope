@@ -288,6 +288,141 @@ void SignalParameterAccumulator::ingestStreaming(std::span<const core::SignalSam
     }
 }
 
+SignalParameterFastIngestSummary SignalParameterAccumulator::ingestTrustedFixedBandSamples(
+    std::span<const core::SignalSample> samples,
+    std::span<std::uint64_t> firstSampleIndexByBand,
+    std::span<std::uint64_t> lastSampleIndexByBand,
+    std::span<std::uint8_t> bandUsedFlags)
+{
+    SignalParameterFastIngestSummary summary;
+
+    const auto updateSpanForAcceptedSample = [&](const core::SignalSample& sample) {
+        if (sample.bandIndex < 0) {
+            return;
+        }
+
+        const auto index = static_cast<std::size_t>(sample.bandIndex);
+        if (index >= firstSampleIndexByBand.size()
+            || index >= lastSampleIndexByBand.size()
+            || index >= bandUsedFlags.size()) {
+            return;
+        }
+
+        if (bandUsedFlags[index] == 0) {
+            firstSampleIndexByBand[index] = sample.sampleIndex;
+            lastSampleIndexByBand[index] = sample.sampleIndex;
+            bandUsedFlags[index] = 1;
+            return;
+        }
+
+        firstSampleIndexByBand[index] =
+            std::min(firstSampleIndexByBand[index], sample.sampleIndex);
+        lastSampleIndexByBand[index] =
+            std::max(lastSampleIndexByBand[index], sample.sampleIndex);
+    };
+
+    const auto updateLatestAcceptedSampleIndex = [&](std::uint64_t sampleIndex) {
+        if (!summary.latestAcceptedSampleIndex
+            || sampleIndex > *summary.latestAcceptedSampleIndex) {
+            summary.latestAcceptedSampleIndex = sampleIndex;
+        }
+    };
+
+    const auto fallbackToGenericStreamingIngest = [&]() {
+        for (const auto& sample : samples) {
+            const auto result = ingestSample(sample);
+            if (result == SignalParameterSampleIngestResult::Accepted) {
+                ++summary.acceptedSamples;
+                updateSpanForAcceptedSample(sample);
+                updateLatestAcceptedSampleIndex(sample.sampleIndex);
+            } else {
+                ++summary.rejectedSamples;
+            }
+        }
+    };
+
+    const bool fastConfig =
+        m_config.ingestMode == SignalParameterIngestMode::Streaming
+        && m_config.validationMode == SignalParameterValidationMode::TrustedValidatedSamples
+        && m_config.bandStateMode == SignalParameterBandStateMode::FixedBandIndexVector;
+    const auto requiredCapacity = m_config.bandStateCapacity;
+    const bool fastStorageReady =
+        requiredCapacity > 0
+        && m_bandVector.size() >= requiredCapacity
+        && m_bandVectorUsed.size() >= requiredCapacity
+        && firstSampleIndexByBand.size() >= requiredCapacity
+        && lastSampleIndexByBand.size() >= requiredCapacity
+        && bandUsedFlags.size() >= requiredCapacity;
+
+    if (!fastConfig || !fastStorageReady) {
+        fallbackToGenericStreamingIngest();
+        return summary;
+    }
+
+    for (const auto& sample : samples) {
+        if (sample.bandIndex < 0) {
+            ++m_rejectedSampleCount;
+            ++summary.rejectedSamples;
+            continue;
+        }
+
+        const auto index = static_cast<std::size_t>(sample.bandIndex);
+        if (index >= requiredCapacity) {
+            ++m_rejectedSampleCount;
+            ++summary.rejectedSamples;
+            continue;
+        }
+
+        auto& state = m_bandVector[index];
+        m_bandVectorUsed[index] = true;
+
+        if (state.lastAcceptedSampleIndex
+            && sample.sampleIndex < *state.lastAcceptedSampleIndex) {
+            ++m_rejectedSampleCount;
+            ++summary.rejectedSamples;
+            continue;
+        }
+
+        ++m_acceptedSampleCount;
+        ++summary.acceptedSamples;
+        state.lastAcceptedSampleIndex = sample.sampleIndex;
+
+        if (bandUsedFlags[index] == 0) {
+            firstSampleIndexByBand[index] = sample.sampleIndex;
+            lastSampleIndexByBand[index] = sample.sampleIndex;
+            bandUsedFlags[index] = 1;
+        } else {
+            firstSampleIndexByBand[index] =
+                std::min(firstSampleIndexByBand[index], sample.sampleIndex);
+            lastSampleIndexByBand[index] =
+                std::max(lastSampleIndexByBand[index], sample.sampleIndex);
+        }
+        updateLatestAcceptedSampleIndex(sample.sampleIndex);
+
+        if (!state.currentPulse) {
+            state.currentPulse = makePulse(sample);
+            continue;
+        }
+
+        auto& pulse = *state.currentPulse;
+        const auto previousSampleIndex = pulse.lastSeenSampleIndex;
+        const auto gap =
+            sample.sampleIndex > previousSampleIndex
+                ? sample.sampleIndex - previousSampleIndex
+                : 0;
+        if (gap == 0 || gap <= m_config.maxIntraPulseGapSamples) {
+            appendSample(pulse, sample);
+            continue;
+        }
+
+        closePulse(state);
+        ++summary.closedPulses;
+        state.currentPulse = makePulse(sample);
+    }
+
+    return summary;
+}
+
 void SignalParameterAccumulator::ingestSorted(std::span<const core::SignalSample> samples)
 {
     if (samples.empty()) {

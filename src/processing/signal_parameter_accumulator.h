@@ -11,6 +11,14 @@
 
 namespace siriusscope::processing {
 
+struct SignalParameterFastIngestSummary
+{
+    std::uint64_t acceptedSamples = 0;
+    std::uint64_t rejectedSamples = 0;
+    std::uint64_t closedPulses = 0;
+    std::optional<std::uint64_t> latestAcceptedSampleIndex = std::nullopt;
+};
+
 class SignalParameterAccumulator
 {
 public:
@@ -20,6 +28,12 @@ public:
     void ingest(const std::vector<core::SignalSample>& samples);
     void ingest(std::span<const core::SignalSample> samples);
     void ingestStreaming(std::span<const core::SignalSample> samples);
+    /// Fast batch path for trusted streaming samples with fixed band-index storage.
+    SignalParameterFastIngestSummary ingestTrustedFixedBandSamples(
+        std::span<const core::SignalSample> samples,
+        std::span<std::uint64_t> firstSampleIndexByBand,
+        std::span<std::uint64_t> lastSampleIndexByBand,
+        std::span<std::uint8_t> bandUsedFlags);
     SignalParameterSampleIngestResult ingestSample(const core::SignalSample& sample);
     std::vector<SignalParameters> finalize() const;
 

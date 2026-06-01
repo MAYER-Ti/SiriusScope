@@ -634,6 +634,12 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.signalParameterSnapshotBuildLatency.maxMs << '\n'
               << "  producedSignalParameterSnapshots = "
               << result.pipeline.producedSignalParameterSnapshots << '\n'
+              << "  signalParameterTrustedFixedBandFastPath = "
+              << (result.pipeline.signalParameterTrustedFixedBandFastPathBlocks > 0 ? "true"
+                                                                                    : "false")
+              << '\n'
+              << "  signalParameterTrustedFixedBandFastPathBlocks = "
+              << result.pipeline.signalParameterTrustedFixedBandFastPathBlocks << '\n'
               << "  processedBlocks = " << result.pipeline.processedBlocks << '\n'
               << "  snapshotsPerProcessedBlock = " << snapshotsPerProcessedBlock << '\n'
               << "  processedBlocks = " << result.pipeline.processedBlocks << '\n'

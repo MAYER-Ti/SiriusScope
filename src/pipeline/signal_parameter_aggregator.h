@@ -52,6 +52,7 @@ struct SignalParameterAggregationResult
     std::uint64_t acceptedSampleDelta = 0;
     std::uint64_t rejectedSampleDelta = 0;
     std::uint64_t pulseCountDelta = 0;
+    bool usedTrustedFixedBandFastPath = false;
     bool snapshotPublished = false;
 };
 
@@ -79,8 +80,11 @@ private:
 
     void updateBandSpans(std::span<const core::SignalSample> samples);
     void updateBandSpanForSample(const core::SignalSample& sample);
+    void resetFastSpanBuffers();
+    void mergeFastSpanUpdates();
     void updateLatestAcceptedSampleIndex(std::uint64_t sampleIndex);
     bool usesStreamingSinglePass() const noexcept;
+    bool usesTrustedFixedBandFastPath() const noexcept;
     bool shouldPublishSnapshot(std::chrono::steady_clock::time_point now) const;
     void markSnapshotPublished(std::chrono::steady_clock::time_point now);
     std::vector<processing::SignalParameters> finalizeSignalParameters() const;
@@ -96,6 +100,9 @@ private:
     std::vector<BandSampleSpan> m_bandSpanVector;
     std::vector<bool> m_bandSpanVectorUsed;
     std::map<int, BandSampleSpan> m_bandSpans;
+    std::vector<std::uint64_t> m_fastFirstSampleIndexByBand;
+    std::vector<std::uint64_t> m_fastLastSampleIndexByBand;
+    std::vector<std::uint8_t> m_fastBandUsedFlags;
     mutable std::uint64_t m_nextSequenceId = 1;
     std::chrono::steady_clock::time_point m_lastSnapshotAt{};
     bool m_snapshotDirty = false;

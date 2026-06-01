@@ -317,6 +317,9 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             signalParameterResult.timing.finalize);
         m_metrics->recordSignalParameterSnapshotBuildLatency(
             signalParameterResult.timing.snapshotBuild);
+        if (signalParameterResult.usedTrustedFixedBandFastPath) {
+            m_metrics->recordSignalParameterTrustedFixedBandFastPathBlock();
+        }
     }
 
     Clock::duration waterfallPublishLatency{};

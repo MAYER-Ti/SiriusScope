@@ -32,6 +32,7 @@ void PipelineMetrics::reset()
     m_missingBeam0Candidates = 0;
     m_missingBeam1Candidates = 0;
     m_producedSignalParameterSnapshots = 0;
+    m_signalParameterTrustedFixedBandFastPathBlocks = 0;
     m_rxLatencyMax = std::chrono::milliseconds{0};
     m_processingLatencyMax = std::chrono::milliseconds{0};
     m_aggregationLatencyMax = std::chrono::milliseconds{0};
@@ -244,6 +245,12 @@ void PipelineMetrics::recordSignalParameterSnapshotProduced(
     m_producedSignalParameterSnapshots += producedSnapshots;
 }
 
+void PipelineMetrics::recordSignalParameterTrustedFixedBandFastPathBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_signalParameterTrustedFixedBandFastPathBlocks;
+}
+
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters,
@@ -319,6 +326,8 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.bearingAggregationLatencyMaxMs =
         static_cast<double>(m_bearingAggregationLatencyMax.count());
     snapshot.producedSignalParameterSnapshots = m_producedSignalParameterSnapshots;
+    snapshot.signalParameterTrustedFixedBandFastPathBlocks =
+        m_signalParameterTrustedFixedBandFastPathBlocks;
     snapshot.queueDepth = queueMetrics.depth;
     snapshot.queueCapacity = queueMetrics.capacity;
     snapshot.queuePushedBlocks = queueMetrics.pushedBlocks;

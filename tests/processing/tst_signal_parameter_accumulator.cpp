@@ -67,6 +67,23 @@ bool sameParameters(const SignalParameters& lhs, const SignalParameters& rhs)
         && lhs.frequenciesHz == rhs.frequenciesHz;
 }
 
+bool sameParameterSets(const std::vector<SignalParameters>& lhs,
+                       const std::vector<SignalParameters>& rhs)
+{
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+
+    for (const auto& left : lhs) {
+        const auto* right = findParameters(rhs, left.bandIndex);
+        if (!right || !sameParameters(left, *right)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 SignalParameterEstimatorConfig microsecondSampleConfig()
 {
     SignalParameterEstimatorConfig config;
@@ -355,6 +372,133 @@ void testIngestSampleReportsAcceptedAndRejectedSamples(TestRunner& test)
                  "ingestSample rejected count matches results");
 }
 
+void testTrustedFixedBandFastBatchMatchesTrustedStreaming(TestRunner& test)
+{
+    const std::vector<SignalSample> samples{
+        makeSample(10, 0, 1'000'000'000LL),
+        makeSample(11, 0, 1'000'000'000LL),
+        makeSample(12, 1, 1'500'000'000LL),
+        makeSample(13, 1, 1'500'000'000LL),
+        makeSample(20, 0, 1'100'000'000LL),
+        makeSample(21, 0, 1'100'000'000LL),
+        makeSample(30, 1, 1'600'000'000LL),
+        makeSample(31, 1, 1'600'000'000LL),
+    };
+
+    auto config = trustedStreamingVectorMicrosecondSampleConfig(4);
+    SignalParameterAccumulator streaming(config);
+    streaming.ingest(samples);
+
+    SignalParameterAccumulator fast(config);
+    std::vector<std::uint64_t> firstByBand(config.bandStateCapacity);
+    std::vector<std::uint64_t> lastByBand(config.bandStateCapacity);
+    std::vector<std::uint8_t> usedByBand(config.bandStateCapacity);
+    const auto summary =
+        fast.ingestTrustedFixedBandSamples(samples, firstByBand, lastByBand, usedByBand);
+
+    test.require(summary.acceptedSamples == samples.size(),
+                 "fast batch accepts all trusted monotonic samples");
+    test.require(summary.rejectedSamples == 0,
+                 "fast batch rejects no trusted monotonic samples");
+    test.require(summary.closedPulses == 2,
+                 "fast batch counts pulses closed by sample gaps");
+    test.require(summary.latestAcceptedSampleIndex && *summary.latestAcceptedSampleIndex == 31,
+                 "fast batch reports latest accepted sample index");
+    test.require(fast.acceptedSampleCount() == streaming.acceptedSampleCount(),
+                 "fast batch accepted count matches trusted streaming");
+    test.require(fast.rejectedSampleCount() == streaming.rejectedSampleCount(),
+                 "fast batch rejected count matches trusted streaming");
+    test.require(fast.pulseCount() == streaming.pulseCount(),
+                 "fast batch pulse count matches trusted streaming");
+    test.require(sameParameterSets(fast.finalize(), streaming.finalize()),
+                 "fast batch parameters match trusted streaming");
+}
+
+void testTrustedFixedBandFastBatchRejectsInvalidBands(TestRunner& test)
+{
+    auto config = trustedStreamingVectorMicrosecondSampleConfig(2);
+    SignalParameterAccumulator accumulator(config);
+    std::vector<std::uint64_t> firstByBand(config.bandStateCapacity);
+    std::vector<std::uint64_t> lastByBand(config.bandStateCapacity);
+    std::vector<std::uint8_t> usedByBand(config.bandStateCapacity);
+
+    const std::vector<SignalSample> samples{
+        makeSample(10, 0),
+        makeSample(11, 3),
+        makeSample(12, -1),
+    };
+    const auto summary =
+        accumulator.ingestTrustedFixedBandSamples(samples, firstByBand, lastByBand, usedByBand);
+
+    test.require(summary.acceptedSamples == 1,
+                 "fast batch accepts in-capacity band sample");
+    test.require(summary.rejectedSamples == 2,
+                 "fast batch rejects negative and out-of-capacity bands");
+    test.require(accumulator.acceptedSampleCount() == 1,
+                 "fast batch accepted counter tracks invalid-band test");
+    test.require(accumulator.rejectedSampleCount() == 2,
+                 "fast batch rejected counter tracks invalid-band test");
+    test.require(usedByBand[0] != 0 && usedByBand[1] == 0,
+                 "fast batch span flags exclude invalid bands");
+}
+
+void testTrustedFixedBandFastBatchRejectsOutOfOrderPerBand(TestRunner& test)
+{
+    auto config = trustedStreamingVectorMicrosecondSampleConfig(2);
+    SignalParameterAccumulator accumulator(config);
+    std::vector<std::uint64_t> firstByBand(config.bandStateCapacity);
+    std::vector<std::uint64_t> lastByBand(config.bandStateCapacity);
+    std::vector<std::uint8_t> usedByBand(config.bandStateCapacity);
+
+    const std::vector<SignalSample> samples{
+        makeSample(10, 0),
+        makeSample(12, 0),
+        makeSample(11, 0),
+    };
+    const auto summary =
+        accumulator.ingestTrustedFixedBandSamples(samples, firstByBand, lastByBand, usedByBand);
+
+    test.require(summary.acceptedSamples == 2,
+                 "fast batch accepts monotonic prefix per band");
+    test.require(summary.rejectedSamples == 1,
+                 "fast batch rejects out-of-order sample per band");
+    test.require(accumulator.acceptedSampleCount() == 2,
+                 "fast batch accepted counter tracks out-of-order test");
+    test.require(accumulator.rejectedSampleCount() == 1,
+                 "fast batch rejected counter tracks out-of-order test");
+    test.require(usedByBand[0] != 0 && firstByBand[0] == 10 && lastByBand[0] == 12,
+                 "fast batch spans ignore rejected out-of-order sample");
+}
+
+void testTrustedFixedBandFastBatchUpdatesSpanBuffers(TestRunner& test)
+{
+    auto config = trustedStreamingVectorMicrosecondSampleConfig(4);
+    SignalParameterAccumulator accumulator(config);
+    std::vector<std::uint64_t> firstByBand(config.bandStateCapacity);
+    std::vector<std::uint64_t> lastByBand(config.bandStateCapacity);
+    std::vector<std::uint8_t> usedByBand(config.bandStateCapacity);
+
+    const std::vector<SignalSample> samples{
+        makeSample(10, 0),
+        makeSample(15, 0),
+        makeSample(20, 1),
+        makeSample(25, 1),
+    };
+    const auto summary =
+        accumulator.ingestTrustedFixedBandSamples(samples, firstByBand, lastByBand, usedByBand);
+
+    test.require(summary.acceptedSamples == samples.size(),
+                 "fast batch span test accepts all samples");
+    test.require(usedByBand[0] != 0 && usedByBand[1] != 0,
+                 "fast batch marks used bands");
+    test.require(firstByBand[0] == 10 && lastByBand[0] == 15,
+                 "fast batch records band 0 first and last sample indexes");
+    test.require(firstByBand[1] == 20 && lastByBand[1] == 25,
+                 "fast batch records band 1 first and last sample indexes");
+    test.require(usedByBand[2] == 0 && usedByBand[3] == 0,
+                 "fast batch leaves unused band flags clear");
+}
+
 void testTrustedStreamingVectorHandlesLargeMonotonicBlock(TestRunner& test)
 {
     constexpr std::uint64_t sampleCount = 50'000;
@@ -507,6 +651,10 @@ int main()
     testTrustedMapRejectsOutOfRangeBand(test);
     testTrustedStreamingRejectsOutOfOrderSamplePerBand(test);
     testIngestSampleReportsAcceptedAndRejectedSamples(test);
+    testTrustedFixedBandFastBatchMatchesTrustedStreaming(test);
+    testTrustedFixedBandFastBatchRejectsInvalidBands(test);
+    testTrustedFixedBandFastBatchRejectsOutOfOrderPerBand(test);
+    testTrustedFixedBandFastBatchUpdatesSpanBuffers(test);
     testTrustedStreamingVectorHandlesLargeMonotonicBlock(test);
     testSortedAcceptsOutOfOrderInput(test);
     testInvalidSamplesAreRejected(test);

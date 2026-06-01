@@ -31,7 +31,10 @@ publishes compact per-band PRI/PW summaries without returning raw samples to Qt.
 parameter snapshots are throttled in the data plane, and processing flush can force a
 final snapshot so scan completion receives complete PRI/PW summaries. The default
 data-plane policy publishes signal parameter snapshots by processed-block interval, not
-on every processed block.
+on every processed block. The default high-load signal parameter path uses a trusted
+fixed-band batch ingest loop, so accumulator updates and per-band sample span tracking
+share one tight pass over accepted samples while validated, sorted, and map-backed safe
+modes remain available for untrusted inputs.
 
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable

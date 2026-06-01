@@ -146,6 +146,9 @@ on every processed block by default: the data plane uses a processed-block inter
 policy and forces a final snapshot during processing flush, so ResultTable receives
 complete PRI/PW at scan completion while the high-load path avoids repeated
 finalize/snapshot work.
+The high-load signal parameter path uses a trusted fixed-band batch ingest loop to avoid
+per-sample mode dispatch and per-sample band span updates. Safe validated and sorted
+modes remain available for untrusted inputs.
 
 ```powershell
 $env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"

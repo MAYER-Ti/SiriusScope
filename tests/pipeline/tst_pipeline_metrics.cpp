@@ -122,6 +122,18 @@ void testSignalParameterMicroBreakdownLatencyStats(TestRunner& test)
                      "signal parameter snapshot build latency max is tracked");
 }
 
+void testSignalParameterFastPathCounter(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
+    metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.signalParameterTrustedFixedBandFastPathBlocks == 2,
+                 "signal parameter trusted fixed-band fast-path blocks are counted");
+}
+
 void testResetClearsLatencyStats(TestRunner& test)
 {
     pipeline::PipelineMetrics metrics;
@@ -129,6 +141,7 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordProcessBlockLatency(std::chrono::milliseconds{1}, 100);
     metrics.recordSpectrumSnapshotPublishLatency(std::chrono::milliseconds{3});
     metrics.recordSignalParameterFinalizeLatency(std::chrono::milliseconds{4});
+    metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
     metrics.reset();
 
     const auto snapshot = snapshotFor(metrics);
@@ -144,6 +157,8 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears publish latency count");
     test.require(snapshot.signalParameterFinalizeLatency.count == 0,
                  "reset clears signal parameter finalize latency count");
+    test.require(snapshot.signalParameterTrustedFixedBandFastPathBlocks == 0,
+                 "reset clears signal parameter fast-path block counter");
 }
 
 } // namespace
@@ -155,6 +170,7 @@ int main()
     testLatencyStatsAverageAndMax(test);
     testAverageSamplesPerProcessedBlock(test);
     testSignalParameterMicroBreakdownLatencyStats(test);
+    testSignalParameterFastPathCounter(test);
     testResetClearsLatencyStats(test);
 
     return test.result();
