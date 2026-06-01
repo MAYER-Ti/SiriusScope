@@ -374,6 +374,93 @@ void testSourceBlocksGoToDataPlane(TestRunner& test)
     test.require(summary.processedSamples == 2, "data plane counts source samples");
 }
 
+void testSourceBlockIgnoredBeforeRecording(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
+    const auto bands = makeBandConfigs();
+
+    app::WaterfallController controller(&viewport,
+                                        &source,
+                                        bands,
+                                        &storage,
+                                        &diagnostics,
+                                        app::WaterfallControllerConfig{},
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        &dataPipeline);
+
+    controller.start();
+    controller.startLiveSource();
+    source.emitBlock(makeBlock({makeSample(bands, 1, 0, 0, 90)}));
+
+    const auto flushed = controller.flushProcessing(std::chrono::milliseconds{1500});
+    const auto metrics = dataPipeline.metricsSnapshot();
+
+    test.require(flushed.success, "flush before recording succeeds");
+    test.require(metrics.inputSamples == 0,
+                 "source block before startRecording is ignored by runtime bridge path");
+    test.require(metrics.processedSamples == 0,
+                 "ignored pre-recording source block is not processed");
+}
+
+void testStopRecordingFlushesRuntimeBridge(TestRunner& test)
+{
+    FrequencyViewportModel viewport;
+    FakeBcoStreamSource source;
+    RecordingDiagnosticsSink diagnostics;
+    InMemoryWaterfallSessionStorage storage;
+    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
+    const auto bands = makeBandConfigs();
+
+    app::WaterfallControllerConfig config;
+    config.renderBinCount = 64;
+    config.visibleRowCount = 8;
+    app::WaterfallController controller(&viewport,
+                                        &source,
+                                        bands,
+                                        &storage,
+                                        &diagnostics,
+                                        config,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        &dataPipeline);
+
+    controller.start();
+    controller.setWaterfallTimeBase(core::TimeBase{1'000'000'000, 0, 1'000'000});
+    controller.startRecording();
+    controller.startLiveSource();
+    waitUntil([&controller] {
+        return !controller.historyLoading();
+    });
+
+    source.emitBlock(makeBlock({makeSample(bands, 0, 0, 0, 90),
+                                makeSample(bands, 0, 0, 1, 40)}));
+    controller.stopRecording();
+
+    const auto metrics = dataPipeline.metricsSnapshot();
+    const auto latestSession = storage.latestSession();
+    const auto rowCount = latestSession ? storage.rowCount(latestSession->id) : 0;
+
+    test.require(metrics.inputSamples == 2,
+                 "stopRecording flushes bridge samples into data pipeline");
+    test.require(metrics.processedSamples == metrics.inputSamples,
+                 "stopRecording flushes processing after bridge drain");
+    test.require(metrics.droppedBlocks == 0 && metrics.droppedSamples == 0,
+                 "runtime bridge stop path does not drop normal recording block");
+    test.require(latestSession.has_value() && rowCount == 1,
+                 "stopRecording stores row produced from bridge-delivered block");
+    test.require(diagnostics.contains("Source bridge stopped: received=1"),
+                 "stopRecording publishes source bridge summary diagnostics");
+    test.require(!diagnostics.contains("Source bridge reported dropped/rejected blocks"),
+                 "normal bridge stop does not publish dropped/rejected warning");
+}
+
 void testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(TestRunner& test)
 {
     FrequencyViewportModel viewport;
@@ -759,6 +846,8 @@ int main(int argc, char *argv[])
     testStopLiveSourceStopsStreamSource(test);
     testNullStreamSourceReturnsFailure(test);
     testSourceBlocksGoToDataPlane(test);
+    testSourceBlockIgnoredBeforeRecording(test);
+    testStopRecordingFlushesRuntimeBridge(test);
     testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(test);
     testLiveInsertsEmptyRowsForTimeGaps(test);
     testLiveAdjacentRowsDoNotInsertGaps(test);

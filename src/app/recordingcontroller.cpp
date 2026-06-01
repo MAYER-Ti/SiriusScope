@@ -119,7 +119,6 @@ void RecordingController::stopRecording()
 
     if (m_waterfallController) {
         m_waterfallController->setAcceptingLiveSamples(false);
-        m_waterfallController->clearQueuedBatches();
     }
 
     core::OperationResult stopResult = core::OperationResult::ok();

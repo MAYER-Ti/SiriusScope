@@ -27,6 +27,11 @@
 class FrequencyViewportModel;
 class WaterfallRingBuffer;
 
+namespace siriusscope::pipeline {
+class SourceToPipelineBridge;
+struct SourceToPipelineBridgeMetrics;
+} // namespace siriusscope::pipeline
+
 namespace siriusscope::app {
 
 class BearingFrameBus;
@@ -155,6 +160,10 @@ private:
     };
 
     void enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block);
+    void startSourceBridge();
+    void stopSourceBridge(bool flush);
+    void publishSourceBridgeMetrics(
+        const pipeline::SourceToPipelineBridgeMetrics& metrics) const;
     void startHistoryWorker();
     void stopHistoryWorker();
     void historyWorkerLoop();
@@ -188,6 +197,7 @@ private:
     hardware::IBcoStreamSource* m_streamSource = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     pipeline::DataIngestPipeline* m_dataIngestPipeline = nullptr;
+    std::unique_ptr<pipeline::SourceToPipelineBridge> m_sourceBridge;
     WaterfallRingBuffer* m_ringBuffer = nullptr;
     IWaterfallSessionStorage* m_sessionStorage = nullptr;
     std::unique_ptr<InMemoryWaterfallSessionStorage> m_ownedSessionStorage;

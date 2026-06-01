@@ -1,6 +1,7 @@
 #include "waterfallcontroller.h"
 
 #include "frequencyviewportmodel.h"
+#include "pipeline/source_to_pipeline_bridge.h"
 #include "waterfallringbuffer.h"
 #include "waterfallrowresampler.h"
 
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <exception>
+#include <sstream>
 #include <utility>
 
 namespace siriusscope::app {
@@ -20,6 +22,7 @@ namespace {
 
 constexpr int kRetuneDelayMs = 160;
 constexpr int kRowsPerWheelStep = 5;
+constexpr std::size_t kSourceBridgeQueueCapacity = 32;
 
 std::int64_t nowUtcNs()
 {
@@ -86,6 +89,16 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
     if (!m_sessionStorage) {
         m_ownedSessionStorage = std::make_unique<InMemoryWaterfallSessionStorage>();
         m_sessionStorage = m_ownedSessionStorage.get();
+    }
+
+    if (m_dataIngestPipeline) {
+        pipeline::SourceToPipelineBridgeConfig bridgeConfig;
+        bridgeConfig.queueCapacity = kSourceBridgeQueueCapacity;
+        bridgeConfig.overflowPolicy = pipeline::RxOverflowPolicy::DropNewest;
+        m_sourceBridge = std::make_unique<pipeline::SourceToPipelineBridge>(
+            m_dataIngestPipeline,
+            bridgeConfig,
+            m_diagnosticsSink);
     }
 
     if (m_viewportModel) {
@@ -172,7 +185,9 @@ void WaterfallController::start()
 void WaterfallController::stop()
 {
     m_snapshotTimer.stop();
+    setAcceptingLiveSamples(false);
     stopLiveSource();
+    stopSourceBridge(true);
     stopWorkers();
 }
 
@@ -251,14 +266,14 @@ void WaterfallController::stopWorkers()
 void WaterfallController::setAcceptingLiveSamples(bool accepting)
 {
     m_acceptingLiveSamples = accepting;
-    if (m_dataIngestPipeline) {
-        m_dataIngestPipeline->setAccepting(accepting);
-    }
 }
 
 void WaterfallController::clearQueuedBatches()
 {
     resetLiveRowTimeState();
+    if (m_sourceBridge) {
+        m_sourceBridge->clear();
+    }
     if (m_dataIngestPipeline) {
         m_dataIngestPipeline->clearQueuedBlocks();
     }
@@ -282,6 +297,13 @@ core::OperationResult WaterfallController::flushProcessing(std::chrono::millisec
     }
     if (!m_dataIngestPipeline) {
         return core::OperationResult::ok();
+    }
+
+    if (m_sourceBridge) {
+        const auto bridgeFlushed = m_sourceBridge->flush(timeout);
+        if (!bridgeFlushed) {
+            return bridgeFlushed;
+        }
     }
 
     const auto result = m_dataIngestPipeline->flushProcessing(timeout);
@@ -520,6 +542,10 @@ void WaterfallController::startRecording()
     metadata = m_sessionStorage->startSession(metadata);
     m_activeSessionId = metadata.id;
     m_sessionActive = true;
+    startSourceBridge();
+    if (m_dataIngestPipeline) {
+        m_dataIngestPipeline->setAccepting(true);
+    }
     setAcceptingLiveSamples(true);
     m_timelineViewport.switchToSession(metadata.id,
                                        metadata.endUtcMs,
@@ -544,7 +570,16 @@ void WaterfallController::stopRecording()
     const qint64 endUtcMs = metadata ? metadata->endUtcMs : m_timelineViewport.topUtcMs();
 
     setAcceptingLiveSamples(false);
-    clearQueuedBatches();
+    stopSourceBridge(true);
+    const auto flushed = flushProcessing(std::chrono::seconds{5});
+    if (!flushed) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "Data ingest pipeline flush timed out while stopping recording: "
+                    + flushed.message);
+    }
+    if (m_dataIngestPipeline) {
+        m_dataIngestPipeline->setAccepting(false);
+    }
     m_sessionStorage->closeSession(m_activeSessionId, endUtcMs);
     m_sessionActive = false;
     m_waterfallTimeBase.reset();
@@ -592,21 +627,85 @@ void WaterfallController::pollWaterfallRows()
 
 void WaterfallController::enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block)
 {
-    if (!block || !m_dataIngestPipeline) {
+    if (!block) {
         return;
     }
 
-    pipeline::SignalBlockMetadata metadata;
-    metadata.firstSampleIndex = block->stats.firstSampleIndex;
-    metadata.lastSampleIndex = block->stats.lastSampleIndex;
-    metadata.producedAt = block->stats.producedAt;
-    metadata.antennaAzimuthDeg = block->stats.antennaAzimuthDeg;
-
-    const auto result = m_dataIngestPipeline->ingestSamples(block->samples, metadata);
-    if (!result && m_acceptingLiveSamples) {
-        publish(infrastructure::DiagnosticSeverity::Warning,
-                "Data ingest rejected BCO block: " + result.message);
+    if (!m_acceptingLiveSamples) {
+        return;
     }
+
+    if (!m_sourceBridge) {
+        publish(infrastructure::DiagnosticSeverity::Warning,
+                "Source bridge is not configured; BCO block ignored");
+        return;
+    }
+
+    m_sourceBridge->submit(std::move(block));
+}
+
+void WaterfallController::startSourceBridge()
+{
+    if (!m_sourceBridge) {
+        return;
+    }
+
+    const auto started = m_sourceBridge->start();
+    if (!started) {
+        publish(infrastructure::DiagnosticSeverity::Error,
+                "Source bridge failed to start: " + started.message);
+    }
+}
+
+void WaterfallController::stopSourceBridge(bool flush)
+{
+    if (!m_sourceBridge || !m_sourceBridge->running()) {
+        return;
+    }
+
+    if (flush) {
+        const auto flushed = m_sourceBridge->flush(std::chrono::seconds{5});
+        if (!flushed) {
+            publish(infrastructure::DiagnosticSeverity::Warning,
+                    "Source bridge flush timed out: " + flushed.message);
+        }
+    }
+
+    m_sourceBridge->stop();
+    publishSourceBridgeMetrics(m_sourceBridge->metrics());
+}
+
+void WaterfallController::publishSourceBridgeMetrics(
+    const pipeline::SourceToPipelineBridgeMetrics& metrics) const
+{
+    const bool hasActivity = metrics.receivedBlocks > 0 || metrics.enqueuedBlocks > 0
+        || metrics.droppedBlocks > 0 || metrics.ingestedBlocks > 0
+        || metrics.rejectedBlocks > 0;
+    if (!hasActivity) {
+        return;
+    }
+
+    std::ostringstream summary;
+    summary << "Source bridge stopped: received=" << metrics.receivedBlocks
+            << " enqueued=" << metrics.enqueuedBlocks
+            << " dropped=" << metrics.droppedBlocks
+            << " ingested=" << metrics.ingestedBlocks
+            << " rejected=" << metrics.rejectedBlocks
+            << " queueDepth=" << metrics.queueDepth;
+    publish(infrastructure::DiagnosticSeverity::Info, summary.str());
+
+    if (metrics.droppedBlocks == 0 && metrics.rejectedBlocks == 0) {
+        return;
+    }
+
+    std::ostringstream warning;
+    warning << "Source bridge reported dropped/rejected blocks: dropped="
+            << metrics.droppedBlocks << " rejected=" << metrics.rejectedBlocks
+            << " received=" << metrics.receivedBlocks
+            << " enqueued=" << metrics.enqueuedBlocks
+            << " ingested=" << metrics.ingestedBlocks
+            << " queueDepth=" << metrics.queueDepth;
+    publish(infrastructure::DiagnosticSeverity::Warning, warning.str());
 }
 
 void WaterfallController::scheduleRetune(double minHz, double maxHz)
