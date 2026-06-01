@@ -842,6 +842,8 @@ void testFlushProcessingForcesSignalParameterSnapshot(TestRunner& test)
     RecordingDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
     auto pipelineConfig = makePipelineConfig();
+    pipelineConfig.signalParameters.snapshotPolicy =
+        pipeline::SignalParameterSnapshotPolicy::WallClockPeriod;
     pipelineConfig.signalParameters.snapshotPeriod = std::chrono::hours{1};
     pipeline::DataIngestPipeline dataPipeline(pipelineConfig, &diagnostics);
     const auto bands = makeBandConfigs();

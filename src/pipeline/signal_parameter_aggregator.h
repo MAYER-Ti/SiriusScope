@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -15,20 +16,43 @@ namespace siriusscope::pipeline {
 
 processing::SignalParameterEstimatorConfig defaultSignalParameterAggregatorEstimatorConfig();
 
+enum class SignalParameterSnapshotPolicy
+{
+    WallClockPeriod,
+    ProcessedBlockInterval,
+    SourceTimePeriod,
+    ManualOnly,
+};
+
 struct SignalParameterAggregatorConfig
 {
     processing::SignalParameterEstimatorConfig estimatorConfig =
         defaultSignalParameterAggregatorEstimatorConfig();
     std::chrono::milliseconds snapshotPeriod{50};
     bool publishSnapshotEveryBlock = false;
+    SignalParameterSnapshotPolicy snapshotPolicy =
+        SignalParameterSnapshotPolicy::ProcessedBlockInterval;
+    std::uint64_t snapshotBlockInterval = 20;
+    std::chrono::milliseconds sourceTimeSnapshotPeriod{500};
+};
+
+struct SignalParameterAggregatorTiming
+{
+    std::chrono::steady_clock::duration ingest{};
+    std::chrono::steady_clock::duration snapshotDecision{};
+    std::chrono::steady_clock::duration finalize{};
+    std::chrono::steady_clock::duration snapshotBuild{};
+    std::chrono::steady_clock::duration total{};
 };
 
 struct SignalParameterAggregationResult
 {
     std::shared_ptr<const SignalParameterSnapshot> snapshot;
+    SignalParameterAggregatorTiming timing;
     std::uint64_t acceptedSampleDelta = 0;
     std::uint64_t rejectedSampleDelta = 0;
     std::uint64_t pulseCountDelta = 0;
+    bool snapshotPublished = false;
 };
 
 class SignalParameterAggregator
@@ -55,9 +79,13 @@ private:
 
     void updateBandSpans(std::span<const core::SignalSample> samples);
     void updateBandSpanForSample(const core::SignalSample& sample);
+    void updateLatestAcceptedSampleIndex(std::uint64_t sampleIndex);
     bool usesStreamingSinglePass() const noexcept;
     bool shouldPublishSnapshot(std::chrono::steady_clock::time_point now) const;
     void markSnapshotPublished(std::chrono::steady_clock::time_point now);
+    std::vector<processing::SignalParameters> finalizeSignalParameters() const;
+    std::shared_ptr<const SignalParameterSnapshot> buildSnapshotFromParameters(
+        std::vector<processing::SignalParameters> parameters) const;
     void prepareBandSpanVectorStorage();
     void resetBandSpanStorage();
     BandSampleSpan* spanForBand(int bandIndex);
@@ -72,6 +100,9 @@ private:
     std::chrono::steady_clock::time_point m_lastSnapshotAt{};
     bool m_snapshotDirty = false;
     bool m_forceNextSnapshot = true;
+    std::uint64_t m_processedBlocksSinceSnapshot = 0;
+    std::optional<std::uint64_t> m_lastSnapshotSourceLastSampleIndex;
+    std::optional<std::uint64_t> m_latestAcceptedSampleIndex;
 };
 
 } // namespace siriusscope::pipeline

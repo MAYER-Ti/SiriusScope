@@ -43,6 +43,10 @@ struct PipelineMetricsSnapshot
     LatencyStats spectrumAggregationLatency;
     LatencyStats bearingAggregationLatency;
     LatencyStats signalParameterAggregationLatency;
+    LatencyStats signalParameterIngestLatency;
+    LatencyStats signalParameterSnapshotDecisionLatency;
+    LatencyStats signalParameterFinalizeLatency;
+    LatencyStats signalParameterSnapshotBuildLatency;
     LatencyStats waterfallRowPublishLatency;
     LatencyStats spectrumSnapshotPublishLatency;
     LatencyStats bearingSnapshotPublishLatency;
@@ -108,6 +112,12 @@ public:
     void recordSpectrumAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordBearingAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterAggregationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterIngestLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterSnapshotDecisionLatency(
+        std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterFinalizeLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterSnapshotBuildLatency(
+        std::chrono::steady_clock::duration elapsed);
     void recordWaterfallRowPublishLatency(std::chrono::steady_clock::duration elapsed);
     void recordSpectrumSnapshotPublishLatency(std::chrono::steady_clock::duration elapsed);
     void recordBearingSnapshotPublishLatency(std::chrono::steady_clock::duration elapsed);
@@ -178,6 +188,10 @@ private:
     LatencyStats m_spectrumAggregationLatency;
     LatencyStats m_bearingAggregationLatency;
     LatencyStats m_signalParameterAggregationLatency;
+    LatencyStats m_signalParameterIngestLatency;
+    LatencyStats m_signalParameterSnapshotDecisionLatency;
+    LatencyStats m_signalParameterFinalizeLatency;
+    LatencyStats m_signalParameterSnapshotBuildLatency;
     LatencyStats m_waterfallRowPublishLatency;
     LatencyStats m_spectrumSnapshotPublishLatency;
     LatencyStats m_bearingSnapshotPublishLatency;

@@ -136,14 +136,16 @@ ctest --test-dir build/win-mingw-debug --output-on-failure
 The regular test suite keeps `TargetRawThroughput90MBps` capped as a source-accounting
 smoke. To run the uncapped full pipeline audit from PowerShell:
 
-The audit also prints per-aggregator latency breakdown to identify the next optimization
-target.
+The audit also prints per-aggregator latency breakdown and a signal-parameter
+micro-breakdown for ingest, snapshot decision, finalize, and snapshot build time.
 
 Signal parameter estimation uses trusted streaming mode with fixed band-state storage
 for internally generated high-load samples. The validated sorted mode remains available
-for unordered or untrusted inputs and tests. Signal parameter snapshots are throttled in
-the data plane, and a final snapshot is forced during processing flush so ResultTable
-receives complete PRI/PW at scan completion.
+for unordered or untrusted inputs and tests. Signal parameter snapshots are not published
+on every processed block by default: the data plane uses a processed-block interval
+policy and forces a final snapshot during processing flush, so ResultTable receives
+complete PRI/PW at scan completion while the high-load path avoids repeated
+finalize/snapshot work.
 
 ```powershell
 $env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"

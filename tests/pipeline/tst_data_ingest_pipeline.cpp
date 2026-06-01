@@ -96,6 +96,8 @@ void testDataPipelinePublishesSignalParameterSnapshot(TestRunner& test)
 void testDataPipelineForceSignalParameterSnapshotPublishesThrottledSamples(TestRunner& test)
 {
     auto config = makeConfig();
+    config.signalParameters.snapshotPolicy =
+        pipeline::SignalParameterSnapshotPolicy::WallClockPeriod;
     config.signalParameters.snapshotPeriod = std::chrono::hours{1};
     pipeline::DataIngestPipeline dataPipeline(config);
 

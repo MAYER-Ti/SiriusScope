@@ -246,6 +246,14 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
                  "pipeline metrics count bearing aggregation latency samples");
     test.require(metricsSnapshot.signalParameterAggregationLatency.count == 1,
                  "pipeline metrics count signal parameter aggregation latency samples");
+    test.require(metricsSnapshot.signalParameterIngestLatency.count == 1,
+                 "pipeline metrics count signal parameter ingest latency samples");
+    test.require(metricsSnapshot.signalParameterSnapshotDecisionLatency.count == 1,
+                 "pipeline metrics count signal parameter snapshot decision latency samples");
+    test.require(metricsSnapshot.signalParameterFinalizeLatency.count == 1,
+                 "pipeline metrics count signal parameter finalize latency samples");
+    test.require(metricsSnapshot.signalParameterSnapshotBuildLatency.count == 1,
+                 "pipeline metrics count signal parameter snapshot build latency samples");
     test.require(metricsSnapshot.waterfallRowPublishLatency.count == 1,
                  "pipeline metrics count waterfall row publish latency samples");
     test.require(metricsSnapshot.spectrumSnapshotPublishLatency.count == 1,

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <vector>
@@ -49,6 +50,18 @@ core::SignalSample sample(std::uint64_t sampleIndex,
         80,
         0,
     };
+}
+
+pipeline::SignalParameterAggregationResult consumeIndexes(
+    pipeline::SignalParameterAggregator& aggregator,
+    std::initializer_list<std::uint64_t> sampleIndexes)
+{
+    std::vector<core::SignalSample> samples;
+    samples.reserve(sampleIndexes.size());
+    for (const auto sampleIndex : sampleIndexes) {
+        samples.push_back(sample(sampleIndex));
+    }
+    return aggregator.consume(samples);
 }
 
 const pipeline::BandSignalParametersSummary* findBand(
@@ -238,6 +251,7 @@ void testStreamingIngestHandlesLargeMonotonicBlock(TestRunner& test)
 void testSnapshotCadenceThrottlesAfterInitialSnapshot(TestRunner& test)
 {
     auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::WallClockPeriod;
     config.snapshotPeriod = std::chrono::hours{1};
     config.publishSnapshotEveryBlock = false;
     pipeline::SignalParameterAggregator aggregator(config);
@@ -262,6 +276,7 @@ void testSnapshotCadenceThrottlesAfterInitialSnapshot(TestRunner& test)
 void testPublishSnapshotEveryBlockPreservesOldBehavior(TestRunner& test)
 {
     auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::WallClockPeriod;
     config.snapshotPeriod = std::chrono::hours{1};
     config.publishSnapshotEveryBlock = true;
     pipeline::SignalParameterAggregator aggregator(config);
@@ -280,6 +295,7 @@ void testPublishSnapshotEveryBlockPreservesOldBehavior(TestRunner& test)
 void testNonPositiveSnapshotPeriodPublishesEveryBlock(TestRunner& test)
 {
     auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::WallClockPeriod;
     config.snapshotPeriod = std::chrono::milliseconds{0};
     pipeline::SignalParameterAggregator aggregator(config);
     const std::vector<core::SignalSample> firstBlock{sample(10)};
@@ -297,6 +313,7 @@ void testNonPositiveSnapshotPeriodPublishesEveryBlock(TestRunner& test)
 void testForceSnapshotReturnsLatestAccumulatedData(TestRunner& test)
 {
     auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::WallClockPeriod;
     config.snapshotPeriod = std::chrono::hours{1};
     pipeline::SignalParameterAggregator aggregator(config);
     const std::vector<core::SignalSample> firstBlock{sample(10), sample(11)};
@@ -347,6 +364,122 @@ void testStreamingSinglePassSpanIgnoresRejectedSamples(TestRunner& test)
                  "single-pass span ignores rejected out-of-order sample");
 }
 
+void testProcessedBlockIntervalPolicy(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::ProcessedBlockInterval;
+    config.snapshotBlockInterval = 3;
+    config.publishSnapshotEveryBlock = false;
+    pipeline::SignalParameterAggregator aggregator(config);
+
+    const auto first = consumeIndexes(aggregator, {10});
+    const auto second = consumeIndexes(aggregator, {20});
+    const auto third = consumeIndexes(aggregator, {30});
+    const auto fourth = consumeIndexes(aggregator, {40});
+
+    test.require(first.snapshot != nullptr,
+                 "block interval policy publishes forced first snapshot");
+    test.require(second.snapshot == nullptr,
+                 "block interval policy suppresses first block after snapshot");
+    test.require(third.snapshot == nullptr,
+                 "block interval policy suppresses second block after snapshot");
+    test.require(fourth.snapshot != nullptr,
+                 "block interval policy publishes after three further blocks");
+}
+
+void testManualOnlyPolicyPublishesOnlyForcedSnapshots(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::ManualOnly;
+    pipeline::SignalParameterAggregator aggregator(config);
+
+    const auto first = consumeIndexes(aggregator, {10});
+    const auto second = consumeIndexes(aggregator, {20, 21});
+    const auto forced = aggregator.forceSnapshot();
+
+    test.require(first.snapshot != nullptr,
+                 "manual policy still publishes forced first snapshot");
+    test.require(second.snapshot == nullptr,
+                 "manual policy suppresses periodic snapshots");
+    test.require(forced != nullptr, "manual policy forceSnapshot returns snapshot");
+    test.require(forced && forced->acceptedSampleCount == 3,
+                 "manual policy forceSnapshot includes accumulated samples");
+}
+
+void testPublishEveryBlockOverridesManualPolicy(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::ManualOnly;
+    config.publishSnapshotEveryBlock = true;
+    pipeline::SignalParameterAggregator aggregator(config);
+
+    const auto first = consumeIndexes(aggregator, {10});
+    const auto second = consumeIndexes(aggregator, {20});
+    const auto third = consumeIndexes(aggregator, {30});
+
+    test.require(first.snapshot != nullptr,
+                 "publish every block override publishes first snapshot");
+    test.require(second.snapshot != nullptr,
+                 "publish every block override publishes second snapshot");
+    test.require(third.snapshot != nullptr,
+                 "publish every block override publishes third snapshot");
+}
+
+void testSourceTimePolicyUsesAcceptedSampleTime(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.estimatorConfig.samplePeriodNs = 1'000'000;
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::SourceTimePeriod;
+    config.sourceTimeSnapshotPeriod = std::chrono::milliseconds{10};
+    pipeline::SignalParameterAggregator aggregator(config);
+
+    const auto first = consumeIndexes(aggregator, {0, 1, 2});
+    const auto second = consumeIndexes(aggregator, {3, 4, 5});
+    const auto third = consumeIndexes(aggregator, {10, 11, 12});
+
+    test.require(first.snapshot != nullptr,
+                 "source-time policy publishes forced first snapshot");
+    test.require(second.snapshot == nullptr,
+                 "source-time policy suppresses short source-time delta");
+    test.require(third.snapshot != nullptr,
+                 "source-time policy publishes after configured source-time delta");
+}
+
+void testTimingFieldsAreReported(TestRunner& test)
+{
+    pipeline::SignalParameterAggregator aggregator(microsecondConfig());
+    const auto result = consumeIndexes(aggregator, {10, 11, 12});
+
+    test.require(result.snapshot != nullptr,
+                 "timing test publishes initial snapshot");
+    test.require(result.snapshotPublished,
+                 "timing test marks actual snapshot publication");
+    test.require(result.timing.total >= result.timing.ingest,
+                 "timing test records total duration including ingest");
+    test.require(result.timing.total >= result.timing.snapshotDecision,
+                 "timing test records snapshot decision duration");
+}
+
+void testNoSnapshotLeavesFinalizeAndBuildTimingZero(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.snapshotPolicy = pipeline::SignalParameterSnapshotPolicy::ProcessedBlockInterval;
+    config.snapshotBlockInterval = 1000;
+    pipeline::SignalParameterAggregator aggregator(config);
+
+    (void) consumeIndexes(aggregator, {10});
+    const auto second = consumeIndexes(aggregator, {20});
+
+    test.require(second.snapshot == nullptr,
+                 "no-snapshot timing test suppresses second snapshot");
+    test.require(!second.snapshotPublished,
+                 "no-snapshot timing test marks no snapshot publication");
+    test.require(second.timing.finalize == std::chrono::steady_clock::duration{},
+                 "no-snapshot timing test leaves finalize timing zero");
+    test.require(second.timing.snapshotBuild == std::chrono::steady_clock::duration{},
+                 "no-snapshot timing test leaves snapshot build timing zero");
+}
+
 } // namespace
 
 int main()
@@ -365,6 +498,12 @@ int main()
     testNonPositiveSnapshotPeriodPublishesEveryBlock(test);
     testForceSnapshotReturnsLatestAccumulatedData(test);
     testStreamingSinglePassSpanIgnoresRejectedSamples(test);
+    testProcessedBlockIntervalPolicy(test);
+    testManualOnlyPolicyPublishesOnlyForcedSnapshots(test);
+    testPublishEveryBlockOverridesManualPolicy(test);
+    testSourceTimePolicyUsesAcceptedSampleTime(test);
+    testTimingFieldsAreReported(test);
+    testNoSnapshotLeavesFinalizeAndBuildTimingZero(test);
 
     return test.result();
 }

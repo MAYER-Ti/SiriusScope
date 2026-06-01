@@ -29,7 +29,9 @@ Signal parameter output is published as immutable `SignalParameterSnapshot` obje
 `SignalParameterAggregator` reuses the processing accumulator inside the data plane and
 publishes compact per-band PRI/PW summaries without returning raw samples to Qt. Signal
 parameter snapshots are throttled in the data plane, and processing flush can force a
-final snapshot so scan completion receives complete PRI/PW summaries.
+final snapshot so scan completion receives complete PRI/PW summaries. The default
+data-plane policy publishes signal parameter snapshots by processed-block interval, not
+on every processed block.
 
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable

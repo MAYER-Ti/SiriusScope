@@ -1,6 +1,7 @@
 #include "pipeline/signal_parameter_aggregator.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 namespace siriusscope::pipeline {
@@ -29,6 +30,8 @@ std::uint64_t saturatedDelta(std::size_t after, std::size_t before)
 
 void normalizeFixedBandCapacity(processing::SignalParameterEstimatorConfig& config)
 {
+    config.samplePeriodNs = std::max<std::uint64_t>(1, config.samplePeriodNs);
+
     if (config.bandStateMode != processing::SignalParameterBandStateMode::FixedBandIndexVector
         || config.bandStateCapacity != 0) {
         return;
@@ -44,6 +47,25 @@ SignalParameterAggregatorConfig normalizeConfig(SignalParameterAggregatorConfig 
 {
     normalizeFixedBandCapacity(config.estimatorConfig);
     return config;
+}
+
+std::uint64_t requiredSamplesForSourceTimePeriod(
+    std::chrono::milliseconds period,
+    std::uint64_t samplePeriodNs)
+{
+    if (period.count() <= 0) {
+        return 0;
+    }
+
+    const auto targetNsSigned =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(period).count();
+    if (targetNsSigned <= 0) {
+        return 0;
+    }
+
+    const auto targetNs = static_cast<std::uint64_t>(targetNsSigned);
+    samplePeriodNs = std::max<std::uint64_t>(1, samplePeriodNs);
+    return targetNs / samplePeriodNs + (targetNs % samplePeriodNs == 0 ? 0 : 1);
 }
 
 } // namespace
@@ -73,6 +95,9 @@ void SignalParameterAggregator::reset()
     m_lastSnapshotAt = {};
     m_snapshotDirty = false;
     m_forceNextSnapshot = true;
+    m_processedBlocksSinceSnapshot = 0;
+    m_lastSnapshotSourceLastSampleIndex.reset();
+    m_latestAcceptedSampleIndex.reset();
 }
 
 void SignalParameterAggregator::setConfig(SignalParameterAggregatorConfig config)
@@ -84,6 +109,9 @@ void SignalParameterAggregator::setConfig(SignalParameterAggregatorConfig config
     m_lastSnapshotAt = {};
     m_snapshotDirty = false;
     m_forceNextSnapshot = true;
+    m_processedBlocksSinceSnapshot = 0;
+    m_lastSnapshotSourceLastSampleIndex.reset();
+    m_latestAcceptedSampleIndex.reset();
 }
 
 SignalParameterAggregationResult SignalParameterAggregator::consume(const SignalBlock& block)
@@ -95,7 +123,9 @@ SignalParameterAggregationResult SignalParameterAggregator::consume(
     std::span<const core::SignalSample> samples)
 {
     SignalParameterAggregationResult result;
+    const auto totalStartedAt = Clock::now();
     if (samples.empty()) {
+        result.timing.total = Clock::now() - totalStartedAt;
         return result;
     }
 
@@ -103,17 +133,20 @@ SignalParameterAggregationResult SignalParameterAggregator::consume(
     const auto rejectedBefore = m_accumulator.rejectedSampleCount();
     const auto pulseCountBefore = m_accumulator.pulseCount();
 
+    const auto ingestStartedAt = Clock::now();
     if (usesStreamingSinglePass()) {
         for (const auto& sample : samples) {
             const auto ingestResult = m_accumulator.ingestSample(sample);
             if (ingestResult == processing::SignalParameterSampleIngestResult::Accepted) {
                 updateBandSpanForSample(sample);
+                updateLatestAcceptedSampleIndex(sample.sampleIndex);
             }
         }
     } else {
         updateBandSpans(samples);
         m_accumulator.ingest(samples);
     }
+    result.timing.ingest = Clock::now() - ingestStartedAt;
 
     result.acceptedSampleDelta =
         saturatedDelta(m_accumulator.acceptedSampleCount(), acceptedBefore);
@@ -121,20 +154,56 @@ SignalParameterAggregationResult SignalParameterAggregator::consume(
         saturatedDelta(m_accumulator.rejectedSampleCount(), rejectedBefore);
     result.pulseCountDelta = saturatedDelta(m_accumulator.pulseCount(), pulseCountBefore);
 
+    if (!usesStreamingSinglePass() && result.acceptedSampleDelta > 0) {
+        for (const auto& sample : samples) {
+            updateLatestAcceptedSampleIndex(sample.sampleIndex);
+        }
+    }
+
     if (result.acceptedSampleDelta > 0 || result.rejectedSampleDelta > 0
         || result.pulseCountDelta > 0) {
         m_snapshotDirty = true;
     }
 
+    ++m_processedBlocksSinceSnapshot;
+
     const auto now = Clock::now();
+    const auto decisionStartedAt = Clock::now();
     if (shouldPublishSnapshot(now)) {
-        result.snapshot = makeSnapshot();
+        result.timing.snapshotDecision = Clock::now() - decisionStartedAt;
+
+        const auto finalizeStartedAt = Clock::now();
+        auto parameters = finalizeSignalParameters();
+        result.timing.finalize = Clock::now() - finalizeStartedAt;
+
+        const auto buildStartedAt = Clock::now();
+        result.snapshot = buildSnapshotFromParameters(std::move(parameters));
+        result.timing.snapshotBuild = Clock::now() - buildStartedAt;
+        result.snapshotPublished = result.snapshot != nullptr;
         markSnapshotPublished(now);
+        result.timing.total = Clock::now() - totalStartedAt;
+        return result;
     }
+    result.timing.snapshotDecision = Clock::now() - decisionStartedAt;
+    result.timing.total = Clock::now() - totalStartedAt;
     return result;
 }
 
 std::shared_ptr<const SignalParameterSnapshot> SignalParameterAggregator::makeSnapshot() const
+{
+    auto parameters = finalizeSignalParameters();
+    return buildSnapshotFromParameters(std::move(parameters));
+}
+
+std::vector<processing::SignalParameters>
+SignalParameterAggregator::finalizeSignalParameters() const
+{
+    return m_accumulator.finalize();
+}
+
+std::shared_ptr<const SignalParameterSnapshot>
+SignalParameterAggregator::buildSnapshotFromParameters(
+    std::vector<processing::SignalParameters> parameters) const
 {
     auto snapshot = std::make_shared<SignalParameterSnapshot>();
     snapshot->sequenceId = m_nextSequenceId++;
@@ -145,7 +214,6 @@ std::shared_ptr<const SignalParameterSnapshot> SignalParameterAggregator::makeSn
         static_cast<std::uint64_t>(m_accumulator.rejectedSampleCount());
     snapshot->pulseCount = static_cast<std::uint64_t>(m_accumulator.pulseCount());
 
-    const auto parameters = m_accumulator.finalize();
     snapshot->bands.reserve(parameters.size());
     for (const auto& parameter : parameters) {
         BandSignalParametersSummary summary;
@@ -213,6 +281,13 @@ void SignalParameterAggregator::updateBandSpanForSample(const core::SignalSample
     span->lastSampleIndex = std::max(span->lastSampleIndex, sample.sampleIndex);
 }
 
+void SignalParameterAggregator::updateLatestAcceptedSampleIndex(std::uint64_t sampleIndex)
+{
+    if (!m_latestAcceptedSampleIndex || sampleIndex > *m_latestAcceptedSampleIndex) {
+        m_latestAcceptedSampleIndex = sampleIndex;
+    }
+}
+
 bool SignalParameterAggregator::usesStreamingSinglePass() const noexcept
 {
     return m_config.estimatorConfig.ingestMode
@@ -230,14 +305,45 @@ bool SignalParameterAggregator::shouldPublishSnapshot(Clock::time_point now) con
     if (!m_snapshotDirty) {
         return false;
     }
-    if (m_config.snapshotPeriod.count() <= 0) {
-        return true;
-    }
-    if (m_lastSnapshotAt == Clock::time_point{}) {
-        return true;
+
+    switch (m_config.snapshotPolicy) {
+    case SignalParameterSnapshotPolicy::WallClockPeriod:
+        if (m_config.snapshotPeriod.count() <= 0) {
+            return true;
+        }
+        if (m_lastSnapshotAt == Clock::time_point{}) {
+            return true;
+        }
+        return now - m_lastSnapshotAt >= m_config.snapshotPeriod;
+
+    case SignalParameterSnapshotPolicy::ProcessedBlockInterval:
+        if (m_config.snapshotBlockInterval == 0) {
+            return true;
+        }
+        return m_processedBlocksSinceSnapshot >= m_config.snapshotBlockInterval;
+
+    case SignalParameterSnapshotPolicy::SourceTimePeriod:
+        if (m_config.sourceTimeSnapshotPeriod.count() <= 0) {
+            return true;
+        }
+        if (!m_latestAcceptedSampleIndex) {
+            return false;
+        }
+        if (!m_lastSnapshotSourceLastSampleIndex) {
+            return true;
+        }
+        if (*m_latestAcceptedSampleIndex <= *m_lastSnapshotSourceLastSampleIndex) {
+            return false;
+        }
+        return *m_latestAcceptedSampleIndex - *m_lastSnapshotSourceLastSampleIndex
+            >= requiredSamplesForSourceTimePeriod(m_config.sourceTimeSnapshotPeriod,
+                                                  m_config.estimatorConfig.samplePeriodNs);
+
+    case SignalParameterSnapshotPolicy::ManualOnly:
+        return false;
     }
 
-    return now - m_lastSnapshotAt >= m_config.snapshotPeriod;
+    return false;
 }
 
 void SignalParameterAggregator::markSnapshotPublished(Clock::time_point now)
@@ -245,6 +351,10 @@ void SignalParameterAggregator::markSnapshotPublished(Clock::time_point now)
     m_lastSnapshotAt = now;
     m_snapshotDirty = false;
     m_forceNextSnapshot = false;
+    m_processedBlocksSinceSnapshot = 0;
+    if (m_latestAcceptedSampleIndex) {
+        m_lastSnapshotSourceLastSampleIndex = m_latestAcceptedSampleIndex;
+    }
 }
 
 void SignalParameterAggregator::prepareBandSpanVectorStorage()

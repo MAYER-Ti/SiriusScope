@@ -310,6 +310,13 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             signalParameterAggregationElapsed);
     if (m_metrics) {
         m_metrics->recordSignalParameterAggregationLatency(signalParameterAggregationElapsed);
+        m_metrics->recordSignalParameterIngestLatency(signalParameterResult.timing.ingest);
+        m_metrics->recordSignalParameterSnapshotDecisionLatency(
+            signalParameterResult.timing.snapshotDecision);
+        m_metrics->recordSignalParameterFinalizeLatency(
+            signalParameterResult.timing.finalize);
+        m_metrics->recordSignalParameterSnapshotBuildLatency(
+            signalParameterResult.timing.snapshotBuild);
     }
 
     Clock::duration waterfallPublishLatency{};
@@ -536,7 +543,8 @@ void ProcessingEngine::publishSignalParameterSnapshots(
 {
     const auto publishStartedAt = Clock::now();
     (void)aggregationLatency;
-    const std::uint64_t producedSnapshots = result.snapshot ? 1 : 0;
+    const std::uint64_t producedSnapshots =
+        result.snapshotPublished && result.snapshot ? 1 : 0;
     if (result.snapshot && m_signalParameterSnapshots) {
         m_signalParameterSnapshots->publish(std::move(result.snapshot));
     }

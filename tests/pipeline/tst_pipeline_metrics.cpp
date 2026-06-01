@@ -89,12 +89,46 @@ void testAverageSamplesPerProcessedBlock(TestRunner& test)
                      "process block latency max is tracked");
 }
 
+void testSignalParameterMicroBreakdownLatencyStats(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordSignalParameterIngestLatency(std::chrono::milliseconds{10});
+    metrics.recordSignalParameterIngestLatency(std::chrono::milliseconds{30});
+    metrics.recordSignalParameterSnapshotDecisionLatency(std::chrono::milliseconds{1});
+    metrics.recordSignalParameterFinalizeLatency(std::chrono::milliseconds{4});
+    metrics.recordSignalParameterSnapshotBuildLatency(std::chrono::milliseconds{6});
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.signalParameterIngestLatency.count == 2,
+                 "signal parameter ingest latency count records");
+    test.requireNear(snapshot.signalParameterIngestLatency.averageMs(),
+                     20.0,
+                     0.0001,
+                     "signal parameter ingest latency average is calculated");
+    test.requireNear(snapshot.signalParameterIngestLatency.maxMs,
+                     30.0,
+                     0.0001,
+                     "signal parameter ingest latency max is tracked");
+    test.require(snapshot.signalParameterSnapshotDecisionLatency.count == 1,
+                 "signal parameter snapshot decision latency count records");
+    test.requireNear(snapshot.signalParameterFinalizeLatency.averageMs(),
+                     4.0,
+                     0.0001,
+                     "signal parameter finalize latency average is calculated");
+    test.requireNear(snapshot.signalParameterSnapshotBuildLatency.maxMs,
+                     6.0,
+                     0.0001,
+                     "signal parameter snapshot build latency max is tracked");
+}
+
 void testResetClearsLatencyStats(TestRunner& test)
 {
     pipeline::PipelineMetrics metrics;
 
     metrics.recordProcessBlockLatency(std::chrono::milliseconds{1}, 100);
     metrics.recordSpectrumSnapshotPublishLatency(std::chrono::milliseconds{3});
+    metrics.recordSignalParameterFinalizeLatency(std::chrono::milliseconds{4});
     metrics.reset();
 
     const auto snapshot = snapshotFor(metrics);
@@ -108,6 +142,8 @@ void testResetClearsLatencyStats(TestRunner& test)
                      "reset clears average samples per processed block");
     test.require(snapshot.spectrumSnapshotPublishLatency.count == 0,
                  "reset clears publish latency count");
+    test.require(snapshot.signalParameterFinalizeLatency.count == 0,
+                 "reset clears signal parameter finalize latency count");
 }
 
 } // namespace
@@ -118,6 +154,7 @@ int main()
 
     testLatencyStatsAverageAndMax(test);
     testAverageSamplesPerProcessedBlock(test);
+    testSignalParameterMicroBreakdownLatencyStats(test);
     testResetClearsLatencyStats(test);
 
     return test.result();

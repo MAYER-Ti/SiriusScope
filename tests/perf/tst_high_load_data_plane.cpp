@@ -170,6 +170,46 @@ std::vector<LatencyStage> stageLatencies(const pipeline::PipelineMetricsSnapshot
     };
 }
 
+std::vector<LatencyStage> signalParameterInternalLatencies(
+    const pipeline::PipelineMetricsSnapshot& metrics)
+{
+    return {
+        {"ingest", metrics.signalParameterIngestLatency},
+        {"snapshotDecision", metrics.signalParameterSnapshotDecisionLatency},
+        {"finalize", metrics.signalParameterFinalizeLatency},
+        {"snapshotBuild", metrics.signalParameterSnapshotBuildLatency},
+    };
+}
+
+void printSignalParameterInternalBottleneck(
+    const pipeline::PipelineMetricsSnapshot& metrics)
+{
+    const auto stages = signalParameterInternalLatencies(metrics);
+    const auto hasRecordedLatency =
+        std::any_of(stages.begin(), stages.end(), [](const LatencyStage& stage) {
+            return stage.stats.count > 0;
+        });
+    if (!hasRecordedLatency) {
+        std::cout << "SignalParameterAggregator internal bottleneck by avg: n/a\n"
+                  << "SignalParameterAggregator internal bottleneck by max: n/a\n";
+        return;
+    }
+
+    const auto byAverage = std::max_element(
+        stages.begin(), stages.end(), [](const LatencyStage& left, const LatencyStage& right) {
+            return left.stats.averageMs() < right.stats.averageMs();
+        });
+    const auto byMax = std::max_element(
+        stages.begin(), stages.end(), [](const LatencyStage& left, const LatencyStage& right) {
+            return left.stats.maxMs < right.stats.maxMs;
+        });
+
+    std::cout << "SignalParameterAggregator internal bottleneck by avg: "
+              << byAverage->name << " = " << byAverage->stats.averageMs() << " ms\n"
+              << "SignalParameterAggregator internal bottleneck by max: " << byMax->name
+              << " = " << byMax->stats.maxMs << " ms\n";
+}
+
 void printBottleneckHint(const AuditResult& result)
 {
     const auto stages = stageLatencies(result.pipeline);
@@ -196,6 +236,10 @@ void printBottleneckHint(const AuditResult& result)
               << " (" << byAverage->stats.averageMs() << " ms)\n"
               << "Likely bottleneck stage by max latency: " << byMax->name
               << " (" << byMax->stats.maxMs << " ms)\n";
+    if (std::string{byAverage->name} == "SignalParameterAggregator"
+        || std::string{byMax->name} == "SignalParameterAggregator") {
+        printSignalParameterInternalBottleneck(result.pipeline);
+    }
 }
 
 std::size_t samplesPerSecondFor(hardware::SimulatorLoadProfile profile)
@@ -467,6 +511,9 @@ void printAuditSummary(const AuditResult& result)
     const double pipelineProcessedToInputRatio = ratioOrZero(
         static_cast<double>(result.pipeline.processedSamples),
         static_cast<double>(result.pipeline.inputSamples));
+    const double snapshotsPerProcessedBlock = ratioOrZero(
+        static_cast<double>(result.pipeline.producedSignalParameterSnapshots),
+        static_cast<double>(result.pipeline.processedBlocks));
 
     std::cout << std::fixed << std::setprecision(2);
     std::cout << "High-load data plane audit:\n"
@@ -572,6 +619,23 @@ void printAuditSummary(const AuditResult& result)
               << "  signalParameterSnapshotPublishMs avg/max = "
               << result.pipeline.signalParameterSnapshotPublishLatency.averageMs() << "/"
               << result.pipeline.signalParameterSnapshotPublishLatency.maxMs << '\n'
+              << "Signal parameter micro-breakdown:\n"
+              << "  ingest avg/max = "
+              << result.pipeline.signalParameterIngestLatency.averageMs() << "/"
+              << result.pipeline.signalParameterIngestLatency.maxMs << '\n'
+              << "  snapshotDecision avg/max = "
+              << result.pipeline.signalParameterSnapshotDecisionLatency.averageMs() << "/"
+              << result.pipeline.signalParameterSnapshotDecisionLatency.maxMs << '\n'
+              << "  finalize avg/max = "
+              << result.pipeline.signalParameterFinalizeLatency.averageMs() << "/"
+              << result.pipeline.signalParameterFinalizeLatency.maxMs << '\n'
+              << "  snapshotBuild avg/max = "
+              << result.pipeline.signalParameterSnapshotBuildLatency.averageMs() << "/"
+              << result.pipeline.signalParameterSnapshotBuildLatency.maxMs << '\n'
+              << "  producedSignalParameterSnapshots = "
+              << result.pipeline.producedSignalParameterSnapshots << '\n'
+              << "  processedBlocks = " << result.pipeline.processedBlocks << '\n'
+              << "  snapshotsPerProcessedBlock = " << snapshotsPerProcessedBlock << '\n'
               << "  processedBlocks = " << result.pipeline.processedBlocks << '\n'
               << "  processedSamples = "
               << result.pipeline.processedBlockSamplesTotal << '\n'

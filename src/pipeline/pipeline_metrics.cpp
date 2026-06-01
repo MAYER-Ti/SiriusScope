@@ -43,6 +43,10 @@ void PipelineMetrics::reset()
     m_spectrumAggregationLatency = {};
     m_bearingAggregationLatency = {};
     m_signalParameterAggregationLatency = {};
+    m_signalParameterIngestLatency = {};
+    m_signalParameterSnapshotDecisionLatency = {};
+    m_signalParameterFinalizeLatency = {};
+    m_signalParameterSnapshotBuildLatency = {};
     m_waterfallRowPublishLatency = {};
     m_spectrumSnapshotPublishLatency = {};
     m_bearingSnapshotPublishLatency = {};
@@ -120,6 +124,34 @@ void PipelineMetrics::recordSignalParameterAggregationLatency(
 {
     std::lock_guard lock(m_mutex);
     recordLatency(m_signalParameterAggregationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterIngestLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterIngestLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterSnapshotDecisionLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterSnapshotDecisionLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterFinalizeLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterFinalizeLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterSnapshotBuildLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterSnapshotBuildLatency, millisecondsFor(elapsed));
 }
 
 void PipelineMetrics::recordWaterfallRowPublishLatency(
@@ -241,6 +273,11 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.spectrumAggregationLatency = m_spectrumAggregationLatency;
     snapshot.bearingAggregationLatency = m_bearingAggregationLatency;
     snapshot.signalParameterAggregationLatency = m_signalParameterAggregationLatency;
+    snapshot.signalParameterIngestLatency = m_signalParameterIngestLatency;
+    snapshot.signalParameterSnapshotDecisionLatency =
+        m_signalParameterSnapshotDecisionLatency;
+    snapshot.signalParameterFinalizeLatency = m_signalParameterFinalizeLatency;
+    snapshot.signalParameterSnapshotBuildLatency = m_signalParameterSnapshotBuildLatency;
     snapshot.waterfallRowPublishLatency = m_waterfallRowPublishLatency;
     snapshot.spectrumSnapshotPublishLatency = m_spectrumSnapshotPublishLatency;
     snapshot.bearingSnapshotPublishLatency = m_bearingSnapshotPublishLatency;
