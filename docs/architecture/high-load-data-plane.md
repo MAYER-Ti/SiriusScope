@@ -136,8 +136,9 @@ Current experimental mode:
 - The fan-out context owns the pooled block handle until every stage completes, so stage
   workers read the same block without copying samples and the block is not returned to
   the pool early.
-- Stage queues are bounded and expose queue depth, fallback/rejection, per-stage block,
-  in-flight block, and end-to-end fan-out latency metrics.
+- Stage queues are bounded and expose queue depth, max depth, capacity, queue wait
+  latency, service latency, submit failures, per-stage processed block/sample counts,
+  in-flight block, fallback/rejection, and end-to-end fan-out latency metrics.
 - `ParallelFanOut` must not become the GUI runtime default until audit results prove the
   behavior is stable enough for production use.
 

@@ -279,18 +279,39 @@ void testParallelFanOutMetrics(TestRunner& test)
     pipeline::PipelineMetrics metrics;
     pipeline::ParallelFanOutQueueMetrics queueMetrics;
     queueMetrics.waterfallStageQueueDepth = 1;
+    queueMetrics.waterfallStageQueueCapacity = 8;
     queueMetrics.spectrumStageQueueDepth = 2;
+    queueMetrics.spectrumStageQueueCapacity = 8;
     queueMetrics.bearingStageQueueDepth = 3;
+    queueMetrics.bearingStageQueueCapacity = 8;
     queueMetrics.signalParameterStageQueueDepth = 4;
+    queueMetrics.signalParameterStageQueueCapacity = 8;
     queueMetrics.inFlightBlocks = 5;
 
     metrics.recordParallelFanOutBlock();
     metrics.recordParallelFanOutFallbackBlock();
     metrics.recordParallelFanOutRejectedBlock();
-    metrics.recordWaterfallStageProcessedBlock();
-    metrics.recordSpectrumStageProcessedBlock();
-    metrics.recordBearingStageProcessedBlock();
-    metrics.recordSignalParameterStageProcessedBlock();
+    metrics.recordStageEnqueued(pipeline::PipelineStageMetric::Waterfall, 1, 8);
+    metrics.recordStageEnqueued(pipeline::PipelineStageMetric::Spectrum, 2, 8);
+    metrics.recordStageEnqueued(pipeline::PipelineStageMetric::Bearing, 3, 8);
+    metrics.recordStageEnqueued(pipeline::PipelineStageMetric::SignalParameter, 4, 8);
+    metrics.recordStageStarted(pipeline::PipelineStageMetric::Waterfall,
+                               std::chrono::milliseconds{2},
+                               0,
+                               8);
+    metrics.recordStageCompleted(pipeline::PipelineStageMetric::Waterfall,
+                                 std::chrono::milliseconds{5},
+                                 100);
+    metrics.recordStageCompleted(pipeline::PipelineStageMetric::Spectrum,
+                                 std::chrono::milliseconds{6},
+                                 100);
+    metrics.recordStageCompleted(pipeline::PipelineStageMetric::Bearing,
+                                 std::chrono::milliseconds{7},
+                                 100);
+    metrics.recordStageCompleted(pipeline::PipelineStageMetric::SignalParameter,
+                                 std::chrono::milliseconds{8},
+                                 100);
+    metrics.recordStageSubmitFailure(pipeline::PipelineStageMetric::Bearing, 8, 8);
     metrics.recordParallelFanOutEndToEndLatency(std::chrono::milliseconds{7});
 
     const auto snapshot = metrics.snapshot({}, {}, {}, queueMetrics);
@@ -302,6 +323,8 @@ void testParallelFanOutMetrics(TestRunner& test)
                  "parallel fan-out rejected blocks are counted");
     test.require(snapshot.waterfallStageQueueDepth == 1,
                  "parallel fan-out waterfall queue depth is exposed");
+    test.require(snapshot.waterfallStage.queueCapacity == 8,
+                 "parallel fan-out waterfall queue capacity is exposed");
     test.require(snapshot.spectrumStageQueueDepth == 2,
                  "parallel fan-out spectrum queue depth is exposed");
     test.require(snapshot.bearingStageQueueDepth == 3,
@@ -322,6 +345,95 @@ void testParallelFanOutMetrics(TestRunner& test)
                      7.0,
                      0.0001,
                      "parallel fan-out end-to-end latency is tracked");
+    test.require(snapshot.waterfallStage.enqueuedBlocks == 1,
+                 "parallel fan-out stage enqueue count is tracked");
+    test.require(snapshot.waterfallStage.dequeuedBlocks == 1,
+                 "parallel fan-out stage dequeue count is tracked");
+    test.require(snapshot.waterfallStage.processedSamples == 100,
+                 "parallel fan-out stage processed samples are tracked");
+    test.require(snapshot.bearingStage.submitFailures == 1,
+                 "parallel fan-out stage submit failures are tracked");
+    test.requireNear(snapshot.waterfallStage.queueWaitLatency.averageMs(),
+                     2.0,
+                     0.0001,
+                     "parallel fan-out stage queue wait latency is tracked");
+    test.requireNear(snapshot.waterfallStage.serviceLatency.maxMs,
+                     5.0,
+                     0.0001,
+                     "parallel fan-out stage service latency is tracked");
+}
+
+void testStageQueueMaxDepth(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordStageEnqueued(pipeline::PipelineStageMetric::Waterfall, 1, 64);
+    metrics.recordStageEnqueued(pipeline::PipelineStageMetric::Waterfall, 3, 64);
+    metrics.recordStageQueueDepth(pipeline::PipelineStageMetric::Waterfall, 2, 64);
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.waterfallStage.queueMaxDepth == 3,
+                 "stage queue max depth is tracked");
+    test.require(snapshot.waterfallStage.queueDepth == 2,
+                 "stage queue current depth is tracked");
+    test.require(snapshot.waterfallStage.queueCapacity == 64,
+                 "stage queue capacity is tracked");
+}
+
+void testStageQueueWaitLatency(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordStageStarted(pipeline::PipelineStageMetric::Spectrum,
+                               std::chrono::milliseconds{2},
+                               1,
+                               64);
+    metrics.recordStageStarted(pipeline::PipelineStageMetric::Spectrum,
+                               std::chrono::milliseconds{4},
+                               0,
+                               64);
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.spectrumStage.dequeuedBlocks == 2,
+                 "stage dequeue count is tracked");
+    test.require(snapshot.spectrumStage.queueWaitLatency.count == 2,
+                 "stage queue wait count is tracked");
+    test.requireNear(snapshot.spectrumStage.queueWaitLatency.averageMs(),
+                     3.0,
+                     0.0001,
+                     "stage queue wait average is tracked");
+    test.requireNear(snapshot.spectrumStage.queueWaitLatency.maxMs,
+                     4.0,
+                     0.0001,
+                     "stage queue wait max is tracked");
+}
+
+void testStageServiceLatencyAndSamples(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordStageCompleted(pipeline::PipelineStageMetric::Bearing,
+                                 std::chrono::milliseconds{5},
+                                 100);
+    metrics.recordStageCompleted(pipeline::PipelineStageMetric::Bearing,
+                                 std::chrono::milliseconds{7},
+                                 300);
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.bearingStage.processedBlocks == 2,
+                 "stage processed block count is tracked");
+    test.require(snapshot.bearingStage.processedSamples == 400,
+                 "stage processed sample count is tracked");
+    test.require(snapshot.bearingStage.serviceLatency.count == 2,
+                 "stage service latency count is tracked");
+    test.requireNear(snapshot.bearingStage.serviceLatency.averageMs(),
+                     6.0,
+                     0.0001,
+                     "stage service latency average is tracked");
+    test.requireNear(snapshot.bearingStage.serviceLatency.maxMs,
+                     7.0,
+                     0.0001,
+                     "stage service latency max is tracked");
 }
 
 void testResetClearsLatencyStats(TestRunner& test)
@@ -343,10 +455,17 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordParallelFanOutBlock();
     metrics.recordParallelFanOutFallbackBlock();
     metrics.recordParallelFanOutRejectedBlock();
-    metrics.recordWaterfallStageProcessedBlock();
-    metrics.recordSpectrumStageProcessedBlock();
-    metrics.recordBearingStageProcessedBlock();
-    metrics.recordSignalParameterStageProcessedBlock();
+    metrics.recordStageEnqueued(pipeline::PipelineStageMetric::Waterfall, 3, 16);
+    metrics.recordStageStarted(pipeline::PipelineStageMetric::Spectrum,
+                               std::chrono::milliseconds{2},
+                               1,
+                               16);
+    metrics.recordStageCompleted(pipeline::PipelineStageMetric::Bearing,
+                                 std::chrono::milliseconds{5},
+                                 100);
+    metrics.recordStageSubmitFailure(pipeline::PipelineStageMetric::SignalParameter,
+                                     16,
+                                     16);
     metrics.recordParallelFanOutEndToEndLatency(std::chrono::milliseconds{5});
     metrics.reset();
 
@@ -401,6 +520,18 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears bearing stage processed counter");
     test.require(snapshot.signalParameterStageProcessedBlocks == 0,
                  "reset clears signal parameter stage processed counter");
+    test.require(snapshot.waterfallStage.enqueuedBlocks == 0,
+                 "reset clears stage enqueued blocks");
+    test.require(snapshot.waterfallStage.queueMaxDepth == 0,
+                 "reset clears stage max queue depth");
+    test.require(snapshot.spectrumStage.queueWaitLatency.count == 0,
+                 "reset clears stage queue wait latency");
+    test.require(snapshot.bearingStage.serviceLatency.count == 0,
+                 "reset clears stage service latency");
+    test.require(snapshot.bearingStage.processedSamples == 0,
+                 "reset clears stage processed samples");
+    test.require(snapshot.signalParameterStage.submitFailures == 0,
+                 "reset clears stage submit failures");
     test.require(snapshot.parallelFanOutEndToEndLatency.count == 0,
                  "reset clears parallel fan-out end-to-end latency");
 }
@@ -420,6 +551,9 @@ int main()
     testBearingMicroBreakdownLatencyStats(test);
     testBearingFastCandidateStorageCounter(test);
     testParallelFanOutMetrics(test);
+    testStageQueueMaxDepth(test);
+    testStageQueueWaitLatency(test);
+    testStageServiceLatencyAndSamples(test);
     testResetClearsLatencyStats(test);
 
     return test.result();

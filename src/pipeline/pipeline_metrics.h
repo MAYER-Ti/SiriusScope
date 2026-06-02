@@ -4,6 +4,7 @@
 #include "pipeline/signal_block_pool.h"
 #include "pipeline/waterfall_row_queue.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -23,12 +24,38 @@ struct LatencyStats
     }
 };
 
+enum class PipelineStageMetric
+{
+    Waterfall,
+    Spectrum,
+    Bearing,
+    SignalParameter,
+};
+
+struct StageMetricsSnapshot
+{
+    std::uint64_t enqueuedBlocks = 0;
+    std::uint64_t dequeuedBlocks = 0;
+    std::uint64_t processedBlocks = 0;
+    std::uint64_t processedSamples = 0;
+    std::uint64_t submitFailures = 0;
+    std::size_t queueDepth = 0;
+    std::size_t queueMaxDepth = 0;
+    std::size_t queueCapacity = 0;
+    LatencyStats queueWaitLatency;
+    LatencyStats serviceLatency;
+};
+
 struct ParallelFanOutQueueMetrics
 {
     std::size_t waterfallStageQueueDepth = 0;
+    std::size_t waterfallStageQueueCapacity = 0;
     std::size_t spectrumStageQueueDepth = 0;
+    std::size_t spectrumStageQueueCapacity = 0;
     std::size_t bearingStageQueueDepth = 0;
+    std::size_t bearingStageQueueCapacity = 0;
     std::size_t signalParameterStageQueueDepth = 0;
+    std::size_t signalParameterStageQueueCapacity = 0;
     std::uint64_t inFlightBlocks = 0;
 };
 
@@ -117,6 +144,10 @@ struct PipelineMetricsSnapshot
     std::uint64_t parallelFanOutBlocks = 0;
     std::uint64_t parallelFanOutFallbackBlocks = 0;
     std::uint64_t parallelFanOutRejectedBlocks = 0;
+    StageMetricsSnapshot waterfallStage;
+    StageMetricsSnapshot spectrumStage;
+    StageMetricsSnapshot bearingStage;
+    StageMetricsSnapshot signalParameterStage;
     std::size_t waterfallStageQueueDepth = 0;
     std::size_t spectrumStageQueueDepth = 0;
     std::size_t bearingStageQueueDepth = 0;
@@ -206,6 +237,22 @@ public:
     void recordParallelFanOutBlock();
     void recordParallelFanOutFallbackBlock();
     void recordParallelFanOutRejectedBlock();
+    void recordStageEnqueued(PipelineStageMetric stage,
+                             std::size_t queueDepth,
+                             std::size_t capacity);
+    void recordStageSubmitFailure(PipelineStageMetric stage,
+                                  std::size_t queueDepth,
+                                  std::size_t capacity);
+    void recordStageStarted(PipelineStageMetric stage,
+                            std::chrono::steady_clock::duration queueWait,
+                            std::size_t queueDepth,
+                            std::size_t capacity);
+    void recordStageCompleted(PipelineStageMetric stage,
+                              std::chrono::steady_clock::duration serviceLatency,
+                              std::size_t sampleCount);
+    void recordStageQueueDepth(PipelineStageMetric stage,
+                               std::size_t queueDepth,
+                               std::size_t capacity);
     void recordWaterfallStageProcessedBlock();
     void recordSpectrumStageProcessedBlock();
     void recordBearingStageProcessedBlock();
@@ -230,6 +277,7 @@ private:
     static double megabytesForSamples(std::uint64_t sampleCount);
     static double millisecondsFor(std::chrono::steady_clock::duration elapsed);
     static void recordLatency(LatencyStats& stats, double elapsedMs);
+    static std::size_t stageMetricIndex(PipelineStageMetric stage) noexcept;
 
     mutable std::mutex m_mutex;
     std::chrono::steady_clock::time_point m_startedAt = std::chrono::steady_clock::now();
@@ -294,10 +342,7 @@ private:
     std::uint64_t m_parallelFanOutBlocks = 0;
     std::uint64_t m_parallelFanOutFallbackBlocks = 0;
     std::uint64_t m_parallelFanOutRejectedBlocks = 0;
-    std::uint64_t m_waterfallStageProcessedBlocks = 0;
-    std::uint64_t m_spectrumStageProcessedBlocks = 0;
-    std::uint64_t m_bearingStageProcessedBlocks = 0;
-    std::uint64_t m_signalParameterStageProcessedBlocks = 0;
+    std::array<StageMetricsSnapshot, 4> m_stageMetrics;
     std::uint64_t m_bearingFastCandidateStorageBlocks = 0;
     std::uint64_t m_spectrumFastWindowBlocks = 0;
     std::uint64_t m_spectrumFastBinBlocks = 0;

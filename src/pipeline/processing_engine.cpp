@@ -154,16 +154,25 @@ ProcessingEngineSummary ProcessingEngine::lastSummary() const
 
 ParallelFanOutQueueMetrics ProcessingEngine::parallelFanOutQueueMetrics() const
 {
+    if (m_processingConfig.processingMode != ProcessingMode::ParallelFanOut) {
+        return {};
+    }
+
     std::lock_guard lock(m_stageMutex);
     ParallelFanOutQueueMetrics metrics;
+    const auto capacity = m_processingConfig.stageQueueCapacity;
     metrics.waterfallStageQueueDepth =
         m_stageQueues[fanOutStageIndex(FanOutStage::Waterfall)].size();
+    metrics.waterfallStageQueueCapacity = capacity;
     metrics.spectrumStageQueueDepth =
         m_stageQueues[fanOutStageIndex(FanOutStage::Spectrum)].size();
+    metrics.spectrumStageQueueCapacity = capacity;
     metrics.bearingStageQueueDepth =
         m_stageQueues[fanOutStageIndex(FanOutStage::Bearing)].size();
+    metrics.bearingStageQueueCapacity = capacity;
     metrics.signalParameterStageQueueDepth =
         m_stageQueues[fanOutStageIndex(FanOutStage::SignalParameter)].size();
+    metrics.signalParameterStageQueueCapacity = capacity;
     metrics.inFlightBlocks =
         m_inFlightFanOutBlocks.load(std::memory_order_acquire);
     return metrics;
@@ -791,26 +800,74 @@ bool ProcessingEngine::submitFanOutContext(
         return false;
     }
 
-    std::lock_guard lock(m_stageMutex);
-    if (m_stageStopRequested || m_processingConfig.stageQueueCapacity == 0) {
-        return false;
-    }
+    const auto capacity = m_processingConfig.stageQueueCapacity;
+    std::array<std::size_t, kFanOutStageCount> depths{};
+    std::size_t failedStageIndex = kFanOutStageCount;
+    bool failedAllStages = false;
+    bool submitted = false;
 
-    for (const auto& queue : m_stageQueues) {
-        if (queue.size() >= m_processingConfig.stageQueueCapacity) {
+    {
+        std::lock_guard lock(m_stageMutex);
+        if (m_stageStopRequested) {
             return false;
+        }
+
+        if (capacity == 0) {
+            failedAllStages = true;
+        } else {
+            for (std::size_t index = 0; index < m_stageQueues.size(); ++index) {
+                depths[index] = m_stageQueues[index].size();
+                if (m_stageQueues[index].size() >= capacity) {
+                    failedStageIndex = index;
+                    break;
+                }
+            }
+
+            if (failedStageIndex == kFanOutStageCount) {
+                const auto enqueuedAt = Clock::now();
+                for (std::size_t index = 0; index < m_stageQueues.size(); ++index) {
+                    m_stageQueues[index].push_back(StageJob{context, enqueuedAt});
+                    depths[index] = m_stageQueues[index].size();
+                }
+                submitted = true;
+            }
         }
     }
 
-    m_stageQueues[fanOutStageIndex(FanOutStage::Waterfall)].push_back(context);
-    m_stageQueues[fanOutStageIndex(FanOutStage::Spectrum)].push_back(context);
-    m_stageQueues[fanOutStageIndex(FanOutStage::Bearing)].push_back(context);
-    m_stageQueues[fanOutStageIndex(FanOutStage::SignalParameter)].push_back(context);
+    if (failedAllStages) {
+        if (m_metrics) {
+            for (std::size_t index = 0; index < kFanOutStageCount; ++index) {
+                m_metrics->recordStageSubmitFailure(fanOutStageMetricAt(index), 0, capacity);
+            }
+        }
+        return false;
+    }
+
+    if (failedStageIndex != kFanOutStageCount) {
+        if (m_metrics) {
+            m_metrics->recordStageSubmitFailure(fanOutStageMetricAt(failedStageIndex),
+                                                depths[failedStageIndex],
+                                                capacity);
+        }
+        return false;
+    }
+
+    if (!submitted) {
+        return false;
+    }
+
+    if (m_metrics) {
+        for (std::size_t index = 0; index < kFanOutStageCount; ++index) {
+            m_metrics->recordStageEnqueued(fanOutStageMetricAt(index),
+                                           depths[index],
+                                           capacity);
+        }
+    }
     m_stageCondition.notify_all();
     return true;
 }
 
-std::shared_ptr<ProcessingEngine::FanOutBlockContext>
+ProcessingEngine::StageJob
 ProcessingEngine::popFanOutStageJob(FanOutStage stage)
 {
     const auto index = fanOutStageIndex(stage);
@@ -823,24 +880,40 @@ ProcessingEngine::popFanOutStageJob(FanOutStage stage)
         return {};
     }
 
-    auto context = std::move(m_stageQueues[index].front());
+    auto job = std::move(m_stageQueues[index].front());
     m_stageQueues[index].pop_front();
+    job.queueDepthAfterPop = m_stageQueues[index].size();
+    job.queueCapacity = m_processingConfig.stageQueueCapacity;
     lock.unlock();
     m_flushCondition.notify_all();
-    return context;
+    return job;
 }
 
 void ProcessingEngine::stageWorkerLoop(FanOutStage stage)
 {
     for (;;) {
-        auto context = popFanOutStageJob(stage);
-        if (!context) {
+        auto job = popFanOutStageJob(stage);
+        if (!job.context) {
             break;
         }
 
-        processFanOutStage(stage, *context->block);
-        recordFanOutStageProcessed(stage);
-        completeFanOutStage(context);
+        const auto startedAt = Clock::now();
+        if (m_metrics) {
+            m_metrics->recordStageStarted(fanOutStageMetric(stage),
+                                          startedAt - job.enqueuedAt,
+                                          job.queueDepthAfterPop,
+                                          job.queueCapacity);
+        }
+
+        const auto serviceStartedAt = Clock::now();
+        processFanOutStage(stage, *job.context->block);
+        const auto serviceElapsed = Clock::now() - serviceStartedAt;
+        if (m_metrics) {
+            m_metrics->recordStageCompleted(fanOutStageMetric(stage),
+                                            serviceElapsed,
+                                            job.context->block->sampleCount());
+        }
+        completeFanOutStage(job.context);
     }
 }
 
@@ -858,28 +931,6 @@ void ProcessingEngine::processFanOutStage(FanOutStage stage, const SignalBlock& 
         break;
     case FanOutStage::SignalParameter:
         processSignalParameterStage(block);
-        break;
-    }
-}
-
-void ProcessingEngine::recordFanOutStageProcessed(FanOutStage stage)
-{
-    if (!m_metrics) {
-        return;
-    }
-
-    switch (stage) {
-    case FanOutStage::Waterfall:
-        m_metrics->recordWaterfallStageProcessedBlock();
-        break;
-    case FanOutStage::Spectrum:
-        m_metrics->recordSpectrumStageProcessedBlock();
-        break;
-    case FanOutStage::Bearing:
-        m_metrics->recordBearingStageProcessedBlock();
-        break;
-    case FanOutStage::SignalParameter:
-        m_metrics->recordSignalParameterStageProcessedBlock();
         break;
     }
 }
@@ -937,6 +988,27 @@ std::size_t ProcessingEngine::fanOutStageIndex(FanOutStage stage) noexcept
     }
 
     return 0;
+}
+
+PipelineStageMetric ProcessingEngine::fanOutStageMetric(FanOutStage stage) noexcept
+{
+    return fanOutStageMetricAt(fanOutStageIndex(stage));
+}
+
+PipelineStageMetric ProcessingEngine::fanOutStageMetricAt(std::size_t index) noexcept
+{
+    switch (index) {
+    case 0:
+        return PipelineStageMetric::Waterfall;
+    case 1:
+        return PipelineStageMetric::Spectrum;
+    case 2:
+        return PipelineStageMetric::Bearing;
+    case 3:
+        return PipelineStageMetric::SignalParameter;
+    default:
+        return PipelineStageMetric::Waterfall;
+    }
 }
 
 } // namespace siriusscope::pipeline

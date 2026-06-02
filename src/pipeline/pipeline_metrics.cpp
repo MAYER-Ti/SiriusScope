@@ -36,10 +36,7 @@ void PipelineMetrics::reset()
     m_parallelFanOutBlocks = 0;
     m_parallelFanOutFallbackBlocks = 0;
     m_parallelFanOutRejectedBlocks = 0;
-    m_waterfallStageProcessedBlocks = 0;
-    m_spectrumStageProcessedBlocks = 0;
-    m_bearingStageProcessedBlocks = 0;
-    m_signalParameterStageProcessedBlocks = 0;
+    m_stageMetrics = {};
     m_bearingFastCandidateStorageBlocks = 0;
     m_spectrumFastWindowBlocks = 0;
     m_spectrumFastBinBlocks = 0;
@@ -396,28 +393,88 @@ void PipelineMetrics::recordParallelFanOutRejectedBlock()
     ++m_parallelFanOutRejectedBlocks;
 }
 
+void PipelineMetrics::recordStageEnqueued(PipelineStageMetric stage,
+                                          std::size_t queueDepth,
+                                          std::size_t capacity)
+{
+    std::lock_guard lock(m_mutex);
+    auto& stageMetrics = m_stageMetrics[stageMetricIndex(stage)];
+    ++stageMetrics.enqueuedBlocks;
+    stageMetrics.queueDepth = queueDepth;
+    stageMetrics.queueCapacity = capacity;
+    stageMetrics.queueMaxDepth = std::max(stageMetrics.queueMaxDepth, queueDepth);
+}
+
+void PipelineMetrics::recordStageSubmitFailure(PipelineStageMetric stage,
+                                               std::size_t queueDepth,
+                                               std::size_t capacity)
+{
+    std::lock_guard lock(m_mutex);
+    auto& stageMetrics = m_stageMetrics[stageMetricIndex(stage)];
+    ++stageMetrics.submitFailures;
+    stageMetrics.queueDepth = queueDepth;
+    stageMetrics.queueCapacity = capacity;
+    stageMetrics.queueMaxDepth = std::max(stageMetrics.queueMaxDepth, queueDepth);
+}
+
+void PipelineMetrics::recordStageStarted(PipelineStageMetric stage,
+                                         std::chrono::steady_clock::duration queueWait,
+                                         std::size_t queueDepth,
+                                         std::size_t capacity)
+{
+    std::lock_guard lock(m_mutex);
+    auto& stageMetrics = m_stageMetrics[stageMetricIndex(stage)];
+    ++stageMetrics.dequeuedBlocks;
+    stageMetrics.queueDepth = queueDepth;
+    stageMetrics.queueCapacity = capacity;
+    stageMetrics.queueMaxDepth = std::max(stageMetrics.queueMaxDepth, queueDepth);
+    recordLatency(stageMetrics.queueWaitLatency, millisecondsFor(queueWait));
+}
+
+void PipelineMetrics::recordStageCompleted(PipelineStageMetric stage,
+                                           std::chrono::steady_clock::duration serviceLatency,
+                                           std::size_t sampleCount)
+{
+    std::lock_guard lock(m_mutex);
+    auto& stageMetrics = m_stageMetrics[stageMetricIndex(stage)];
+    ++stageMetrics.processedBlocks;
+    stageMetrics.processedSamples += static_cast<std::uint64_t>(sampleCount);
+    recordLatency(stageMetrics.serviceLatency, millisecondsFor(serviceLatency));
+}
+
+void PipelineMetrics::recordStageQueueDepth(PipelineStageMetric stage,
+                                            std::size_t queueDepth,
+                                            std::size_t capacity)
+{
+    std::lock_guard lock(m_mutex);
+    auto& stageMetrics = m_stageMetrics[stageMetricIndex(stage)];
+    stageMetrics.queueDepth = queueDepth;
+    stageMetrics.queueCapacity = capacity;
+    stageMetrics.queueMaxDepth = std::max(stageMetrics.queueMaxDepth, queueDepth);
+}
+
 void PipelineMetrics::recordWaterfallStageProcessedBlock()
 {
     std::lock_guard lock(m_mutex);
-    ++m_waterfallStageProcessedBlocks;
+    ++m_stageMetrics[stageMetricIndex(PipelineStageMetric::Waterfall)].processedBlocks;
 }
 
 void PipelineMetrics::recordSpectrumStageProcessedBlock()
 {
     std::lock_guard lock(m_mutex);
-    ++m_spectrumStageProcessedBlocks;
+    ++m_stageMetrics[stageMetricIndex(PipelineStageMetric::Spectrum)].processedBlocks;
 }
 
 void PipelineMetrics::recordBearingStageProcessedBlock()
 {
     std::lock_guard lock(m_mutex);
-    ++m_bearingStageProcessedBlocks;
+    ++m_stageMetrics[stageMetricIndex(PipelineStageMetric::Bearing)].processedBlocks;
 }
 
 void PipelineMetrics::recordSignalParameterStageProcessedBlock()
 {
     std::lock_guard lock(m_mutex);
-    ++m_signalParameterStageProcessedBlocks;
+    ++m_stageMetrics[stageMetricIndex(PipelineStageMetric::SignalParameter)].processedBlocks;
 }
 
 void PipelineMetrics::recordParallelFanOutEndToEndLatency(
@@ -571,21 +628,43 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.parallelFanOutBlocks = m_parallelFanOutBlocks;
     snapshot.parallelFanOutFallbackBlocks = m_parallelFanOutFallbackBlocks;
     snapshot.parallelFanOutRejectedBlocks = m_parallelFanOutRejectedBlocks;
-    snapshot.waterfallStageQueueDepth =
-        parallelFanOutQueueMetrics.waterfallStageQueueDepth;
-    snapshot.spectrumStageQueueDepth =
-        parallelFanOutQueueMetrics.spectrumStageQueueDepth;
-    snapshot.bearingStageQueueDepth =
-        parallelFanOutQueueMetrics.bearingStageQueueDepth;
-    snapshot.signalParameterStageQueueDepth =
-        parallelFanOutQueueMetrics.signalParameterStageQueueDepth;
+    snapshot.waterfallStage = m_stageMetrics[stageMetricIndex(PipelineStageMetric::Waterfall)];
+    snapshot.spectrumStage = m_stageMetrics[stageMetricIndex(PipelineStageMetric::Spectrum)];
+    snapshot.bearingStage = m_stageMetrics[stageMetricIndex(PipelineStageMetric::Bearing)];
+    snapshot.signalParameterStage =
+        m_stageMetrics[stageMetricIndex(PipelineStageMetric::SignalParameter)];
+    const auto applyLiveQueueMetrics = [](StageMetricsSnapshot& stage,
+                                          std::size_t depth,
+                                          std::size_t capacity) {
+        if (depth > 0 || capacity > 0) {
+            stage.queueDepth = depth;
+            stage.queueCapacity = capacity;
+            stage.queueMaxDepth = std::max(stage.queueMaxDepth, depth);
+        }
+    };
+    applyLiveQueueMetrics(snapshot.waterfallStage,
+                          parallelFanOutQueueMetrics.waterfallStageQueueDepth,
+                          parallelFanOutQueueMetrics.waterfallStageQueueCapacity);
+    applyLiveQueueMetrics(snapshot.spectrumStage,
+                          parallelFanOutQueueMetrics.spectrumStageQueueDepth,
+                          parallelFanOutQueueMetrics.spectrumStageQueueCapacity);
+    applyLiveQueueMetrics(snapshot.bearingStage,
+                          parallelFanOutQueueMetrics.bearingStageQueueDepth,
+                          parallelFanOutQueueMetrics.bearingStageQueueCapacity);
+    applyLiveQueueMetrics(snapshot.signalParameterStage,
+                          parallelFanOutQueueMetrics.signalParameterStageQueueDepth,
+                          parallelFanOutQueueMetrics.signalParameterStageQueueCapacity);
+    snapshot.waterfallStageQueueDepth = snapshot.waterfallStage.queueDepth;
+    snapshot.spectrumStageQueueDepth = snapshot.spectrumStage.queueDepth;
+    snapshot.bearingStageQueueDepth = snapshot.bearingStage.queueDepth;
+    snapshot.signalParameterStageQueueDepth = snapshot.signalParameterStage.queueDepth;
     snapshot.parallelFanOutInFlightBlocks =
         parallelFanOutQueueMetrics.inFlightBlocks;
-    snapshot.waterfallStageProcessedBlocks = m_waterfallStageProcessedBlocks;
-    snapshot.spectrumStageProcessedBlocks = m_spectrumStageProcessedBlocks;
-    snapshot.bearingStageProcessedBlocks = m_bearingStageProcessedBlocks;
+    snapshot.waterfallStageProcessedBlocks = snapshot.waterfallStage.processedBlocks;
+    snapshot.spectrumStageProcessedBlocks = snapshot.spectrumStage.processedBlocks;
+    snapshot.bearingStageProcessedBlocks = snapshot.bearingStage.processedBlocks;
     snapshot.signalParameterStageProcessedBlocks =
-        m_signalParameterStageProcessedBlocks;
+        snapshot.signalParameterStage.processedBlocks;
     snapshot.queueDepth = queueMetrics.depth;
     snapshot.queueCapacity = queueMetrics.capacity;
     snapshot.queuePushedBlocks = queueMetrics.pushedBlocks;
@@ -619,6 +698,22 @@ void PipelineMetrics::recordLatency(LatencyStats& stats, double elapsedMs)
     ++stats.count;
     stats.totalMs += elapsedMs;
     stats.maxMs = std::max(stats.maxMs, elapsedMs);
+}
+
+std::size_t PipelineMetrics::stageMetricIndex(PipelineStageMetric stage) noexcept
+{
+    switch (stage) {
+    case PipelineStageMetric::Waterfall:
+        return 0;
+    case PipelineStageMetric::Spectrum:
+        return 1;
+    case PipelineStageMetric::Bearing:
+        return 2;
+    case PipelineStageMetric::SignalParameter:
+        return 3;
+    }
+
+    return 0;
 }
 
 } // namespace siriusscope::pipeline

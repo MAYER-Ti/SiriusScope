@@ -100,6 +100,12 @@ struct LatencyStage
     pipeline::LatencyStats stats;
 };
 
+struct StageBacklog
+{
+    const char* name = "";
+    pipeline::StageMetricsSnapshot metrics;
+};
+
 enum class AuditPipelineSizing
 {
     Default,
@@ -190,6 +196,17 @@ std::vector<LatencyStage> stageLatencies(const pipeline::PipelineMetricsSnapshot
         {"SpectrumSnapshotPublish", metrics.spectrumSnapshotPublishLatency},
         {"BearingSnapshotPublish", metrics.bearingSnapshotPublishLatency},
         {"SignalParameterSnapshotPublish", metrics.signalParameterSnapshotPublishLatency},
+    };
+}
+
+std::vector<StageBacklog> parallelStageBacklogs(
+    const pipeline::PipelineMetricsSnapshot& metrics)
+{
+    return {
+        {"waterfall", metrics.waterfallStage},
+        {"spectrum", metrics.spectrumStage},
+        {"bearing", metrics.bearingStage},
+        {"signalParameter", metrics.signalParameterStage},
     };
 }
 
@@ -367,6 +384,63 @@ void printBottleneckHint(const AuditResult& result)
         || std::string{byMax->name} == "SignalParameterAggregator") {
         printSignalParameterInternalBottleneck(result.pipeline);
     }
+}
+
+void printParallelFanOutBacklog(const AuditResult& result)
+{
+    std::cout << "Parallel fan-out backlog:\n";
+    if (result.processingMode != pipeline::ProcessingMode::ParallelFanOut) {
+        std::cout << "  not active\n";
+        return;
+    }
+
+    const auto stages = parallelStageBacklogs(result.pipeline);
+    const auto durationSeconds = std::max(0.001, static_cast<double>(result.duration.count()));
+    for (const auto& stage : stages) {
+        const auto& metrics = stage.metrics;
+        std::cout << "  " << stage.name
+                  << " queue depth/max/capacity = " << metrics.queueDepth << "/"
+                  << metrics.queueMaxDepth << "/" << metrics.queueCapacity << '\n'
+                  << "  " << stage.name << " queueWait avg/max/count = "
+                  << metrics.queueWaitLatency.averageMs() << "/"
+                  << metrics.queueWaitLatency.maxMs << "/"
+                  << metrics.queueWaitLatency.count << '\n'
+                  << "  " << stage.name << " service avg/max/count = "
+                  << metrics.serviceLatency.averageMs() << "/"
+                  << metrics.serviceLatency.maxMs << "/"
+                  << metrics.serviceLatency.count << '\n'
+                  << "  " << stage.name << " enqueued/dequeued/processed/failures = "
+                  << metrics.enqueuedBlocks << "/" << metrics.dequeuedBlocks << "/"
+                  << metrics.processedBlocks << "/" << metrics.submitFailures << '\n'
+                  << "  " << stage.name << " processedBlocks/samples = "
+                  << metrics.processedBlocks << "/" << metrics.processedSamples << '\n'
+                  << "  " << stage.name << " throughput blocks/s samples/s = "
+                  << static_cast<double>(metrics.processedBlocks) / durationSeconds << "/"
+                  << static_cast<double>(metrics.processedSamples) / durationSeconds
+                  << '\n';
+    }
+
+    const auto byDepth =
+        std::max_element(stages.begin(), stages.end(), [](const auto& left, const auto& right) {
+            return left.metrics.queueMaxDepth < right.metrics.queueMaxDepth;
+        });
+    const auto byWait =
+        std::max_element(stages.begin(), stages.end(), [](const auto& left, const auto& right) {
+            return left.metrics.queueWaitLatency.averageMs()
+                < right.metrics.queueWaitLatency.averageMs();
+        });
+    const auto byService =
+        std::max_element(stages.begin(), stages.end(), [](const auto& left, const auto& right) {
+            return left.metrics.serviceLatency.averageMs()
+                < right.metrics.serviceLatency.averageMs();
+        });
+
+    std::cout << "  backlog hint by max queue depth: " << byDepth->name
+              << " = " << byDepth->metrics.queueMaxDepth << '\n'
+              << "  backlog hint by avg queue wait: " << byWait->name
+              << " = " << byWait->metrics.queueWaitLatency.averageMs() << " ms\n"
+              << "  slowest service stage by avg latency: " << byService->name
+              << " = " << byService->metrics.serviceLatency.averageMs() << " ms\n";
 }
 
 std::size_t samplesPerSecondFor(hardware::SimulatorLoadProfile profile)
@@ -908,6 +982,7 @@ void printAuditSummary(const AuditResult& result)
               << (result.hasSignalParameterSnapshot ? "true" : "false") << '\n'
               << "  rejectedBlocks = " << result.rejectedBlocks << '\n'
               << "  rejectedSamples = " << result.rejectedSamples << '\n';
+    printParallelFanOutBacklog(result);
     printBottleneckHint(result);
 }
 

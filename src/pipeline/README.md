@@ -47,6 +47,11 @@ Bearing, and SignalParameter stage workers. The pooled block handle is owned by 
 fan-out context and returns to the pool only after all four stages complete. Sequential
 processing remains the default runtime mode; perf tests can opt into fan-out with:
 
+Parallel fan-out mode reports per-stage backlog diagnostics: queue depth, max depth,
+capacity, queue wait latency, service latency, submit failures, and processed
+blocks/samples. These metrics are used to identify whether high-load saturation is
+caused by one slow stage or by accumulated queueing delay.
+
 ```powershell
 $env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
 ```

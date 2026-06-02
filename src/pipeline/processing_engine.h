@@ -117,6 +117,14 @@ private:
         std::atomic<int> remainingStages{0};
     };
 
+    struct StageJob
+    {
+        std::shared_ptr<FanOutBlockContext> context;
+        std::chrono::steady_clock::time_point enqueuedAt{};
+        std::size_t queueDepthAfterPop = 0;
+        std::size_t queueCapacity = 0;
+    };
+
     static constexpr std::size_t kFanOutStageCount = 4;
 
     void workerLoop();
@@ -152,14 +160,15 @@ private:
     void stopFanOutWorkers();
     void resetFanOutQueues();
     bool submitFanOutContext(const std::shared_ptr<FanOutBlockContext>& context);
-    std::shared_ptr<FanOutBlockContext> popFanOutStageJob(FanOutStage stage);
+    StageJob popFanOutStageJob(FanOutStage stage);
     void stageWorkerLoop(FanOutStage stage);
     void processFanOutStage(FanOutStage stage, const SignalBlock& block);
-    void recordFanOutStageProcessed(FanOutStage stage);
     void completeFanOutStage(const std::shared_ptr<FanOutBlockContext>& context);
     bool fanOutDrained() const;
     bool stageWorkersJoinable() const noexcept;
     static std::size_t fanOutStageIndex(FanOutStage stage) noexcept;
+    static PipelineStageMetric fanOutStageMetric(FanOutStage stage) noexcept;
+    static PipelineStageMetric fanOutStageMetricAt(std::size_t index) noexcept;
 
     BoundedBlockQueue* m_queue = nullptr;
     PipelineMetrics* m_metrics = nullptr;
@@ -180,8 +189,7 @@ private:
     std::condition_variable m_stageCondition;
     std::thread m_worker;
     std::array<std::thread, kFanOutStageCount> m_stageWorkers;
-    std::array<std::deque<std::shared_ptr<FanOutBlockContext>>, kFanOutStageCount>
-        m_stageQueues;
+    std::array<std::deque<StageJob>, kFanOutStageCount> m_stageQueues;
     ProcessingEngineSummary m_summary;
     WaterfallAggregator m_waterfallAggregator;
     SpectrumAggregator m_spectrumAggregator;
