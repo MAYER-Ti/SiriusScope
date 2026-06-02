@@ -106,6 +106,7 @@ struct AuditResult
     std::chrono::seconds duration{0};
     pipeline::ProcessingMode processingMode = pipeline::ProcessingMode::Sequential;
     LatencyBudget latencyBudget;
+    std::size_t batchSizeMultiplier = 1;
     hardware::BcoSourceMetrics source;
     pipeline::SourceToPipelineBridgeMetrics bridge;
     pipeline::PipelineMetricsSnapshot pipeline;
@@ -218,6 +219,67 @@ double ratioOrZero(double numerator, double denominator)
     return numerator / denominator;
 }
 
+std::size_t saturatedMultiplySize(std::size_t value, std::size_t multiplier)
+{
+    if (value == 0 || multiplier == 0) {
+        return 0;
+    }
+    if (multiplier > std::numeric_limits<std::size_t>::max() / value) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return value * multiplier;
+}
+
+bool isAllowedBatchMultiplier(std::size_t multiplier)
+{
+    return multiplier == 1 || multiplier == 2 || multiplier == 4 || multiplier == 8;
+}
+
+std::size_t normalizeBatchMultiplier(std::size_t multiplier)
+{
+    return isAllowedBatchMultiplier(multiplier) ? multiplier : 1;
+}
+
+std::size_t scaledCapacity(std::size_t base,
+                           std::size_t multiplier,
+                           std::size_t minimum)
+{
+    const auto safeMultiplier = normalizeBatchMultiplier(multiplier);
+    return std::max<std::size_t>(minimum, base / safeMultiplier);
+}
+
+std::size_t targetRawSamplesPerBatch(std::size_t batchSizeMultiplier)
+{
+    return saturatedMultiplySize(
+        hardware::samplesPerBatchForTarget(targetRaw90Mbps()),
+        normalizeBatchMultiplier(batchSizeMultiplier));
+}
+
+double producedBatchesPerSecond(const AuditResult& result)
+{
+    return ratioOrZero(static_cast<double>(result.source.producedBatches),
+                       static_cast<double>(result.duration.count()));
+}
+
+double producedSamplesPerBatch(const AuditResult& result)
+{
+    return ratioOrZero(static_cast<double>(result.source.producedSamples),
+                       static_cast<double>(result.source.producedBatches));
+}
+
+double parallelFanOutBlocksPerSecond(const AuditResult& result)
+{
+    return ratioOrZero(static_cast<double>(result.pipeline.parallelFanOutBlocks),
+                       static_cast<double>(result.duration.count()));
+}
+
+double stageBlocksPerSecond(const AuditResult& result,
+                            const pipeline::StageMetricsSnapshot& metrics)
+{
+    return ratioOrZero(static_cast<double>(metrics.processedBlocks),
+                       static_cast<double>(result.duration.count()));
+}
+
 std::optional<int> parsePositiveInt(const char* text)
 {
     if (!text || *text == '\0') {
@@ -233,6 +295,20 @@ std::optional<int> parsePositiveInt(const char* text)
     }
 
     return static_cast<int>(parsed);
+}
+
+std::optional<std::size_t> parseBatchMultiplier(const char* text)
+{
+    const auto parsed = parsePositiveInt(text);
+    if (!parsed) {
+        return std::nullopt;
+    }
+
+    const auto multiplier = static_cast<std::size_t>(*parsed);
+    if (!isAllowedBatchMultiplier(multiplier)) {
+        return std::nullopt;
+    }
+    return multiplier;
 }
 
 std::optional<double> parsePositiveDouble(const char* text)
@@ -285,6 +361,33 @@ bool envFlagEnabled(const char* name)
 
     const std::string text(value);
     return !text.empty() && text != "0";
+}
+
+std::size_t envBatchMultiplierOrDefault()
+{
+    const char* value = std::getenv("SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER");
+    if (!value) {
+        return 1;
+    }
+
+    const auto parsed = parseBatchMultiplier(value);
+    if (parsed) {
+        return *parsed;
+    }
+
+    std::cout << "WARNING: invalid SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER='"
+              << value << "', using 1\n";
+    return 1;
+}
+
+bool targetRawBatchSweepEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP");
+}
+
+std::vector<std::size_t> batchSweepMultipliers()
+{
+    return {1, 2, 4, 8};
 }
 
 bool targetRawPipelineTestEnabled()
@@ -414,6 +517,15 @@ double queueDepthRatio(const pipeline::StageMetricsSnapshot& metrics)
 {
     return ratioOrZero(static_cast<double>(metrics.queueMaxDepth),
                        static_cast<double>(metrics.queueCapacity));
+}
+
+double maxStageQueueDepthRatio(const AuditResult& result)
+{
+    double maxRatio = 0.0;
+    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+        maxRatio = std::max(maxRatio, queueDepthRatio(stage.metrics));
+    }
+    return maxRatio;
 }
 
 bool latencyBudgetIsHard(const AuditResult& result)
@@ -910,17 +1022,23 @@ hardware::BcoStreamConfig makeStreamConfig(hardware::SimulatorLoadProfile profil
 pipeline::DataIngestPipelineConfig makePipelineConfig(
     const core::TimeBase& timeBase,
     hardware::SimulatorLoadProfile profile,
-    AuditPipelineSizing sizing = AuditPipelineSizing::Default)
+    AuditPipelineSizing sizing = AuditPipelineSizing::Default,
+    std::size_t batchSizeMultiplier = 1)
 {
     pipeline::DataIngestPipelineConfig config;
     config.blockPool = pipeline::SignalBlockPoolConfig{256, 20'000};
     config.queueCapacity = 256;
     if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
+        const auto maxSamplesPerBlock =
+            std::max<std::size_t>(80'000, targetRawSamplesPerBatch(batchSizeMultiplier));
         if (sizing == AuditPipelineSizing::FullTargetRawSustain) {
-            config.blockPool = pipeline::SignalBlockPoolConfig{512, 80'000};
-            config.queueCapacity = 512;
+            config.blockPool = pipeline::SignalBlockPoolConfig{
+                scaledCapacity(512, batchSizeMultiplier, 64),
+                maxSamplesPerBlock,
+            };
+            config.queueCapacity = scaledCapacity(512, batchSizeMultiplier, 64);
         } else {
-            config.blockPool = pipeline::SignalBlockPoolConfig{4, 80'000};
+            config.blockPool = pipeline::SignalBlockPoolConfig{4, maxSamplesPerBlock};
             config.queueCapacity = 2;
         }
     }
@@ -956,19 +1074,24 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     if (parallelProcessingEngineEnabled()) {
         config.processing.processingMode = pipeline::ProcessingMode::ParallelFanOut;
         config.processing.stageQueueCapacity =
-            sizing == AuditPipelineSizing::FullTargetRawSustain ? 512 : 64;
+            sizing == AuditPipelineSizing::FullTargetRawSustain
+            ? scaledCapacity(512, batchSizeMultiplier, 64)
+            : 64;
     }
     return config;
 }
 
 pipeline::SourceToPipelineBridgeConfig makeBridgeConfig(
     hardware::SimulatorLoadProfile profile,
-    AuditPipelineSizing sizing = AuditPipelineSizing::Default)
+    AuditPipelineSizing sizing = AuditPipelineSizing::Default,
+    std::size_t batchSizeMultiplier = 1)
 {
     pipeline::SourceToPipelineBridgeConfig config;
     if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
         config.queueCapacity =
-            sizing == AuditPipelineSizing::FullTargetRawSustain ? 64 : 2;
+            sizing == AuditPipelineSizing::FullTargetRawSustain
+            ? scaledCapacity(64, batchSizeMultiplier, 8)
+            : 2;
     } else {
         config.queueCapacity = 128;
     }
@@ -976,13 +1099,19 @@ pipeline::SourceToPipelineBridgeConfig makeBridgeConfig(
     return config;
 }
 
-hardware::SimulatorBcoLoadConfig makeLoadConfig(hardware::SimulatorLoadProfile profile)
+hardware::SimulatorBcoLoadConfig makeLoadConfig(
+    hardware::SimulatorLoadProfile profile,
+    std::size_t batchSizeMultiplier = 1)
 {
     hardware::SimulatorBcoLoadConfig config;
     config.profile = profile;
     config.batchPeriod = std::chrono::milliseconds{10};
     config.deterministic = true;
     config.minVisibleAmplitude = 1;
+    if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
+        config.samplesPerBatchMultiplier =
+            normalizeBatchMultiplier(batchSizeMultiplier);
+    }
     return config;
 }
 
@@ -992,22 +1121,28 @@ AuditResult runAudit(std::chrono::seconds duration,
                      std::optional<std::uint64_t> maxPipelineIngestedBlocks = std::nullopt,
                      AuditPipelineSizing sizing = AuditPipelineSizing::Default,
                      AuditMode auditMode = AuditMode::Smoke,
-                     LatencyBudget latencyBudget = {})
+                     LatencyBudget latencyBudget = {},
+                     std::size_t batchSizeMultiplier = 1)
 {
     AuditResult result;
     result.auditMode = auditMode;
     result.profileName = profileName(profile);
     result.duration = duration;
     result.latencyBudget = latencyBudget;
+    result.batchSizeMultiplier = normalizeBatchMultiplier(batchSizeMultiplier);
 
     const auto streamConfig = makeStreamConfig(profile);
-    auto pipelineConfig = makePipelineConfig(streamConfig.timeBase, profile, sizing);
+    auto pipelineConfig = makePipelineConfig(streamConfig.timeBase,
+                                             profile,
+                                             sizing,
+                                             result.batchSizeMultiplier);
     result.processingMode = pipelineConfig.processing.processingMode;
     pipeline::DataIngestPipeline dataPipeline(std::move(pipelineConfig));
     FixedAntennaAzimuthProvider antenna(45.0);
-    hardware::HighLoadSimulatorBcoStreamSource source(makeLoadConfig(profile),
-                                                      nullptr,
-                                                      &antenna);
+    hardware::HighLoadSimulatorBcoStreamSource source(
+        makeLoadConfig(profile, result.batchSizeMultiplier),
+        nullptr,
+        &antenna);
 
     const auto configured = source.configure(streamConfig);
     result.sourceConfigured = configured.success;
@@ -1022,7 +1157,9 @@ AuditResult runAudit(std::chrono::seconds duration,
     }
 
     pipeline::SourceToPipelineBridge bridge(&dataPipeline,
-                                            makeBridgeConfig(profile, sizing));
+                                            makeBridgeConfig(profile,
+                                                             sizing,
+                                                             result.batchSizeMultiplier));
     const auto bridgeStarted = bridge.start();
     result.bridgeStarted = bridgeStarted.success;
     if (!bridgeStarted) {
@@ -1144,8 +1281,13 @@ void printAuditSummary(const AuditResult& result)
               << (result.latencyBudget.enabled ? "true" : "false") << '\n'
               << "  processingMode = " << processingModeName(result.processingMode)
               << '\n'
+              << "  batchSizeMultiplier = " << result.batchSizeMultiplier << '\n'
               << "  source producedSamples = " << result.source.producedSamples << '\n'
               << "  source producedBatches = " << result.source.producedBatches << '\n'
+              << "  source producedSamplesPerBatchAvg = "
+              << producedSamplesPerBatch(result) << '\n'
+              << "  source producedBatchesPerSecond = "
+              << producedBatchesPerSecond(result) << '\n'
               << "  source producedSamplesPerSecond = "
               << result.source.producedSamplesPerSecond << '\n'
               << "  source equivalentMBps = "
@@ -1207,6 +1349,8 @@ void printAuditSummary(const AuditResult& result)
               << "  queueDroppedBlocks = " << result.pipeline.queueDroppedBlocks << '\n'
               << "  parallelFanOutBlocks = "
               << result.pipeline.parallelFanOutBlocks << '\n'
+              << "  fanOutBlocksPerSecond = "
+              << parallelFanOutBlocksPerSecond(result) << '\n'
               << "  parallelFanOutFallbackBlocks = "
               << result.pipeline.parallelFanOutFallbackBlocks << '\n'
               << "  parallelFanOutRejectedBlocks = "
@@ -1223,12 +1367,20 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.signalParameterStageQueueDepth << '\n'
               << "  waterfallStageProcessedBlocks = "
               << result.pipeline.waterfallStageProcessedBlocks << '\n'
+              << "  waterfallStageBlocksPerSecond = "
+              << stageBlocksPerSecond(result, result.pipeline.waterfallStage) << '\n'
               << "  spectrumStageProcessedBlocks = "
               << result.pipeline.spectrumStageProcessedBlocks << '\n'
+              << "  spectrumStageBlocksPerSecond = "
+              << stageBlocksPerSecond(result, result.pipeline.spectrumStage) << '\n'
               << "  bearingStageProcessedBlocks = "
               << result.pipeline.bearingStageProcessedBlocks << '\n'
+              << "  bearingStageBlocksPerSecond = "
+              << stageBlocksPerSecond(result, result.pipeline.bearingStage) << '\n'
               << "  signalParameterStageProcessedBlocks = "
               << result.pipeline.signalParameterStageProcessedBlocks << '\n'
+              << "  signalParameterStageBlocksPerSecond = "
+              << stageBlocksPerSecond(result, result.pipeline.signalParameterStage) << '\n'
               << "  blockPoolCapacity = " << result.pipeline.blockPoolCapacity << '\n'
               << "  blockPoolAvailable = " << result.pipeline.blockPoolAvailable << '\n'
               << "  blockPoolInUse = " << result.pipeline.blockPoolInUse << '\n'
@@ -1650,6 +1802,91 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
                  "strict target raw full pipeline raw throughput stays within 5 percent");
 }
 
+double rawMegabytesPerSecond(const AuditResult& result)
+{
+    return result.source.producedRawBytesPerSecond / 1'000'000.0;
+}
+
+double processedToInputRatio(const AuditResult& result)
+{
+    return ratioOrZero(static_cast<double>(result.pipeline.processedSamples),
+                       static_cast<double>(result.pipeline.inputSamples));
+}
+
+bool auditInfrastructureSucceeded(const AuditResult& result)
+{
+    return result.sourceConfigured && result.pipelineStarted && result.bridgeStarted
+        && result.sourceStarted && result.sourceStopped && result.bridgeFlushed;
+}
+
+bool rawThroughputValid(const AuditResult& result)
+{
+    if (result.source.targetBytesPerSecond == 0
+        || result.source.producedRawBytesPerSecond <= 0.0) {
+        return false;
+    }
+
+    const double relativeError =
+        std::abs(result.source.producedRawBytesPerSecond
+                 - static_cast<double>(result.source.targetBytesPerSecond))
+        / static_cast<double>(result.source.targetBytesPerSecond);
+    return relativeError <= 0.15;
+}
+
+void assertBatchSweepRunUsable(TestRunner& test, const AuditResult& result)
+{
+    test.require(auditInfrastructureSucceeded(result),
+                 "batch sweep audit infrastructure succeeds");
+    test.require(result.source.targetBytesPerSecond == kTargetRawBytesPerSecond,
+                 "batch sweep source reports configured raw byte target");
+    test.require(result.source.producedBatches > 0,
+                 "batch sweep source produces batches");
+    test.require(result.source.producedSamples > 0,
+                 "batch sweep source produces samples");
+    test.require(rawThroughputValid(result),
+                 "batch sweep raw throughput stays within report tolerance");
+}
+
+void printBatchSweepSummary(const std::vector<AuditResult>& results)
+{
+    if (results.empty()) {
+        return;
+    }
+
+    std::cout << "Batch multiplier sweep summary:\n"
+              << "  m  rawMBps  blocks/s  samples/block  rejected  poolExh  processed/input\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.batchSizeMultiplier << "  "
+                  << rawMegabytesPerSecond(result) << "  "
+                  << producedBatchesPerSecond(result) << "  "
+                  << producedSamplesPerBatch(result) << "  "
+                  << result.rejectedBlocks << "  "
+                  << result.pipeline.blockPoolExhausted << "  "
+                  << processedToInputRatio(result) << '\n';
+    }
+
+    std::cout << "Backlog:\n"
+              << "  m  fanoutAvg  fanoutMax  spectrumQmax  signalQmax  maxQueueRatio\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.batchSizeMultiplier << "  "
+                  << result.pipeline.parallelFanOutEndToEndLatency.averageMs() << "  "
+                  << result.pipeline.parallelFanOutEndToEndLatency.maxMs << "  "
+                  << result.pipeline.spectrumStage.queueMaxDepth << "  "
+                  << result.pipeline.signalParameterStage.queueMaxDepth << "  "
+                  << maxStageQueueDepthRatio(result) << '\n';
+    }
+
+    std::cout << "Service:\n"
+              << "  m  waterfallAvg  spectrumAvg  bearingAvg  signalAvg\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.batchSizeMultiplier << "  "
+                  << result.pipeline.waterfallStage.serviceLatency.averageMs() << "  "
+                  << result.pipeline.spectrumStage.serviceLatency.averageMs() << "  "
+                  << result.pipeline.bearingStage.serviceLatency.averageMs() << "  "
+                  << result.pipeline.signalParameterStage.serviceLatency.averageMs() << '\n';
+    }
+}
+
 bool stressTestsEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_RUN_STRESS_TESTS");
@@ -1663,6 +1900,25 @@ void testAuditHelperParsingAndBudget(TestRunner& test)
                  "zero integer env value is rejected");
     test.require(!parsePositiveInt("invalid"),
                  "invalid integer env value is rejected");
+    test.require(parseBatchMultiplier("1").value_or(0) == 1,
+                 "batch multiplier accepts 1");
+    test.require(parseBatchMultiplier("2").value_or(0) == 2,
+                 "batch multiplier accepts 2");
+    test.require(parseBatchMultiplier("4").value_or(0) == 4,
+                 "batch multiplier accepts 4");
+    test.require(parseBatchMultiplier("8").value_or(0) == 8,
+                 "batch multiplier accepts 8");
+    test.require(!parseBatchMultiplier("0"),
+                 "batch multiplier rejects 0");
+    test.require(!parseBatchMultiplier("3"),
+                 "batch multiplier rejects unsupported values");
+    test.require(!parseBatchMultiplier("-1"),
+                 "batch multiplier rejects negative values");
+    test.require(!parseBatchMultiplier("abc"),
+                 "batch multiplier rejects non-numeric values");
+    const auto sweepMultipliers = batchSweepMultipliers();
+    test.require(sweepMultipliers == std::vector<std::size_t>({1, 2, 4, 8}),
+                 "batch sweep values are 1, 2, 4, 8");
     test.require(std::abs(parsePositiveDouble("8000.5").value_or(0.0) - 8000.5)
                      < 0.0001,
                  "positive double env value is parsed");
@@ -1781,10 +2037,11 @@ void targetRaw90mbpsAccountingSmoke(TestRunner& test)
 
 void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
 {
-    if (!targetRawPipelineTestEnabled()) {
+    if (!targetRawPipelineTestEnabled() || targetRawBatchSweepEnabled()) {
         return;
     }
 
+    const auto batchSizeMultiplier = envBatchMultiplierOrDefault();
     const auto auditMode = strictTargetRawPipelineSustainRequired()
         ? AuditMode::TargetRawStrict
         : AuditMode::TargetRawShort;
@@ -1795,19 +2052,47 @@ void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
                                  std::nullopt,
                                  AuditPipelineSizing::FullTargetRawSustain,
                                  auditMode,
-                                 targetRawLatencyBudget());
+                                 targetRawLatencyBudget(),
+                                 batchSizeMultiplier);
     printAuditSummary(result);
     printSustainWarnings(result);
     assertTargetRawPipelineSustain(test, result);
 }
 
-void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
+void targetRaw90mbpsBatchSweepAudit(TestRunner& test)
 {
-    if (!targetRawPipelineTestEnabled() || !parallelProcessingEngineEnabled()
-        || !targetRawSoakTestEnabled()) {
+    if (!targetRawBatchSweepEnabled()) {
         return;
     }
 
+    std::vector<AuditResult> results;
+    for (const auto multiplier : batchSweepMultipliers()) {
+        auto result = runAudit(targetRawAuditDuration(),
+                               hardware::SimulatorLoadProfile::
+                                   TargetRawThroughput90MBps,
+                               std::chrono::seconds{10},
+                               std::nullopt,
+                               AuditPipelineSizing::FullTargetRawSustain,
+                               AuditMode::TargetRawShort,
+                               targetRawLatencyBudget(),
+                               multiplier);
+        printAuditSummary(result);
+        printSustainWarnings(result);
+        assertBatchSweepRunUsable(test, result);
+        results.push_back(std::move(result));
+    }
+
+    printBatchSweepSummary(results);
+}
+
+void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
+{
+    if (!targetRawPipelineTestEnabled() || !parallelProcessingEngineEnabled()
+        || !targetRawSoakTestEnabled() || targetRawBatchSweepEnabled()) {
+        return;
+    }
+
+    const auto batchSizeMultiplier = envBatchMultiplierOrDefault();
     const auto result = runAudit(targetRawSoakDuration(),
                                  hardware::SimulatorLoadProfile::
                                      TargetRawThroughput90MBps,
@@ -1815,7 +2100,8 @@ void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
                                  std::nullopt,
                                  AuditPipelineSizing::FullTargetRawSustain,
                                  AuditMode::TargetRawSoak,
-                                 targetRawLatencyBudget());
+                                 targetRawLatencyBudget(),
+                                 batchSizeMultiplier);
     printAuditSummary(result);
     printSustainWarnings(result);
     assertTargetRawPipelineSustain(test, result);
@@ -1831,6 +2117,7 @@ int main()
     highLoadDataPlaneSmoke(test);
     targetRaw90mbpsAccountingSmoke(test);
     targetRaw90mbpsPipelineSustainAudit(test);
+    targetRaw90mbpsBatchSweepAudit(test);
     targetRaw90mbpsParallelSoakAudit(test);
     highLoadDataPlaneStress(test);
 

@@ -631,6 +631,126 @@ void testTargetRawFastPathAssignsMonotonicSampleIndexes(TestRunner& test)
                  "target raw fast path sampleIndex is contiguous");
 }
 
+void testTargetRawDefaultBatchMultiplierPreservesBatchSize(TestRunner& test)
+{
+    hardware::HighLoadSimulatorBcoStreamSource source(makeTargetRawLoadConfig());
+    const auto configureResult = source.configure(makeValidConfig());
+
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    const bool arrived = configureResult.success
+        && collectBlocks(source, 1, blocks, std::chrono::milliseconds{1000});
+
+    const hardware::ThroughputTarget target;
+    test.require(configureResult.success,
+                 "default target raw multiplier source accepts stream config");
+    test.require(arrived,
+                 "default target raw multiplier source emits block");
+    test.require(!blocks.empty() && blocks.front() != nullptr,
+                 "default target raw multiplier block is available");
+    if (blocks.empty() || !blocks.front()) {
+        return;
+    }
+
+    test.require(blocks.front()->samples.size() == hardware::samplesPerBatchForTarget(target),
+                 "default target raw multiplier preserves base batch size");
+    test.require(blocks.front()->stats.packetCount
+                     == hardware::packetsPerBatchForTarget(target),
+                 "default target raw multiplier preserves base packet count");
+}
+
+void testTargetRawBatchMultiplierChangesBatchSize(TestRunner& test)
+{
+    auto loadConfig = makeTargetRawLoadConfig();
+    loadConfig.samplesPerBatchMultiplier = 4;
+    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig);
+    const auto configureResult = source.configure(makeValidConfig());
+
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    const bool arrived = configureResult.success
+        && collectBlocks(source, 1, blocks, std::chrono::milliseconds{1000});
+
+    const hardware::ThroughputTarget target;
+    const auto baseSamplesPerBatch = hardware::samplesPerBatchForTarget(target);
+    const auto basePacketsPerBatch = hardware::packetsPerBatchForTarget(target);
+    test.require(configureResult.success,
+                 "target raw batch multiplier source accepts stream config");
+    test.require(arrived,
+                 "target raw batch multiplier source emits block");
+    test.require(!blocks.empty() && blocks.front() != nullptr,
+                 "target raw batch multiplier block is available");
+    if (blocks.empty() || !blocks.front()) {
+        return;
+    }
+
+    test.require(blocks.front()->samples.size() == baseSamplesPerBatch * 4,
+                 "target raw multiplier scales samples per batch");
+    test.require(blocks.front()->stats.packetCount == basePacketsPerBatch * 4,
+                 "target raw multiplier scales packet count per batch");
+}
+
+void testTargetRawBatchMultiplierKeepsSampleIndexesContiguousAcrossBlocks(
+    TestRunner& test)
+{
+    auto streamConfig = makeValidConfig();
+    streamConfig.timeBase.firstSampleIndex = 5000;
+
+    auto loadConfig = makeTargetRawLoadConfig();
+    loadConfig.samplesPerBatchMultiplier = 4;
+    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig);
+    const auto configureResult = source.configure(streamConfig);
+
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    const bool arrived = configureResult.success
+        && collectBlocks(source, 3, blocks, std::chrono::milliseconds{1500});
+
+    test.require(configureResult.success,
+                 "target raw contiguous multiplier source accepts stream config");
+    test.require(arrived,
+                 "target raw contiguous multiplier source emits several blocks");
+    test.require(blocks.size() >= 3,
+                 "target raw contiguous multiplier captured three blocks");
+    if (blocks.size() < 3 || !blocks[0] || !blocks[1] || !blocks[2]) {
+        return;
+    }
+
+    test.require(blocks[0]->stats.firstSampleIndex == 5000,
+                 "target raw multiplier first block starts at configured sample index");
+    for (std::size_t index = 1; index < 3; ++index) {
+        test.require(blocks[index]->stats.firstSampleIndex
+                         == blocks[index - 1]->stats.lastSampleIndex + 1,
+                     "target raw multiplier keeps sampleIndex contiguous between blocks");
+    }
+}
+
+void testTargetRawInvalidBatchMultiplierFallsBackToDefault(TestRunner& test)
+{
+    const hardware::ThroughputTarget target;
+    for (const auto invalidMultiplier : {std::size_t{0}, std::size_t{3}}) {
+        auto loadConfig = makeTargetRawLoadConfig();
+        loadConfig.samplesPerBatchMultiplier = invalidMultiplier;
+        hardware::HighLoadSimulatorBcoStreamSource source(loadConfig);
+        const auto configureResult = source.configure(makeValidConfig());
+
+        std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+        const bool arrived = configureResult.success
+            && collectBlocks(source, 1, blocks, std::chrono::milliseconds{1000});
+
+        test.require(configureResult.success,
+                     "invalid target raw multiplier source accepts stream config");
+        test.require(arrived,
+                     "invalid target raw multiplier source emits block");
+        test.require(!blocks.empty() && blocks.front() != nullptr,
+                     "invalid target raw multiplier block is available");
+        if (blocks.empty() || !blocks.front()) {
+            continue;
+        }
+
+        test.require(blocks.front()->samples.size()
+                         == hardware::samplesPerBatchForTarget(target),
+                     "invalid target raw multiplier falls back to base batch size");
+    }
+}
+
 void testConfigurePublishesTimebaseMismatchWarning(TestRunner& test)
 {
     auto loadConfig = makePulseLoadConfig();
@@ -710,6 +830,10 @@ int main()
     testPulseConfigsCanBeUpdated(test);
     testRuntimePulseConfigUpdateAppliesToNextBlocks(test);
     testTargetRawFastPathAssignsMonotonicSampleIndexes(test);
+    testTargetRawDefaultBatchMultiplierPreservesBatchSize(test);
+    testTargetRawBatchMultiplierChangesBatchSize(test);
+    testTargetRawBatchMultiplierKeepsSampleIndexesContiguousAcrossBlocks(test);
+    testTargetRawInvalidBatchMultiplierFallsBackToDefault(test);
     testConfigurePublishesTimebaseMismatchWarning(test);
     testConfigureDoesNotWarnWhenTimebaseMatchesThroughput(test);
     testFactoryCreatesHighLoadSimulator(test);

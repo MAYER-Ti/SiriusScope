@@ -55,6 +55,7 @@ struct SimulatorBcoLoadConfig
 
     std::size_t samplesPerSecond = 1'280;
     std::chrono::milliseconds batchPeriod{100};
+    std::size_t samplesPerBatchMultiplier = 1;
     std::optional<ThroughputTarget> throughputTarget;
 
     bool deterministic = true;

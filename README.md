@@ -180,5 +180,31 @@ Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
 Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
 ```
 
+To audit whether fewer larger source blocks reduce fan-out backlog, keep the 90 MB/s
+target and set a batch multiplier. The multiplier scales samples per batch and the batch
+period together, so raw throughput remains the same while block rate decreases:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER = "4"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER
+```
+
+The report-oriented sweep compares multipliers `1`, `2`, `4`, and `8`:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP
+```
+
 For performance-sensitive work, also follow the high-load acceptance criteria in
 `docs/development/build-and-test.md`.

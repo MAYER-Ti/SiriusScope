@@ -150,6 +150,10 @@ Current experimental mode:
   `SIRIUSSCOPE_MAX_STAGE_QUEUE_WAIT_MS=8000`, and
   `SIRIUSSCOPE_MAX_STAGE_QUEUE_DEPTH_RATIO=0.95`; non-strict audits warn, while strict
   and soak audits fail on enabled budget violations.
+- `SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER=1|2|4|8` is an audit-only target-raw sizing
+  control. It scales target-raw samples per batch and batch period together, preserving
+  raw throughput while reducing source block rate. `SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP=1`
+  runs a report-oriented comparison across all supported multipliers.
 
 ## 6. Waterfall Aggregation
 

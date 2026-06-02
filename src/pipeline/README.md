@@ -102,6 +102,31 @@ $env:SIRIUSSCOPE_MAX_STAGE_QUEUE_DEPTH_RATIO = "0.95"
 In non-strict target-raw audits, budget violations are printed as report-only warnings.
 In strict and soak audits, enabled budget violations fail the perf test.
 
+The target-raw simulator can coalesce batches while preserving the same raw throughput.
+This is an audit-only sizing experiment: the multiplier increases samples per source
+batch and the batch period together, so the raw byte target stays near 90 MB/s while the
+block rate decreases. A single multiplier audit can be run with:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER = "4"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+To compare the supported multipliers `1`, `2`, `4`, and `8`, run the report-oriented
+sweep:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+The sweep prints raw throughput, blocks per second, samples per block, queue backlog, and
+per-stage service latency. It is not a replacement for strict no-drop validation.
+
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable
 `BcoSampleBlock` pointers into a bounded RX queue; a dedicated bridge worker performs the

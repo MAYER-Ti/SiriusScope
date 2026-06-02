@@ -39,6 +39,39 @@ std::size_t estimatedSamplesPerSecondFromTarget(const ThroughputTarget& target)
     return static_cast<std::size_t>(std::ceil(samplesPerSecond));
 }
 
+bool isAllowedSamplesPerBatchMultiplier(std::size_t multiplier) noexcept
+{
+    return multiplier == 1 || multiplier == 2 || multiplier == 4 || multiplier == 8;
+}
+
+std::size_t normalizeSamplesPerBatchMultiplier(std::size_t multiplier) noexcept
+{
+    return isAllowedSamplesPerBatchMultiplier(multiplier) ? multiplier : 1;
+}
+
+std::size_t saturatedMultiplySize(std::size_t value, std::size_t multiplier) noexcept
+{
+    if (value == 0 || multiplier == 0) {
+        return 0;
+    }
+    if (multiplier > std::numeric_limits<std::size_t>::max() / value) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return value * multiplier;
+}
+
+std::chrono::milliseconds scaledBatchPeriod(std::chrono::milliseconds base,
+                                            std::size_t multiplier) noexcept
+{
+    const auto safeBase = std::max<std::int64_t>(1, base.count());
+    const auto safeMultiplier =
+        static_cast<std::int64_t>(normalizeSamplesPerBatchMultiplier(multiplier));
+    if (safeBase > std::numeric_limits<std::int64_t>::max() / safeMultiplier) {
+        return std::chrono::milliseconds{std::numeric_limits<std::int64_t>::max()};
+    }
+    return std::chrono::milliseconds{safeBase * safeMultiplier};
+}
+
 SimulatorBcoLoadConfig makeSimulatorBcoLoadConfig(SimulatorLoadProfile profile)
 {
     SimulatorBcoLoadConfig config;
@@ -92,6 +125,8 @@ SimulatorBcoLoadConfig normalizeLoadConfig(SimulatorBcoLoadConfig config)
 {
     auto requestedPulseConfigs = std::move(config.pulseBandConfigs);
     const int requestedMinVisibleAmplitude = config.minVisibleAmplitude;
+    const auto requestedSamplesPerBatchMultiplier =
+        config.samplesPerBatchMultiplier;
 
     if (config.profile == SimulatorLoadProfile::UiDemo) {
         const auto requestedSamplesPerSecond = config.samplesPerSecond;
@@ -107,8 +142,18 @@ SimulatorBcoLoadConfig normalizeLoadConfig(SimulatorBcoLoadConfig config)
     }
 
     config.samplesPerSecond = std::max<std::size_t>(1, config.samplesPerSecond);
+    config.samplesPerBatchMultiplier =
+        normalizeSamplesPerBatchMultiplier(requestedSamplesPerBatchMultiplier);
     if (config.batchPeriod < kMinBatchPeriod) {
         config.batchPeriod = kMinBatchPeriod;
+    }
+    if (config.profile == SimulatorLoadProfile::TargetRawThroughput90MBps
+        && config.throughputTarget) {
+        config.batchPeriod =
+            scaledBatchPeriod(config.throughputTarget->batchPeriod,
+                              config.samplesPerBatchMultiplier);
+        config.samplesPerSecond =
+            estimatedSamplesPerSecondFromTarget(*config.throughputTarget);
     }
     if (!std::isfinite(config.burstMultiplier) || config.burstMultiplier < 1.0) {
         config.burstMultiplier = 1.0;
@@ -222,6 +267,24 @@ std::string throughputTargetMessage(const ThroughputTarget& target)
            << std::max<std::size_t>(1, target.packetModel.sampleRecordBytes)
            << ", samplesPerPacket="
            << std::max<std::size_t>(1, target.packetModel.samplesPerPacket);
+    return stream.str();
+}
+
+std::string throughputTargetBatchSizingMessage(
+    const ThroughputTarget& target,
+    std::size_t multiplier,
+    std::chrono::milliseconds effectiveBatchPeriod)
+{
+    const auto normalizedMultiplier = normalizeSamplesPerBatchMultiplier(multiplier);
+    const auto baseSamplesPerBatch = samplesPerBatchForTarget(target);
+    std::ostringstream stream;
+    stream << "high-load simulator batch sizing: multiplier="
+           << normalizedMultiplier
+           << ", baseSamplesPerBatch=" << baseSamplesPerBatch
+           << ", effectiveSamplesPerBatch="
+           << saturatedMultiplySize(baseSamplesPerBatch, normalizedMultiplier)
+           << ", effectiveBatchPeriod="
+           << std::max<std::int64_t>(1, effectiveBatchPeriod.count()) << " ms";
     return stream.str();
 }
 
@@ -681,11 +744,15 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
     std::vector<SimulatorPulseBandConfig> pulseConfigs;
     std::size_t configuredSamplesPerSecond = 0;
     std::optional<ThroughputTarget> throughputTarget;
+    std::size_t samplesPerBatchMultiplier = 1;
+    std::chrono::milliseconds effectiveBatchPeriod{1};
     {
         std::lock_guard lock(m_mutex);
         pulseConfigs = m_loadConfig.pulseBandConfigs;
         configuredSamplesPerSecond = m_loadConfig.samplesPerSecond;
         throughputTarget = m_loadConfig.throughputTarget;
+        samplesPerBatchMultiplier = m_loadConfig.samplesPerBatchMultiplier;
+        effectiveBatchPeriod = m_loadConfig.batchPeriod;
     }
 
     if (config.bandConfigs.empty()) {
@@ -737,6 +804,10 @@ core::OperationResult HighLoadSimulatorBcoStreamSource::configure(
     if (throughputTarget) {
         publish(infrastructure::DiagnosticSeverity::Info,
                 throughputTargetMessage(*throughputTarget));
+        publish(infrastructure::DiagnosticSeverity::Info,
+                throughputTargetBatchSizingMessage(*throughputTarget,
+                                                   samplesPerBatchMultiplier,
+                                                   effectiveBatchPeriod));
         if (samplesPerBatchForTarget(*throughputTarget) == 0) {
             publish(infrastructure::DiagnosticSeverity::Warning,
                     "high-load simulator throughput target produced zero samples per batch");
@@ -1082,10 +1153,16 @@ std::size_t HighLoadSimulatorBcoStreamSource::samplesPerBatchForCurrentPeriod(
     if (m_loadConfig.throughputTarget) {
         const auto baseSampleCount =
             samplesPerBatchForTarget(*m_loadConfig.throughputTarget);
+        const auto effectiveSampleCount =
+            saturatedMultiplySize(baseSampleCount,
+                                  m_loadConfig.samplesPerBatchMultiplier);
         if (!m_loadConfig.burstModeEnabled) {
-            return baseSampleCount;
+            return effectiveSampleCount;
         }
-        return boundedSizeFrom(static_cast<long double>(baseSampleCount)
+        if (effectiveSampleCount == 0) {
+            return 0;
+        }
+        return boundedSizeFrom(static_cast<long double>(effectiveSampleCount)
                                * static_cast<long double>(m_loadConfig.burstMultiplier));
     }
 
