@@ -234,7 +234,11 @@ void printSpectrumInternalBottleneck(
     std::cout << "SpectrumAggregator internal bottleneck by avg: "
               << byAverage->name << " = " << byAverage->stats.averageMs() << " ms\n"
               << "SpectrumAggregator internal bottleneck by max: " << byMax->name
-              << " = " << byMax->stats.maxMs << " ms\n";
+              << " = " << byMax->stats.maxMs << " ms\n"
+              << "Spectrum window mode: incremental active = "
+              << (metrics.spectrumIncrementalWindowBlocks > 0 ? "true" : "false")
+              << ", fallback count = "
+              << metrics.spectrumIncrementalWindowFallbacks << '\n';
 }
 
 void printBearingInternalBottleneck(
@@ -744,12 +748,20 @@ void printAuditSummary(const AuditResult& result)
               << (result.pipeline.spectrumFastBandSummaryBlocks > 0 ? "true"
                                                                     : "false")
               << '\n'
+              << "  usedIncrementalWindowIndex = "
+              << (result.pipeline.spectrumIncrementalWindowBlocks > 0 ? "true"
+                                                                       : "false")
+              << '\n'
               << "  spectrumFastWindowBlocks = "
               << result.pipeline.spectrumFastWindowBlocks << '\n'
               << "  spectrumFastBinBlocks = "
               << result.pipeline.spectrumFastBinBlocks << '\n'
               << "  spectrumFastBandSummaryBlocks = "
               << result.pipeline.spectrumFastBandSummaryBlocks << '\n'
+              << "  spectrumIncrementalWindowBlocks = "
+              << result.pipeline.spectrumIncrementalWindowBlocks << '\n'
+              << "  spectrumIncrementalWindowFallbacks = "
+              << result.pipeline.spectrumIncrementalWindowFallbacks << '\n'
               << "Bearing micro-breakdown:\n"
               << "  sampleLoop avg/max = "
               << result.pipeline.bearingSampleLoopLatency.averageMs() << "/"

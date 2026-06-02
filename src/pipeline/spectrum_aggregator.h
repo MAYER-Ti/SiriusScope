@@ -14,6 +14,13 @@
 
 namespace siriusscope::pipeline {
 
+enum class SpectrumWindowIndexMode
+{
+    ExactInt128,
+    DivisibleSamplePeriod,
+    IncrementalMonotonic,
+};
+
 struct SpectrumAggregatorConfig
 {
     int renderBinCount = 1024;
@@ -24,6 +31,8 @@ struct SpectrumAggregatorConfig
     bool separateBeams = true;
     core::TimeBase timeBase{};
     bool trustedSamples = true;
+    SpectrumWindowIndexMode windowIndexMode =
+        SpectrumWindowIndexMode::IncrementalMonotonic;
     bool useFastWindowIndex = true;
     bool useFastBinIndex = true;
     bool useFixedBandSummaryStorage = true;
@@ -59,6 +68,8 @@ struct SpectrumAggregationResult
     bool usedFastWindowIndex = false;
     bool usedFastBinIndex = false;
     bool usedFastBandSummaryStorage = false;
+    bool usedIncrementalWindowIndex = false;
+    std::uint64_t incrementalWindowFallbacks = 0;
 };
 
 class SpectrumAggregator
@@ -94,7 +105,17 @@ private:
     bool usesFixedBandSummaryStorage() const noexcept;
     bool hasValidUntrustedSample(const core::SignalSample& sample) const;
     bool hasFixedBandSummarySlot(int bandIndex) const noexcept;
-    std::optional<std::uint64_t> windowForSample(std::uint64_t sampleIndex) const;
+    std::optional<std::uint64_t> exactWindowForSample(
+        std::uint64_t sampleIndex) const;
+    std::optional<std::uint64_t> firstSampleIndexForWindow(
+        std::uint64_t windowIndex) const;
+    std::optional<std::uint64_t> windowForSample(std::uint64_t sampleIndex);
+    std::optional<std::uint64_t> incrementalWindowForSample(
+        std::uint64_t sampleIndex);
+    void resetIncrementalWindowState() noexcept;
+    void primeIncrementalWindowState(
+        std::uint64_t sampleIndex,
+        std::optional<std::uint64_t> windowIndex);
     int binForFrequency(std::int64_t frequencyHz) const noexcept;
     static std::uint16_t clampAmplitude(int amplitude) noexcept;
     static void incrementHitCount(SpectrumBin& bin) noexcept;
@@ -114,6 +135,11 @@ private:
     std::uint64_t m_nextSnapshotSequenceId = 1;
     std::uint64_t m_samplesPerWindow = 0;
     bool m_canUseFastWindowIndex = false;
+    bool m_canUseIncrementalWindowIndex = false;
+    std::optional<std::uint64_t> m_incrementalWindowIndex;
+    std::optional<std::uint64_t> m_incrementalNextWindowStartSampleIndex;
+    std::optional<std::uint64_t> m_lastWindowSampleIndex;
+    std::uint64_t m_incrementalWindowFallbacks = 0;
     bool m_canUseFastBinIndex = false;
     std::int64_t m_fastBinRangeHz = 0;
     std::int64_t m_fastBinMultiplier = 0;

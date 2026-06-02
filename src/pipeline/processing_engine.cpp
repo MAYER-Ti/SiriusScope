@@ -296,6 +296,9 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             spectrumResult.usedFastWindowIndex,
             spectrumResult.usedFastBinIndex,
             spectrumResult.usedFastBandSummaryStorage);
+        m_metrics->recordSpectrumIncrementalWindowUsage(
+            spectrumResult.usedIncrementalWindowIndex,
+            spectrumResult.incrementalWindowFallbacks);
     }
 
     BearingAggregationResult bearingResult;

@@ -18,6 +18,11 @@ latest-value exchange model. `SpectrumAggregator` builds fixed frequency bins an
 per-band summaries from `SignalBlock` data. The Qt layer adapts the latest snapshot to
 `SpectrumEnvelopeController`; `SpectrumEnvelopeWorker` remains legacy compatibility code
 and is not production high-load transport.
+For high-load monotonic streams, `SpectrumAggregator` uses an incremental window-index
+path, so assigning samples to spectrum windows does not require per-sample 128-bit
+arithmetic when the sample period does not divide the snapshot period exactly. Exact
+128-bit calculation and the older divisible-period fast path remain available for tests,
+fallbacks, and non-monotonic inputs.
 
 Bearing output is published as immutable `BearingSnapshot` objects through the same
 latest-value exchange model. `BearingAggregator` groups samples by time window,

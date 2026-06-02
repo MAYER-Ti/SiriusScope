@@ -72,6 +72,8 @@ void SpectrumAggregator::reset()
     m_counters = {};
     m_openWindow.reset();
     m_nextSnapshotSequenceId = 1;
+    resetIncrementalWindowState();
+    m_incrementalWindowFallbacks = 0;
 }
 
 void SpectrumAggregator::setConfig(SpectrumAggregatorConfig config)
@@ -85,13 +87,20 @@ void SpectrumAggregator::prepareDerivedConfig()
 {
     m_samplesPerWindow = 0;
     m_canUseFastWindowIndex = false;
+    m_canUseIncrementalWindowIndex = false;
     if (m_config.useFastWindowIndex && m_config.timeBase.samplePeriodNs > 0
         && m_config.snapshotPeriodNs > 0
+        && m_config.windowIndexMode == SpectrumWindowIndexMode::DivisibleSamplePeriod
         && m_config.snapshotPeriodNs % m_config.timeBase.samplePeriodNs == 0) {
         m_samplesPerWindow =
             m_config.snapshotPeriodNs / m_config.timeBase.samplePeriodNs;
         m_canUseFastWindowIndex = m_samplesPerWindow > 0;
     }
+    m_canUseIncrementalWindowIndex =
+        m_config.useFastWindowIndex
+        && m_config.windowIndexMode == SpectrumWindowIndexMode::IncrementalMonotonic
+        && m_config.timeBase.samplePeriodNs > 0
+        && m_config.snapshotPeriodNs > 0;
 
     m_fastBinRangeHz = 0;
     m_fastBinMultiplier = 0;
@@ -149,7 +158,9 @@ SpectrumAggregationResult SpectrumAggregator::consume(
 {
     SpectrumAggregationResult result;
     const auto totalStartedAt = Clock::now();
+    const auto incrementalFallbacksBefore = m_incrementalWindowFallbacks;
     result.usedFastWindowIndex = m_canUseFastWindowIndex;
+    result.usedIncrementalWindowIndex = m_canUseIncrementalWindowIndex;
     result.usedFastBinIndex = m_canUseFastBinIndex;
     result.usedFastBandSummaryStorage = usesFixedBandSummaryStorage();
     result.snapshots.reserve(2);
@@ -288,6 +299,8 @@ SpectrumAggregationResult SpectrumAggregator::consume(
     result.timing.bandSummaryUpdate =
         std::min(result.timing.bandSummaryUpdate, result.timing.sampleLoop);
     result.timing.total = Clock::now() - totalStartedAt;
+    result.incrementalWindowFallbacks =
+        m_incrementalWindowFallbacks - incrementalFallbacksBefore;
 
     return result;
 }
@@ -297,6 +310,7 @@ SpectrumAggregationResult SpectrumAggregator::flush()
     SpectrumAggregationResult result;
     const auto totalStartedAt = Clock::now();
     result.usedFastWindowIndex = m_canUseFastWindowIndex;
+    result.usedIncrementalWindowIndex = m_canUseIncrementalWindowIndex;
     result.usedFastBinIndex = m_canUseFastBinIndex;
     result.usedFastBandSummaryStorage = usesFixedBandSummaryStorage();
     const auto closeStartedAt = Clock::now();
@@ -310,6 +324,36 @@ SpectrumAggregationResult SpectrumAggregator::flush()
 }
 
 std::optional<std::uint64_t> SpectrumAggregator::windowForSample(
+    std::uint64_t sampleIndex)
+{
+    if (m_config.snapshotPeriodNs == 0 || m_config.timeBase.samplePeriodNs == 0) {
+        return std::nullopt;
+    }
+    if (sampleIndex < m_config.timeBase.firstSampleIndex) {
+        return std::nullopt;
+    }
+
+    if (!m_config.useFastWindowIndex
+        || m_config.windowIndexMode == SpectrumWindowIndexMode::ExactInt128) {
+        return exactWindowForSample(sampleIndex);
+    }
+
+    if (m_config.windowIndexMode == SpectrumWindowIndexMode::DivisibleSamplePeriod) {
+        if (m_canUseFastWindowIndex) {
+            return (sampleIndex - m_config.timeBase.firstSampleIndex)
+                / m_samplesPerWindow;
+        }
+        return exactWindowForSample(sampleIndex);
+    }
+
+    if (m_config.windowIndexMode == SpectrumWindowIndexMode::IncrementalMonotonic) {
+        return incrementalWindowForSample(sampleIndex);
+    }
+
+    return exactWindowForSample(sampleIndex);
+}
+
+std::optional<std::uint64_t> SpectrumAggregator::exactWindowForSample(
     std::uint64_t sampleIndex) const
 {
     if (m_config.snapshotPeriodNs == 0 || m_config.timeBase.samplePeriodNs == 0) {
@@ -320,10 +364,6 @@ std::optional<std::uint64_t> SpectrumAggregator::windowForSample(
     }
 
     const auto relativeSampleIndex = sampleIndex - m_config.timeBase.firstSampleIndex;
-    if (m_canUseFastWindowIndex) {
-        return relativeSampleIndex / m_samplesPerWindow;
-    }
-
     const auto relativeNs =
         static_cast<unsigned __int128>(relativeSampleIndex)
         * static_cast<unsigned __int128>(m_config.timeBase.samplePeriodNs);
@@ -333,6 +373,115 @@ std::optional<std::uint64_t> SpectrumAggregator::windowForSample(
         return std::nullopt;
     }
     return static_cast<std::uint64_t>(window);
+}
+
+std::optional<std::uint64_t> SpectrumAggregator::firstSampleIndexForWindow(
+    std::uint64_t windowIndex) const
+{
+    if (m_config.snapshotPeriodNs == 0 || m_config.timeBase.samplePeriodNs == 0) {
+        return std::nullopt;
+    }
+
+    const auto numerator =
+        static_cast<unsigned __int128>(windowIndex)
+        * static_cast<unsigned __int128>(m_config.snapshotPeriodNs);
+    const auto denominator =
+        static_cast<unsigned __int128>(m_config.timeBase.samplePeriodNs);
+    auto relativeSampleIndex = numerator / denominator;
+    if (numerator % denominator != 0) {
+        ++relativeSampleIndex;
+    }
+    if (relativeSampleIndex > std::numeric_limits<std::uint64_t>::max()) {
+        return std::nullopt;
+    }
+
+    const auto relative = static_cast<std::uint64_t>(relativeSampleIndex);
+    if (relative
+        > std::numeric_limits<std::uint64_t>::max()
+            - m_config.timeBase.firstSampleIndex) {
+        return std::nullopt;
+    }
+    return m_config.timeBase.firstSampleIndex + relative;
+}
+
+std::optional<std::uint64_t> SpectrumAggregator::incrementalWindowForSample(
+    std::uint64_t sampleIndex)
+{
+    if (!m_canUseIncrementalWindowIndex) {
+        return exactWindowForSample(sampleIndex);
+    }
+
+    if (m_lastWindowSampleIndex && sampleIndex < *m_lastWindowSampleIndex) {
+        ++m_incrementalWindowFallbacks;
+        resetIncrementalWindowState();
+        const auto exact = exactWindowForSample(sampleIndex);
+        primeIncrementalWindowState(sampleIndex, exact);
+        return exact;
+    }
+
+    if (!m_incrementalWindowIndex
+        || !m_incrementalNextWindowStartSampleIndex) {
+        const auto exact = exactWindowForSample(sampleIndex);
+        primeIncrementalWindowState(sampleIndex, exact);
+        return exact;
+    }
+
+    while (m_incrementalNextWindowStartSampleIndex
+           && sampleIndex >= *m_incrementalNextWindowStartSampleIndex) {
+        if (*m_incrementalWindowIndex
+            == std::numeric_limits<std::uint64_t>::max()) {
+            ++m_incrementalWindowFallbacks;
+            const auto exact = exactWindowForSample(sampleIndex);
+            primeIncrementalWindowState(sampleIndex, exact);
+            return exact;
+        }
+
+        ++(*m_incrementalWindowIndex);
+        if (*m_incrementalWindowIndex
+            == std::numeric_limits<std::uint64_t>::max()) {
+            m_incrementalNextWindowStartSampleIndex.reset();
+            continue;
+        }
+
+        const auto nextBoundary =
+            firstSampleIndexForWindow(*m_incrementalWindowIndex + 1);
+        if (!nextBoundary) {
+            ++m_incrementalWindowFallbacks;
+            const auto exact = exactWindowForSample(sampleIndex);
+            primeIncrementalWindowState(sampleIndex, exact);
+            return exact;
+        }
+        m_incrementalNextWindowStartSampleIndex = *nextBoundary;
+    }
+
+    m_lastWindowSampleIndex = sampleIndex;
+    return m_incrementalWindowIndex;
+}
+
+void SpectrumAggregator::resetIncrementalWindowState() noexcept
+{
+    m_incrementalWindowIndex.reset();
+    m_incrementalNextWindowStartSampleIndex.reset();
+    m_lastWindowSampleIndex.reset();
+}
+
+void SpectrumAggregator::primeIncrementalWindowState(
+    std::uint64_t sampleIndex,
+    std::optional<std::uint64_t> windowIndex)
+{
+    if (!windowIndex) {
+        resetIncrementalWindowState();
+        return;
+    }
+
+    m_incrementalWindowIndex = *windowIndex;
+    if (*windowIndex == std::numeric_limits<std::uint64_t>::max()) {
+        m_incrementalNextWindowStartSampleIndex.reset();
+    } else {
+        m_incrementalNextWindowStartSampleIndex =
+            firstSampleIndexForWindow(*windowIndex + 1);
+    }
+    m_lastWindowSampleIndex = sampleIndex;
 }
 
 int SpectrumAggregator::binForFrequency(std::int64_t frequencyHz) const noexcept
