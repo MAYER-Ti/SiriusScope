@@ -36,6 +36,7 @@ struct BearingAggregatorConfig
         BearingCandidateStorageMode::FlatBandBinVector;
     std::size_t bandCapacity = 0;
     bool trustedSamples = true;
+    bool enableDetailedTiming = false;
 };
 
 struct BearingCandidateAggregate
@@ -85,6 +86,7 @@ struct BearingAggregationResult
     BearingAggregatorCounters deltaCounters;
     BearingAggregatorTiming timing;
     bool usedFastCandidateStorage = false;
+    bool usedBlockLocalAccumulation = false;
 };
 
 class BearingAggregator
@@ -123,10 +125,25 @@ private:
         std::size_t usedCandidateCount = 0;
     };
 
+    struct LocalBearingCandidateAccumulator
+    {
+        int bandIndex = 0;
+        std::uint32_t frequencyBin = 0;
+        std::uint64_t firstSampleIndex = 0;
+        std::uint64_t lastSampleIndex = 0;
+        std::int64_t centerFrequencyHz = 0;
+        std::uint16_t beam0Peak = 0;
+        std::uint16_t beam1Peak = 0;
+        bool hasBeam0 = false;
+        bool hasBeam1 = false;
+        bool hasSamples = false;
+    };
+
     BearingAggregationResult consumeSamples(std::span<const core::SignalSample> samples,
                                             std::optional<double> antennaAzimuthDeg);
     void prepareDerivedConfig();
     bool usesFlatCandidateStorage() const noexcept;
+    bool usesBlockLocalFastPath() const noexcept;
     bool hasValidUntrustedSample(const core::SignalSample& sample) const;
     std::optional<std::uint64_t> windowForSample(std::uint64_t sampleIndex) const;
     std::int64_t utcNsForSample(std::uint64_t sampleIndex) const;
@@ -142,6 +159,13 @@ private:
     void addSampleToOpenWindow(const core::SignalSample& sample,
                                int binIndex,
                                BearingAggregatorCounters& deltaCounters);
+    void prepareLocalCandidateBuffers();
+    void resetLocalCandidateTouched();
+    void updateLocalWindowBounds(const core::SignalSample& sample);
+    void updateLocalCandidateForSample(const core::SignalSample& sample,
+                                       int binIndex,
+                                       BearingAggregatorCounters& deltaCounters);
+    void mergeLocalCandidatesIntoOpenWindow();
     std::shared_ptr<const BearingSnapshot> closeOpenWindow(
         BearingAggregatorCounters& deltaCounters,
         BearingAggregatorTiming* timing = nullptr);
@@ -159,6 +183,11 @@ private:
     bool m_useFastBinIndex = false;
     std::int64_t m_fastBinRangeHz = 0;
     std::int64_t m_fastBinMultiplier = 0;
+    std::vector<LocalBearingCandidateAccumulator> m_localCandidates;
+    std::vector<std::uint32_t> m_touchedCandidateIndexes;
+    bool m_localHasSamples = false;
+    std::uint64_t m_localFirstSampleIndex = 0;
+    std::uint64_t m_localLastSampleIndex = 0;
 };
 
 } // namespace siriusscope::pipeline

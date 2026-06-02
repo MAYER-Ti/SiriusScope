@@ -96,6 +96,101 @@ std::shared_ptr<const pipeline::BearingSnapshot> consumeAndFlush(
     return flushed.snapshots.empty() ? nullptr : flushed.snapshots.front();
 }
 
+struct BearingRunResult
+{
+    pipeline::BearingAggregationResult consumed;
+    pipeline::BearingAggregationResult flushed;
+    std::vector<std::shared_ptr<const pipeline::BearingSnapshot>> snapshots;
+};
+
+BearingRunResult consumeAndFlushAll(pipeline::BearingAggregator& aggregator,
+                                    std::vector<core::SignalSample> samples,
+                                    double antennaAzimuthDeg = 45.0)
+{
+    pipeline::SignalBlock block(samples.size());
+    pipeline::SignalBlockMetadata metadata;
+    metadata.firstSampleIndex = samples.empty() ? 0 : samples.front().sampleIndex;
+    metadata.lastSampleIndex = samples.empty() ? 0 : samples.back().sampleIndex;
+    metadata.antennaAzimuthDeg = antennaAzimuthDeg;
+    block.reset(metadata);
+    block.assignSamples(samples);
+
+    BearingRunResult result;
+    result.consumed = aggregator.consume(block);
+    result.flushed = aggregator.flush();
+    result.snapshots.insert(result.snapshots.end(),
+                            result.consumed.snapshots.begin(),
+                            result.consumed.snapshots.end());
+    result.snapshots.insert(result.snapshots.end(),
+                            result.flushed.snapshots.begin(),
+                            result.flushed.snapshots.end());
+    return result;
+}
+
+void requireSnapshotsEquivalent(
+    TestRunner& test,
+    const std::vector<std::shared_ptr<const pipeline::BearingSnapshot>>& expected,
+    const std::vector<std::shared_ptr<const pipeline::BearingSnapshot>>& actual,
+    const std::string& context)
+{
+    test.require(expected.size() == actual.size(), context + ": snapshot count matches");
+    if (expected.size() != actual.size()) {
+        return;
+    }
+
+    for (std::size_t snapshotIndex = 0; snapshotIndex < expected.size(); ++snapshotIndex) {
+        const auto& left = expected[snapshotIndex];
+        const auto& right = actual[snapshotIndex];
+        test.require(left != nullptr && right != nullptr, context + ": snapshots are present");
+        if (!left || !right) {
+            continue;
+        }
+
+        test.require(left->counters.completeCandidates == right->counters.completeCandidates,
+                     context + ": complete counters match");
+        test.require(left->counters.incompleteCandidates
+                         == right->counters.incompleteCandidates,
+                     context + ": incomplete counters match");
+        test.require(left->counters.missingBeam0Candidates
+                         == right->counters.missingBeam0Candidates,
+                     context + ": missing beam0 counters match");
+        test.require(left->counters.missingBeam1Candidates
+                         == right->counters.missingBeam1Candidates,
+                     context + ": missing beam1 counters match");
+        test.require(left->estimates.size() == right->estimates.size(),
+                     context + ": estimate count matches");
+        if (left->estimates.size() != right->estimates.size()) {
+            continue;
+        }
+
+        for (std::size_t estimateIndex = 0; estimateIndex < left->estimates.size();
+             ++estimateIndex) {
+            const auto& expectedEstimate = left->estimates[estimateIndex];
+            const auto& actualEstimate = right->estimates[estimateIndex];
+            test.require(expectedEstimate.bandIndex == actualEstimate.bandIndex,
+                         context + ": band index matches");
+            test.require(expectedEstimate.frequencyBin == actualEstimate.frequencyBin,
+                         context + ": frequency bin matches");
+            test.require(expectedEstimate.frequencyHz == actualEstimate.frequencyHz,
+                         context + ": center frequency matches");
+            test.require(expectedEstimate.sampleIndex == actualEstimate.sampleIndex,
+                         context + ": representative sample index matches");
+            test.require(expectedEstimate.beam0Peak == actualEstimate.beam0Peak,
+                         context + ": beam0 peak matches");
+            test.require(expectedEstimate.beam1Peak == actualEstimate.beam1Peak,
+                         context + ": beam1 peak matches");
+            test.requireNear(actualEstimate.bearingAzimuthDeg,
+                             expectedEstimate.bearingAzimuthDeg,
+                             0.0001,
+                             context + ": bearing matches");
+            test.requireNear(actualEstimate.quality,
+                             expectedEstimate.quality,
+                             0.0001,
+                             context + ": quality matches");
+        }
+    }
+}
+
 void testEqualBeamsPointAtAntennaAzimuth(TestRunner& test)
 {
     pipeline::BearingAggregator aggregator(makeConfig());
@@ -253,6 +348,75 @@ void testMapAndFlatStorageProduceEquivalentEstimate(TestRunner& test)
                      "map and flat storage keep quality");
 }
 
+void testBlockLocalFastPathMatchesLegacyDirectPath(TestRunner& test)
+{
+    auto legacyConfig =
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::MapByBandAndBin);
+    legacyConfig.trustedSamples = true;
+    legacyConfig.enableDetailedTiming = false;
+    auto fastConfig =
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::FlatBandBinVector);
+    fastConfig.trustedSamples = true;
+    fastConfig.enableDetailedTiming = false;
+
+    pipeline::BearingAggregator legacyAggregator(legacyConfig);
+    pipeline::BearingAggregator fastAggregator(fastConfig);
+    const std::vector<core::SignalSample> samples{
+        sample(0, 150, 0, 70, 0),
+        sample(1, 150, 1, 80, 0),
+        sample(2, 150, 0, 90, 0),
+        sample(3, 160, 0, 60, 1),
+        sample(4, 160, 1, 100, 1),
+    };
+
+    const auto legacyRun = consumeAndFlushAll(legacyAggregator, samples, 45.0);
+    const auto fastRun = consumeAndFlushAll(fastAggregator, samples, 45.0);
+
+    test.require(!legacyRun.consumed.usedBlockLocalAccumulation,
+                 "legacy bearing mode does not use block-local accumulation");
+    test.require(fastRun.consumed.usedBlockLocalAccumulation,
+                 "fast bearing mode uses block-local accumulation");
+    requireSnapshotsEquivalent(test,
+                               legacyRun.snapshots,
+                               fastRun.snapshots,
+                               "bearing block-local/direct equivalence");
+    test.require(legacyAggregator.counters().completeCandidates
+                     == fastAggregator.counters().completeCandidates,
+                 "block-local and direct complete counters match");
+    test.require(legacyAggregator.counters().incompleteCandidates
+                     == fastAggregator.counters().incompleteCandidates,
+                 "block-local and direct incomplete counters match");
+}
+
+void testBlockLocalFastPathMatchesLegacyAcrossWindowBoundary(TestRunner& test)
+{
+    auto legacyConfig =
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::MapByBandAndBin);
+    legacyConfig.trustedSamples = true;
+    auto fastConfig =
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::FlatBandBinVector);
+    fastConfig.trustedSamples = true;
+
+    pipeline::BearingAggregator legacyAggregator(legacyConfig);
+    pipeline::BearingAggregator fastAggregator(fastConfig);
+    const std::vector<core::SignalSample> samples{
+        sample(19, 150, 0, 80, 0),
+        sample(19, 150, 1, 85, 0),
+        sample(20, 150, 0, 90, 0),
+        sample(20, 150, 1, 95, 0),
+    };
+
+    const auto legacyRun = consumeAndFlushAll(legacyAggregator, samples, 45.0);
+    const auto fastRun = consumeAndFlushAll(fastAggregator, samples, 45.0);
+
+    test.require(fastRun.consumed.usedBlockLocalAccumulation,
+                 "block-local fast path reports usage across window boundary");
+    requireSnapshotsEquivalent(test,
+                               legacyRun.snapshots,
+                               fastRun.snapshots,
+                               "bearing block-local/window boundary equivalence");
+}
+
 void testFlatStorageRejectsOutOfCapacityBand(TestRunner& test)
 {
     auto config = makeConfig();
@@ -269,8 +433,74 @@ void testFlatStorageRejectsOutOfCapacityBand(TestRunner& test)
 
     test.require(consumed.snapshots.empty() && flushed.snapshots.empty(),
                  "flat storage rejects out-of-capacity band without candidate");
+    test.require(consumed.usedBlockLocalAccumulation,
+                 "out-of-capacity fast path reports block-local eligibility");
     test.require(aggregator.counters().invalidSamples == 2,
                  "flat storage counts out-of-capacity band as invalid samples");
+}
+
+void testBlockLocalPreservesMissingBeamCounters(TestRunner& test)
+{
+    auto legacyConfig =
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::MapByBandAndBin);
+    legacyConfig.trustedSamples = true;
+    auto fastConfig =
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::FlatBandBinVector);
+    fastConfig.trustedSamples = true;
+
+    pipeline::BearingAggregator legacyAggregator(legacyConfig);
+    pipeline::BearingAggregator fastAggregator(fastConfig);
+    const std::vector<core::SignalSample> samples{
+        sample(0, 150, 0, 80, 0),
+        sample(1, 160, 0, 90, 1),
+    };
+
+    const auto legacyRun = consumeAndFlushAll(legacyAggregator, samples, 45.0);
+    const auto fastRun = consumeAndFlushAll(fastAggregator, samples, 45.0);
+
+    requireSnapshotsEquivalent(test,
+                               legacyRun.snapshots,
+                               fastRun.snapshots,
+                               "bearing block-local missing beam equivalence");
+    test.require(fastAggregator.counters().incompleteCandidates == 2,
+                 "block-local counts incomplete candidates");
+    test.require(fastAggregator.counters().missingBeam1Candidates == 2,
+                 "block-local preserves missing beam1 counters");
+}
+
+void testDetailedTimingToggle(TestRunner& test)
+{
+    auto disabledConfig =
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::FlatBandBinVector);
+    disabledConfig.enableDetailedTiming = false;
+    pipeline::BearingAggregator disabledAggregator(disabledConfig);
+    const auto disabled = disabledAggregator.consume(std::vector<core::SignalSample>{
+        sample(0, 150, 0, 80),
+        sample(0, 150, 1, 85),
+        sample(20, 150, 0, 90),
+        sample(20, 150, 1, 95),
+    });
+    test.require(disabled.usedBlockLocalAccumulation,
+                 "timing-disabled consume still uses block-local accumulation");
+    test.require(disabled.timing.windowCalculation == std::chrono::steady_clock::duration{}
+                     && disabled.timing.binCalculation == std::chrono::steady_clock::duration{}
+                     && disabled.timing.candidateUpdate == std::chrono::steady_clock::duration{}
+                     && disabled.timing.closeWindow == std::chrono::steady_clock::duration{}
+                     && disabled.timing.snapshotBuild == std::chrono::steady_clock::duration{}
+                     && disabled.timing.estimateCalculation
+                         == std::chrono::steady_clock::duration{},
+                 "detailed bearing sub-timings stay zero when disabled");
+
+    auto enabledConfig = disabledConfig;
+    enabledConfig.enableDetailedTiming = true;
+    pipeline::BearingAggregator enabledAggregator(enabledConfig);
+    const auto enabledRun = consumeAndFlushAll(enabledAggregator,
+                                               {
+                                                   sample(0, 150, 0, 80),
+                                                   sample(0, 150, 1, 85),
+                                               });
+    test.require(!enabledRun.snapshots.empty(),
+                 "detailed timing enabled still produces bearing results");
 }
 
 void testFastWindowSplitsAtDivisibleBoundary(TestRunner& test)
@@ -381,7 +611,11 @@ int main()
     testManySamplesInOneWindowDoNotCreatePerCandidateSpam(test);
     testSequenceIsImmutableAndIncreases(test);
     testMapAndFlatStorageProduceEquivalentEstimate(test);
+    testBlockLocalFastPathMatchesLegacyDirectPath(test);
+    testBlockLocalFastPathMatchesLegacyAcrossWindowBoundary(test);
     testFlatStorageRejectsOutOfCapacityBand(test);
+    testBlockLocalPreservesMissingBeamCounters(test);
+    testDetailedTimingToggle(test);
     testFastWindowSplitsAtDivisibleBoundary(test);
     testExactFallbackWindowSplitsAtNonDivisibleBoundary(test);
     testFastBinBoundariesAndOutOfRangeSamples(test);

@@ -506,6 +506,9 @@ void ProcessingEngine::processBearingStage(const SignalBlock& block)
         if (bearingResult.usedFastCandidateStorage) {
             m_metrics->recordBearingFastCandidateStorageBlock();
         }
+        if (bearingResult.usedBlockLocalAccumulation) {
+            m_metrics->recordBearingBlockLocalAccumulationBlock();
+        }
     }
     Clock::duration bearingPublishLatency{};
     publishBearingSnapshots(std::move(bearingResult),

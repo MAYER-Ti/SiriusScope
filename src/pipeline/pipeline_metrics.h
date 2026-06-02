@@ -139,6 +139,7 @@ struct PipelineMetricsSnapshot
     std::uint64_t missingBeam1Candidates = 0;
     double bearingAggregationLatencyMaxMs = 0.0;
     std::uint64_t bearingFastCandidateStorageBlocks = 0;
+    std::uint64_t bearingBlockLocalAccumulationBlocks = 0;
     std::uint64_t producedSignalParameterSnapshots = 0;
     std::uint64_t signalParameterTrustedFixedBandFastPathBlocks = 0;
     std::uint64_t parallelFanOutBlocks = 0;
@@ -260,6 +261,7 @@ public:
     void recordParallelFanOutEndToEndLatency(
         std::chrono::steady_clock::duration elapsed);
     void recordBearingFastCandidateStorageBlock();
+    void recordBearingBlockLocalAccumulationBlock();
     void recordSpectrumFastPathUsage(bool fastWindow,
                                      bool fastBin,
                                      bool fastBandSummary);
@@ -344,6 +346,7 @@ private:
     std::uint64_t m_parallelFanOutRejectedBlocks = 0;
     std::array<StageMetricsSnapshot, 4> m_stageMetrics;
     std::uint64_t m_bearingFastCandidateStorageBlocks = 0;
+    std::uint64_t m_bearingBlockLocalAccumulationBlocks = 0;
     std::uint64_t m_spectrumFastWindowBlocks = 0;
     std::uint64_t m_spectrumFastBinBlocks = 0;
     std::uint64_t m_spectrumFastBandSummaryBlocks = 0;

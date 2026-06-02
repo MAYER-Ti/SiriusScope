@@ -38,6 +38,7 @@ void PipelineMetrics::reset()
     m_parallelFanOutRejectedBlocks = 0;
     m_stageMetrics = {};
     m_bearingFastCandidateStorageBlocks = 0;
+    m_bearingBlockLocalAccumulationBlocks = 0;
     m_spectrumFastWindowBlocks = 0;
     m_spectrumFastBinBlocks = 0;
     m_spectrumFastBandSummaryBlocks = 0;
@@ -490,6 +491,12 @@ void PipelineMetrics::recordBearingFastCandidateStorageBlock()
     ++m_bearingFastCandidateStorageBlocks;
 }
 
+void PipelineMetrics::recordBearingBlockLocalAccumulationBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_bearingBlockLocalAccumulationBlocks;
+}
+
 void PipelineMetrics::recordSpectrumFastPathUsage(bool fastWindow,
                                                   bool fastBin,
                                                   bool fastBandSummary)
@@ -622,6 +629,8 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.bearingAggregationLatencyMaxMs =
         static_cast<double>(m_bearingAggregationLatencyMax.count());
     snapshot.bearingFastCandidateStorageBlocks = m_bearingFastCandidateStorageBlocks;
+    snapshot.bearingBlockLocalAccumulationBlocks =
+        m_bearingBlockLocalAccumulationBlocks;
     snapshot.producedSignalParameterSnapshots = m_producedSignalParameterSnapshots;
     snapshot.signalParameterTrustedFixedBandFastPathBlocks =
         m_signalParameterTrustedFixedBandFastPathBlocks;

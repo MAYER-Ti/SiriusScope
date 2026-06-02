@@ -268,10 +268,13 @@ void testBearingFastCandidateStorageCounter(TestRunner& test)
     metrics.recordBearingFastCandidateStorageBlock();
     metrics.recordBearingFastCandidateStorageBlock();
     metrics.recordBearingFastCandidateStorageBlock();
+    metrics.recordBearingBlockLocalAccumulationBlock();
 
     const auto snapshot = snapshotFor(metrics);
     test.require(snapshot.bearingFastCandidateStorageBlocks == 3,
                  "bearing fast candidate storage blocks are counted");
+    test.require(snapshot.bearingBlockLocalAccumulationBlocks == 1,
+                 "bearing block-local accumulation blocks are counted");
 }
 
 void testParallelFanOutMetrics(TestRunner& test)
@@ -452,6 +455,7 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordBearingSampleLoopLatency(std::chrono::milliseconds{2});
     metrics.recordBearingCandidateUpdateLatency(std::chrono::milliseconds{3});
     metrics.recordBearingFastCandidateStorageBlock();
+    metrics.recordBearingBlockLocalAccumulationBlock();
     metrics.recordParallelFanOutBlock();
     metrics.recordParallelFanOutFallbackBlock();
     metrics.recordParallelFanOutRejectedBlock();
@@ -506,6 +510,8 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears bearing candidate update latency count");
     test.require(snapshot.bearingFastCandidateStorageBlocks == 0,
                  "reset clears bearing fast candidate storage counter");
+    test.require(snapshot.bearingBlockLocalAccumulationBlocks == 0,
+                 "reset clears bearing block-local accumulation counter");
     test.require(snapshot.parallelFanOutBlocks == 0,
                  "reset clears parallel fan-out block counter");
     test.require(snapshot.parallelFanOutFallbackBlocks == 0,

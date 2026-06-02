@@ -113,6 +113,7 @@ void BearingAggregator::reset()
     m_counters = {};
     m_openWindow.reset();
     m_nextSnapshotSequenceId = 1;
+    resetLocalCandidateTouched();
 }
 
 void BearingAggregator::setConfig(BearingAggregatorConfig config)
@@ -173,6 +174,12 @@ bool BearingAggregator::usesFlatCandidateStorage() const noexcept
         == BearingCandidateStorageMode::FlatBandBinVector;
 }
 
+bool BearingAggregator::usesBlockLocalFastPath() const noexcept
+{
+    return m_config.trustedSamples && usesFlatCandidateStorage()
+        && m_config.bandCapacity > 0 && m_config.frequencyBinCount > 0;
+}
+
 bool BearingAggregator::hasValidUntrustedSample(
     const core::SignalSample& sample) const
 {
@@ -206,8 +213,14 @@ BearingAggregationResult BearingAggregator::consumeSamples(
 {
     BearingAggregationResult result;
     const auto totalStartedAt = Clock::now();
+    const bool detailedTiming = m_config.enableDetailedTiming;
+    const bool blockLocalFastPath = usesBlockLocalFastPath();
     result.usedFastCandidateStorage = usesFlatCandidateStorage();
+    result.usedBlockLocalAccumulation = blockLocalFastPath && !samples.empty();
     result.snapshots.reserve(2);
+    if (blockLocalFastPath) {
+        prepareLocalCandidateBuffers();
+    }
 
     const double blockAntennaAzimuthDeg =
         antennaAzimuthDeg.value_or(m_config.fallbackAntennaAzimuthDeg);
@@ -233,8 +246,8 @@ BearingAggregationResult BearingAggregator::consumeSamples(
             continue;
         }
 
-        const bool measureWindowCalculation =
-            shouldMeasureSampledTiming(windowCalculationCount++);
+        const bool measureWindowCalculation = detailedTiming
+            && shouldMeasureSampledTiming(windowCalculationCount++);
         const auto windowCalculationStartedAt = measureWindowCalculation
             ? Clock::now()
             : Clock::time_point{};
@@ -253,8 +266,8 @@ BearingAggregationResult BearingAggregator::consumeSamples(
             continue;
         }
 
-        const bool measureBinCalculation =
-            shouldMeasureSampledTiming(binCalculationCount++);
+        const bool measureBinCalculation = detailedTiming
+            && shouldMeasureSampledTiming(binCalculationCount++);
         const auto binCalculationStartedAt = measureBinCalculation
             ? Clock::now()
             : Clock::time_point{};
@@ -277,41 +290,59 @@ BearingAggregationResult BearingAggregator::consumeSamples(
         if (!m_openWindow) {
             openWindow(*windowIndex, sample.sampleIndex, blockAntennaAzimuthDeg);
         } else if (m_openWindow->windowIndex != *windowIndex) {
-            const auto closeStartedAt = Clock::now();
-            if (auto snapshot = closeOpenWindow(result.deltaCounters, &result.timing)) {
+            if (blockLocalFastPath) {
+                mergeLocalCandidatesIntoOpenWindow();
+            }
+            const auto closeStartedAt = detailedTiming ? Clock::now() : Clock::time_point{};
+            if (auto snapshot = closeOpenWindow(result.deltaCounters,
+                                                detailedTiming ? &result.timing : nullptr)) {
                 result.snapshots.push_back(std::move(snapshot));
             }
-            result.timing.closeWindow += Clock::now() - closeStartedAt;
+            if (detailedTiming) {
+                result.timing.closeWindow += Clock::now() - closeStartedAt;
+            }
             openWindow(*windowIndex, sample.sampleIndex, blockAntennaAzimuthDeg);
         }
 
-        const bool measureCandidateUpdate =
-            shouldMeasureSampledTiming(candidateUpdateCount++);
+        const bool measureCandidateUpdate = detailedTiming
+            && shouldMeasureSampledTiming(candidateUpdateCount++);
         const auto candidateUpdateStartedAt = measureCandidateUpdate
             ? Clock::now()
             : Clock::time_point{};
-        addSampleToOpenWindow(sample, binIndex, result.deltaCounters);
+        if (blockLocalFastPath) {
+            updateLocalWindowBounds(sample);
+            updateLocalCandidateForSample(sample, binIndex, result.deltaCounters);
+        } else {
+            addSampleToOpenWindow(sample, binIndex, result.deltaCounters);
+        }
         if (measureCandidateUpdate) {
             sampledCandidateUpdate += Clock::now() - candidateUpdateStartedAt;
             ++sampledCandidateUpdateCount;
         }
     }
+    if (blockLocalFastPath) {
+        mergeLocalCandidatesIntoOpenWindow();
+    }
     result.timing.sampleLoop = Clock::now() - sampleLoopStartedAt;
-    result.timing.windowCalculation += scaleSampledDuration(sampledWindowCalculation,
-                                                            sampledWindowCalculationCount,
-                                                            windowCalculationCount);
-    result.timing.binCalculation += scaleSampledDuration(sampledBinCalculation,
-                                                         sampledBinCalculationCount,
-                                                         binCalculationCount);
-    result.timing.candidateUpdate += scaleSampledDuration(sampledCandidateUpdate,
-                                                          sampledCandidateUpdateCount,
-                                                          candidateUpdateCount);
-    result.timing.windowCalculation =
-        std::min(result.timing.windowCalculation, result.timing.sampleLoop);
-    result.timing.binCalculation =
-        std::min(result.timing.binCalculation, result.timing.sampleLoop);
-    result.timing.candidateUpdate =
-        std::min(result.timing.candidateUpdate, result.timing.sampleLoop);
+    if (detailedTiming) {
+        result.timing.windowCalculation +=
+            scaleSampledDuration(sampledWindowCalculation,
+                                 sampledWindowCalculationCount,
+                                 windowCalculationCount);
+        result.timing.binCalculation += scaleSampledDuration(sampledBinCalculation,
+                                                             sampledBinCalculationCount,
+                                                             binCalculationCount);
+        result.timing.candidateUpdate +=
+            scaleSampledDuration(sampledCandidateUpdate,
+                                 sampledCandidateUpdateCount,
+                                 candidateUpdateCount);
+        result.timing.windowCalculation =
+            std::min(result.timing.windowCalculation, result.timing.sampleLoop);
+        result.timing.binCalculation =
+            std::min(result.timing.binCalculation, result.timing.sampleLoop);
+        result.timing.candidateUpdate =
+            std::min(result.timing.candidateUpdate, result.timing.sampleLoop);
+    }
     result.timing.total = Clock::now() - totalStartedAt;
 
     return result;
@@ -321,12 +352,19 @@ BearingAggregationResult BearingAggregator::flush()
 {
     BearingAggregationResult result;
     const auto totalStartedAt = Clock::now();
+    const bool detailedTiming = m_config.enableDetailedTiming;
     result.usedFastCandidateStorage = usesFlatCandidateStorage();
-    const auto closeStartedAt = Clock::now();
-    if (auto snapshot = closeOpenWindow(result.deltaCounters, &result.timing)) {
+    if (usesBlockLocalFastPath()) {
+        mergeLocalCandidatesIntoOpenWindow();
+    }
+    const auto closeStartedAt = detailedTiming ? Clock::now() : Clock::time_point{};
+    if (auto snapshot = closeOpenWindow(result.deltaCounters,
+                                        detailedTiming ? &result.timing : nullptr)) {
         result.snapshots.push_back(std::move(snapshot));
     }
-    result.timing.closeWindow = Clock::now() - closeStartedAt;
+    if (detailedTiming) {
+        result.timing.closeWindow = Clock::now() - closeStartedAt;
+    }
     result.timing.total = Clock::now() - totalStartedAt;
     return result;
 }
@@ -529,6 +567,163 @@ void BearingAggregator::addSampleToOpenWindow(
     }
 }
 
+void BearingAggregator::prepareLocalCandidateBuffers()
+{
+    if (!usesBlockLocalFastPath()) {
+        resetLocalCandidateTouched();
+        return;
+    }
+
+    const auto frequencyBinCount = static_cast<std::size_t>(m_config.frequencyBinCount);
+    const auto candidateCount = m_config.bandCapacity * frequencyBinCount;
+    if (m_localCandidates.size() != candidateCount) {
+        m_localCandidates.assign(candidateCount, LocalBearingCandidateAccumulator{});
+        m_touchedCandidateIndexes.clear();
+        m_localHasSamples = false;
+    }
+    if (m_touchedCandidateIndexes.capacity() < candidateCount) {
+        m_touchedCandidateIndexes.reserve(candidateCount);
+    }
+}
+
+void BearingAggregator::resetLocalCandidateTouched()
+{
+    for (const auto index : m_touchedCandidateIndexes) {
+        if (index < m_localCandidates.size()) {
+            m_localCandidates[index] = {};
+        }
+    }
+    m_touchedCandidateIndexes.clear();
+    m_localHasSamples = false;
+    m_localFirstSampleIndex = 0;
+    m_localLastSampleIndex = 0;
+}
+
+void BearingAggregator::updateLocalWindowBounds(const core::SignalSample& sample)
+{
+    if (!m_localHasSamples) {
+        m_localHasSamples = true;
+        m_localFirstSampleIndex = sample.sampleIndex;
+        m_localLastSampleIndex = sample.sampleIndex;
+        return;
+    }
+
+    m_localFirstSampleIndex = std::min(m_localFirstSampleIndex, sample.sampleIndex);
+    m_localLastSampleIndex = std::max(m_localLastSampleIndex, sample.sampleIndex);
+}
+
+void BearingAggregator::updateLocalCandidateForSample(
+    const core::SignalSample& sample,
+    int binIndex,
+    BearingAggregatorCounters& deltaCounters)
+{
+    if (binIndex < 0 || sample.bandIndex < 0) {
+        ++m_counters.invalidSamples;
+        ++deltaCounters.invalidSamples;
+        return;
+    }
+
+    const auto band = static_cast<std::size_t>(sample.bandIndex);
+    if (band >= m_config.bandCapacity) {
+        ++m_counters.invalidSamples;
+        ++deltaCounters.invalidSamples;
+        return;
+    }
+
+    const auto bin = static_cast<std::size_t>(binIndex);
+    const auto frequencyBinCount = static_cast<std::size_t>(m_config.frequencyBinCount);
+    if (bin >= frequencyBinCount) {
+        ++m_counters.invalidSamples;
+        ++deltaCounters.invalidSamples;
+        return;
+    }
+
+    const auto index = band * frequencyBinCount + bin;
+    if (index >= m_localCandidates.size()) {
+        ++m_counters.invalidSamples;
+        ++deltaCounters.invalidSamples;
+        return;
+    }
+
+    auto& candidate = m_localCandidates[index];
+    if (!candidate.hasSamples) {
+        candidate.hasSamples = true;
+        candidate.bandIndex = sample.bandIndex;
+        candidate.frequencyBin = static_cast<std::uint32_t>(binIndex);
+        candidate.centerFrequencyHz = centerFrequencyForBin(candidate.frequencyBin);
+        candidate.firstSampleIndex = sample.sampleIndex;
+        candidate.lastSampleIndex = sample.sampleIndex;
+        m_touchedCandidateIndexes.push_back(static_cast<std::uint32_t>(index));
+    } else {
+        candidate.firstSampleIndex =
+            std::min(candidate.firstSampleIndex, sample.sampleIndex);
+        candidate.lastSampleIndex =
+            std::max(candidate.lastSampleIndex, sample.sampleIndex);
+    }
+
+    const auto amplitude = clampAmplitude(sample.amplitude);
+    if (sample.beamIndex == 0) {
+        candidate.beam0Peak = std::max(candidate.beam0Peak, amplitude);
+        candidate.hasBeam0 = true;
+    } else if (sample.beamIndex == 1) {
+        candidate.beam1Peak = std::max(candidate.beam1Peak, amplitude);
+        candidate.hasBeam1 = true;
+    }
+}
+
+void BearingAggregator::mergeLocalCandidatesIntoOpenWindow()
+{
+    if (!m_openWindow || m_touchedCandidateIndexes.empty()) {
+        resetLocalCandidateTouched();
+        return;
+    }
+
+    if (m_localHasSamples) {
+        m_openWindow->firstSampleIndex =
+            std::min(m_openWindow->firstSampleIndex, m_localFirstSampleIndex);
+        m_openWindow->lastSampleIndex =
+            std::max(m_openWindow->lastSampleIndex, m_localLastSampleIndex);
+    }
+
+    for (const auto index : m_touchedCandidateIndexes) {
+        if (index >= m_localCandidates.size()
+            || index >= m_openWindow->candidateVector.size()
+            || index >= m_openWindow->candidateUsed.size()) {
+            continue;
+        }
+
+        const auto& local = m_localCandidates[index];
+        if (!local.hasSamples) {
+            continue;
+        }
+
+        auto& destination = m_openWindow->candidateVector[index];
+        if (m_openWindow->candidateUsed[index] == 0) {
+            m_openWindow->candidateUsed[index] = 1;
+            ++m_openWindow->usedCandidateCount;
+            destination.bandIndex = local.bandIndex;
+            destination.frequencyBin = local.frequencyBin;
+            destination.centerFrequencyHz = local.centerFrequencyHz;
+            destination.antennaAzimuthDeg = m_openWindow->antennaAzimuthDeg;
+            destination.firstSampleIndex = local.firstSampleIndex;
+            destination.lastSampleIndex = local.lastSampleIndex;
+            destination.hasSamples = true;
+        } else {
+            destination.firstSampleIndex =
+                std::min(destination.firstSampleIndex, local.firstSampleIndex);
+            destination.lastSampleIndex =
+                std::max(destination.lastSampleIndex, local.lastSampleIndex);
+        }
+
+        destination.beam0Peak = std::max(destination.beam0Peak, local.beam0Peak);
+        destination.beam1Peak = std::max(destination.beam1Peak, local.beam1Peak);
+        destination.hasBeam0 = destination.hasBeam0 || local.hasBeam0;
+        destination.hasBeam1 = destination.hasBeam1 || local.hasBeam1;
+    }
+
+    resetLocalCandidateTouched();
+}
+
 std::shared_ptr<const BearingSnapshot> BearingAggregator::closeOpenWindow(
     BearingAggregatorCounters& deltaCounters,
     BearingAggregatorTiming* timing)
@@ -541,7 +736,7 @@ std::shared_ptr<const BearingSnapshot> BearingAggregator::closeOpenWindow(
         return {};
     }
 
-    const auto snapshotBuildStartedAt = Clock::now();
+    const auto snapshotBuildStartedAt = timing ? Clock::now() : Clock::time_point{};
     Clock::duration estimateCalculationElapsed{};
     auto snapshot = std::make_shared<BearingSnapshot>();
     snapshot->sequenceId = m_nextSnapshotSequenceId++;
@@ -568,11 +763,13 @@ std::shared_ptr<const BearingSnapshot> BearingAggregator::closeOpenWindow(
         ++m_counters.completeCandidates;
         ++deltaCounters.completeCandidates;
         ++snapshot->counters.completeCandidates;
-        const auto estimateStartedAt = Clock::now();
+        const auto estimateStartedAt = timing ? Clock::now() : Clock::time_point{};
         if (auto estimate = makeEstimate(candidate)) {
             snapshot->estimates.push_back(*estimate);
         }
-        estimateCalculationElapsed += Clock::now() - estimateStartedAt;
+        if (timing) {
+            estimateCalculationElapsed += Clock::now() - estimateStartedAt;
+        }
     };
 
     if (usesFlatCandidateStorage()) {

@@ -168,6 +168,11 @@ bool detailedSpectrumTimingEnabled()
     return envFlagEnabled("SIRIUSSCOPE_ENABLE_DETAILED_SPECTRUM_TIMING");
 }
 
+bool detailedBearingTimingEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_ENABLE_DETAILED_BEARING_TIMING");
+}
+
 bool parallelProcessingEngineEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE");
@@ -576,6 +581,7 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     config.bearing.windowPeriodNs = kRowPeriodNs;
     config.bearing.fallbackAntennaAzimuthDeg = 45.0;
     config.bearing.timeBase = timeBase;
+    config.bearing.enableDetailedTiming = detailedBearingTimingEnabled();
 
     config.signalParameters.estimatorConfig.samplePeriodNs = timeBase.samplePeriodNs;
     if (parallelProcessingEngineEnabled()) {
@@ -908,6 +914,10 @@ void printAuditSummary(const AuditResult& result)
               << "  spectrumBlockLocalAccumulationBlocks = "
               << result.pipeline.spectrumBlockLocalAccumulationBlocks << '\n'
               << "Bearing micro-breakdown:\n"
+              << "  Bearing detailed timing: "
+              << (detailedBearingTimingEnabled() ? "enabled" : "disabled") << '\n'
+              << "  detailedBearingTimingEnabled = "
+              << (detailedBearingTimingEnabled() ? "true" : "false") << '\n'
               << "  sampleLoop avg/max = "
               << result.pipeline.bearingSampleLoopLatency.averageMs() << "/"
               << result.pipeline.bearingSampleLoopLatency.maxMs << '\n'
@@ -935,6 +945,8 @@ void printAuditSummary(const AuditResult& result)
               << '\n'
               << "  bearingFastCandidateStorageBlocks = "
               << result.pipeline.bearingFastCandidateStorageBlocks << '\n'
+              << "  bearingBlockLocalAccumulationBlocks = "
+              << result.pipeline.bearingBlockLocalAccumulationBlocks << '\n'
               << "Signal parameter micro-breakdown:\n"
               << "  ingest avg/max = "
               << result.pipeline.signalParameterIngestLatency.averageMs() << "/"

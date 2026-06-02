@@ -237,6 +237,11 @@ Current v1 implementation:
 - The v1 bearing estimate uses amplitude interpolation between two beam axes. Equal beam
   amplitudes point near the current antenna azimuth; stronger beam 0 / beam 1 amplitude
   shifts the estimate toward that beam axis.
+- The trusted high-load flat-storage path uses block-local candidate accumulation:
+  beam peaks are accumulated per block/window and only touched candidates are merged
+  into the open bearing window.
+- Detailed bearing micro-timing is disabled by default and can be enabled in perf tests
+  with `SIRIUSSCOPE_ENABLE_DETAILED_BEARING_TIMING=1`.
 - Incomplete candidates, missing beam 0, and missing beam 1 are counters in
   `BearingSnapshot` and pipeline diagnostics. They are not per-candidate warnings.
 - `BearingSnapshot` is immutable after publication and is exposed through

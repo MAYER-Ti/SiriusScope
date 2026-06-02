@@ -29,6 +29,14 @@ latest-value exchange model. `BearingAggregator` groups samples by time window,
 frequency bin, and band, pairs beam 0 / beam 1 peaks inside the window, and counts
 incomplete candidates instead of producing per-candidate diagnostics. The Qt layer polls
 snapshots and passes low-volume summaries to `ScanController` only while a scan is active.
+In the trusted high-load flat-storage path, bearing aggregation accumulates candidate
+peaks in block-local buffers and merges only touched candidates into the open bearing
+window. Detailed bearing micro-timing is disabled by default to keep `Clock::now()` calls
+out of the per-sample loop; perf tests can enable it with:
+
+```powershell
+$env:SIRIUSSCOPE_ENABLE_DETAILED_BEARING_TIMING = "1"
+```
 
 Signal parameter output is published as immutable `SignalParameterSnapshot` objects.
 `SignalParameterAggregator` reuses the processing accumulator inside the data plane and
