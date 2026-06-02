@@ -60,6 +60,39 @@ capacity, queue wait latency, service latency, submit failures, and processed
 blocks/samples. These metrics are used to identify whether high-load saturation is
 caused by one slow stage or by accumulated queueing delay.
 
+### Visual-stage overload policy
+
+`ParallelFanOut` can apply an audit-only visual overload policy to Spectrum and
+Waterfall stages. The default remains `LosslessRequired` for every stage, so ordinary
+runtime and strict no-drop validation behave as before unless the policy is enabled
+explicitly. `SignalParameter` is always normalized back to `LosslessRequired`, and
+Bearing remains lossless unless the perf audit enables best-effort bearing explicitly.
+
+When visual policy is enabled, pending visual jobs may be coalesced (`latest-only`) or
+dropped from the oldest pending backlog (`drop-oldest`). A skipped visual job still
+completes its fan-out context, so pooled blocks are released after the remaining stages
+finish. Aggregators are not called for skipped jobs and no snapshot is published for
+that skipped stage. All skipped/coalesced/dropped visual jobs are counted per stage.
+
+Visual degradation is separate from critical data loss. It does not increment raw input
+drop counters, but it is reported in perf audit output. Strict target-raw runs fail on
+visual degradation unless it is explicitly allowed:
+
+```powershell
+$env:SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY = "1"
+$env:SIRIUSSCOPE_VISUAL_STAGE_POLICY = "latest-only"
+$env:SIRIUSSCOPE_ALLOW_VISUAL_DEGRADATION_IN_STRICT = "1"
+```
+
+Supported audit knobs are:
+
+```powershell
+$env:SIRIUSSCOPE_VISUAL_STAGE_POLICY = "latest-only" # or "drop-oldest"
+$env:SIRIUSSCOPE_VISUAL_MAX_QUEUE_WAIT_MS = "1000"
+$env:SIRIUSSCOPE_VISUAL_MAX_QUEUE_DEPTH_RATIO = "0.50"
+$env:SIRIUSSCOPE_VISUAL_BEARING_BEST_EFFORT = "0"
+```
+
 ```powershell
 $env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
 ```

@@ -454,6 +454,39 @@ void PipelineMetrics::recordStageQueueDepth(PipelineStageMetric stage,
     stageMetrics.queueMaxDepth = std::max(stageMetrics.queueMaxDepth, queueDepth);
 }
 
+void PipelineMetrics::recordStageDroppedByPolicy(PipelineStageMetric stage,
+                                                 std::size_t count)
+{
+    std::lock_guard lock(m_mutex);
+    auto& stageMetrics = m_stageMetrics[stageMetricIndex(stage)];
+    const auto value = static_cast<std::uint64_t>(count);
+    stageMetrics.droppedByOverloadPolicy += value;
+    stageMetrics.skippedBlocks += value;
+}
+
+void PipelineMetrics::recordStageCoalescedByPolicy(PipelineStageMetric stage,
+                                                   std::size_t count)
+{
+    std::lock_guard lock(m_mutex);
+    auto& stageMetrics = m_stageMetrics[stageMetricIndex(stage)];
+    const auto value = static_cast<std::uint64_t>(count);
+    stageMetrics.coalescedByOverloadPolicy += value;
+    stageMetrics.skippedBlocks += value;
+}
+
+void PipelineMetrics::recordStageSkipped(PipelineStageMetric stage,
+                                         StageSkipReason reason)
+{
+    switch (reason) {
+    case StageSkipReason::DroppedByOverloadPolicy:
+        recordStageDroppedByPolicy(stage, 1);
+        break;
+    case StageSkipReason::ReplacedByLatest:
+        recordStageCoalescedByPolicy(stage, 1);
+        break;
+    }
+}
+
 void PipelineMetrics::recordWaterfallStageProcessedBlock()
 {
     std::lock_guard lock(m_mutex);
@@ -642,6 +675,35 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.bearingStage = m_stageMetrics[stageMetricIndex(PipelineStageMetric::Bearing)];
     snapshot.signalParameterStage =
         m_stageMetrics[stageMetricIndex(PipelineStageMetric::SignalParameter)];
+    snapshot.waterfallStageDroppedByPolicy =
+        snapshot.waterfallStage.droppedByOverloadPolicy;
+    snapshot.spectrumStageDroppedByPolicy =
+        snapshot.spectrumStage.droppedByOverloadPolicy;
+    snapshot.bearingStageDroppedByPolicy =
+        snapshot.bearingStage.droppedByOverloadPolicy;
+    snapshot.signalParameterStageDroppedByPolicy =
+        snapshot.signalParameterStage.droppedByOverloadPolicy;
+    snapshot.waterfallStageCoalescedByPolicy =
+        snapshot.waterfallStage.coalescedByOverloadPolicy;
+    snapshot.spectrumStageCoalescedByPolicy =
+        snapshot.spectrumStage.coalescedByOverloadPolicy;
+    snapshot.bearingStageCoalescedByPolicy =
+        snapshot.bearingStage.coalescedByOverloadPolicy;
+    snapshot.signalParameterStageCoalescedByPolicy =
+        snapshot.signalParameterStage.coalescedByOverloadPolicy;
+    snapshot.waterfallStageSkippedBlocks = snapshot.waterfallStage.skippedBlocks;
+    snapshot.spectrumStageSkippedBlocks = snapshot.spectrumStage.skippedBlocks;
+    snapshot.bearingStageSkippedBlocks = snapshot.bearingStage.skippedBlocks;
+    snapshot.signalParameterStageSkippedBlocks =
+        snapshot.signalParameterStage.skippedBlocks;
+    snapshot.visualStageDroppedBlocks =
+        snapshot.waterfallStageDroppedByPolicy
+        + snapshot.spectrumStageDroppedByPolicy
+        + snapshot.bearingStageDroppedByPolicy;
+    snapshot.visualStageCoalescedBlocks =
+        snapshot.waterfallStageCoalescedByPolicy
+        + snapshot.spectrumStageCoalescedByPolicy
+        + snapshot.bearingStageCoalescedByPolicy;
     const auto applyLiveQueueMetrics = [](StageMetricsSnapshot& stage,
                                           std::size_t depth,
                                           std::size_t capacity) {

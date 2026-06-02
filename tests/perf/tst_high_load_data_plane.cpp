@@ -134,6 +134,13 @@ struct AuditResult
     std::chrono::seconds duration{0};
     pipeline::ProcessingMode processingMode = pipeline::ProcessingMode::Sequential;
     LatencyBudget latencyBudget;
+    bool visualBackpressureEnabled = false;
+    pipeline::StageOverloadPolicy visualStagePolicy =
+        pipeline::StageOverloadPolicy::LosslessRequired;
+    std::chrono::milliseconds visualMaxQueueWait{1000};
+    double visualMaxQueueDepthRatio = 0.50;
+    bool visualBearingBestEffort = false;
+    bool allowVisualDegradationInStrict = false;
     std::size_t batchSizeMultiplier = 1;
     CapacityProfile capacityProfile = CapacityProfile::Current;
     std::string capacityProfileName = "current";
@@ -531,6 +538,22 @@ double envDepthRatioOr(const char* name, double defaultValue)
     return parseDepthRatio(std::getenv(name)).value_or(defaultValue);
 }
 
+std::optional<pipeline::StageOverloadPolicy> parseVisualStagePolicy(const char* text)
+{
+    if (!text || *text == '\0') {
+        return std::nullopt;
+    }
+
+    const std::string value(text);
+    if (value == "latest-only") {
+        return pipeline::StageOverloadPolicy::RealtimeLatestOnly;
+    }
+    if (value == "drop-oldest") {
+        return pipeline::StageOverloadPolicy::BoundedLatencyDropOldest;
+    }
+    return std::nullopt;
+}
+
 bool envFlagEnabled(const char* name)
 {
     const char* value = std::getenv(name);
@@ -540,6 +563,50 @@ bool envFlagEnabled(const char* name)
 
     const std::string text(value);
     return !text.empty() && text != "0";
+}
+
+bool visualBackpressurePolicyEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY");
+}
+
+pipeline::StageOverloadPolicy envVisualStagePolicyOrDefault()
+{
+    const char* value = std::getenv("SIRIUSSCOPE_VISUAL_STAGE_POLICY");
+    if (!value) {
+        return pipeline::StageOverloadPolicy::RealtimeLatestOnly;
+    }
+
+    const auto parsed = parseVisualStagePolicy(value);
+    if (parsed) {
+        return *parsed;
+    }
+
+    std::cout << "WARNING: invalid SIRIUSSCOPE_VISUAL_STAGE_POLICY='"
+              << value << "', using latest-only\n";
+    return pipeline::StageOverloadPolicy::RealtimeLatestOnly;
+}
+
+std::chrono::milliseconds envVisualMaxQueueWait()
+{
+    return std::chrono::milliseconds{
+        envPositiveIntOr("SIRIUSSCOPE_VISUAL_MAX_QUEUE_WAIT_MS", 1000),
+    };
+}
+
+double envVisualMaxQueueDepthRatio()
+{
+    return envDepthRatioOr("SIRIUSSCOPE_VISUAL_MAX_QUEUE_DEPTH_RATIO", 0.50);
+}
+
+bool visualBearingBestEffortEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_VISUAL_BEARING_BEST_EFFORT");
+}
+
+bool visualDegradationAllowedInStrict()
+{
+    return envFlagEnabled("SIRIUSSCOPE_ALLOW_VISUAL_DEGRADATION_IN_STRICT");
 }
 
 std::size_t envBatchMultiplierOrDefault()
@@ -797,6 +864,20 @@ const char* processingModeName(pipeline::ProcessingMode mode)
     }
 
     return "Unknown";
+}
+
+const char* stageOverloadPolicyName(pipeline::StageOverloadPolicy policy)
+{
+    switch (policy) {
+    case pipeline::StageOverloadPolicy::LosslessRequired:
+        return "lossless";
+    case pipeline::StageOverloadPolicy::BoundedLatencyDropOldest:
+        return "drop-oldest";
+    case pipeline::StageOverloadPolicy::RealtimeLatestOnly:
+        return "latest-only";
+    }
+
+    return "unknown";
 }
 
 const char* budgetStatusName(BudgetStatus status)
@@ -1236,6 +1317,10 @@ void printParallelFanOutBacklog(const AuditResult& result)
                   << "  " << stage.name << " enqueued/dequeued/processed/failures = "
                   << metrics.enqueuedBlocks << "/" << metrics.dequeuedBlocks << "/"
                   << metrics.processedBlocks << "/" << metrics.submitFailures << '\n'
+                  << "  " << stage.name << " dropped/coalesced/skipped = "
+                  << metrics.droppedByOverloadPolicy << "/"
+                  << metrics.coalescedByOverloadPolicy << "/"
+                  << metrics.skippedBlocks << '\n'
                   << "  " << stage.name << " processedBlocks/samples = "
                   << metrics.processedBlocks << "/" << metrics.processedSamples << '\n'
                   << "  " << stage.name << " throughput blocks/s samples/s = "
@@ -1357,6 +1442,25 @@ hardware::BcoStreamConfig makeStreamConfig(hardware::SimulatorLoadProfile profil
     return config;
 }
 
+pipeline::StageOverloadConfig makeStageOverloadConfigFromEnv()
+{
+    pipeline::StageOverloadConfig config;
+    if (!visualBackpressurePolicyEnabled()) {
+        return config;
+    }
+
+    const auto visualPolicy = envVisualStagePolicyOrDefault();
+    config.waterfall = visualPolicy;
+    config.spectrum = visualPolicy;
+    config.bearing = visualBearingBestEffortEnabled()
+        ? visualPolicy
+        : pipeline::StageOverloadPolicy::LosslessRequired;
+    config.signalParameter = pipeline::StageOverloadPolicy::LosslessRequired;
+    config.maxVisualQueueWait = envVisualMaxQueueWait();
+    config.maxVisualQueueDepthRatio = envVisualMaxQueueDepthRatio();
+    return config;
+}
+
 pipeline::DataIngestPipelineConfig makePipelineConfig(
     const core::TimeBase& timeBase,
     hardware::SimulatorLoadProfile profile,
@@ -1428,6 +1532,7 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
             ? capacity.stageQueueCapacity
             : 64;
     }
+    config.processing.overloadPolicy = makeStageOverloadConfigFromEnv();
     return config;
 }
 
@@ -1515,6 +1620,17 @@ AuditResult runAudit(std::chrono::seconds duration,
     result.estimatedPoolBytes =
         estimatedPoolBytes(result.blockPoolCapacity, result.samplesPerBlock);
     result.processingMode = pipelineConfig.processing.processingMode;
+    result.visualBackpressureEnabled = visualBackpressurePolicyEnabled();
+    result.visualStagePolicy = result.visualBackpressureEnabled
+        ? envVisualStagePolicyOrDefault()
+        : pipeline::StageOverloadPolicy::LosslessRequired;
+    result.visualMaxQueueWait =
+        pipelineConfig.processing.overloadPolicy.maxVisualQueueWait;
+    result.visualMaxQueueDepthRatio =
+        pipelineConfig.processing.overloadPolicy.maxVisualQueueDepthRatio;
+    result.visualBearingBestEffort =
+        result.visualBackpressureEnabled && visualBearingBestEffortEnabled();
+    result.allowVisualDegradationInStrict = visualDegradationAllowedInStrict();
     std::unique_ptr<pipeline::DataIngestPipeline> dataPipeline;
     try {
         dataPipeline = std::make_unique<pipeline::DataIngestPipeline>(
@@ -1643,6 +1759,12 @@ AuditResult runAudit(std::chrono::seconds duration,
     return result;
 }
 
+bool criticalNoDropPasses(const AuditResult& result);
+std::uint64_t visualStageSkippedBlocks(const AuditResult& result);
+bool visualDegradationActive(const AuditResult& result);
+BudgetStatus visualDegradationStatus(const AuditResult& result);
+const char* passFailName(bool pass);
+
 void printAuditSummary(const AuditResult& result)
 {
     const double sourceRawThroughputTargetRatio = ratioOrZero(
@@ -1687,6 +1809,20 @@ void printAuditSummary(const AuditResult& result)
               << "  samplesPerBlock = " << result.samplesPerBlock << '\n'
               << "  estimatedBlockBytes = " << result.estimatedBlockBytes << '\n'
               << "  estimatedPoolBytes = " << result.estimatedPoolBytes << '\n'
+              << "Overload policy:\n"
+              << "  visualBackpressureEnabled = "
+              << (result.visualBackpressureEnabled ? "true" : "false") << '\n'
+              << "  visualStagePolicy = "
+              << stageOverloadPolicyName(result.visualStagePolicy) << '\n'
+              << "  visualMaxQueueWaitMs = "
+              << result.visualMaxQueueWait.count() << '\n'
+              << "  visualMaxQueueDepthRatio = "
+              << result.visualMaxQueueDepthRatio << '\n'
+              << "  visualBearingBestEffort = "
+              << (result.visualBearingBestEffort ? "true" : "false") << '\n'
+              << "  allowVisualDegradationInStrict = "
+              << (result.allowVisualDegradationInStrict ? "true" : "false")
+              << '\n'
               << "  source producedSamples = " << result.source.producedSamples << '\n'
               << "  source producedBatches = " << result.source.producedBatches << '\n'
               << "  source producedSamplesPerBatchAvg = "
@@ -1786,6 +1922,35 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.signalParameterStageProcessedBlocks << '\n'
               << "  signalParameterStageBlocksPerSecond = "
               << stageBlocksPerSecond(result, result.pipeline.signalParameterStage) << '\n'
+              << "Visual stage policy results:\n"
+              << "  waterfall dropped/coalesced/skipped = "
+              << result.pipeline.waterfallStageDroppedByPolicy << "/"
+              << result.pipeline.waterfallStageCoalescedByPolicy << "/"
+              << result.pipeline.waterfallStageSkippedBlocks << '\n'
+              << "  spectrum dropped/coalesced/skipped = "
+              << result.pipeline.spectrumStageDroppedByPolicy << "/"
+              << result.pipeline.spectrumStageCoalescedByPolicy << "/"
+              << result.pipeline.spectrumStageSkippedBlocks << '\n'
+              << "  bearing dropped/coalesced/skipped = "
+              << result.pipeline.bearingStageDroppedByPolicy << "/"
+              << result.pipeline.bearingStageCoalescedByPolicy << "/"
+              << result.pipeline.bearingStageSkippedBlocks << '\n'
+              << "  signalParameter dropped/coalesced/skipped = "
+              << result.pipeline.signalParameterStageDroppedByPolicy << "/"
+              << result.pipeline.signalParameterStageCoalescedByPolicy << "/"
+              << result.pipeline.signalParameterStageSkippedBlocks << '\n'
+              << "Critical lossless status:\n"
+              << "  bridge rejectedBlocks = " << result.bridge.rejectedBlocks << '\n'
+              << "  blockPoolExhausted = "
+              << result.pipeline.blockPoolExhausted << '\n'
+              << "  input/processed = " << result.pipeline.inputSamples << "/"
+              << result.pipeline.processedSamples << '\n'
+              << "  signalParameter policy drops = "
+              << result.pipeline.signalParameterStageDroppedByPolicy << '\n'
+              << "  criticalNoDrop = "
+              << passFailName(criticalNoDropPasses(result)) << '\n'
+              << "  visualDegradation = "
+              << budgetStatusName(visualDegradationStatus(result)) << '\n'
               << "  blockPoolCapacity = " << result.pipeline.blockPoolCapacity << '\n'
               << "  blockPoolAvailable = " << result.pipeline.blockPoolAvailable << '\n'
               << "  blockPoolInUse = " << result.pipeline.blockPoolInUse << '\n'
@@ -2010,6 +2175,14 @@ void printSustainWarnings(const AuditResult& result)
                             + std::to_string(
                                 result.pipeline.parallelFanOutFallbackBlocks));
     }
+    if (visualDegradationActive(result)) {
+        printSustainWarning("visual stage degradation active: dropped="
+                            + std::to_string(result.pipeline.visualStageDroppedBlocks)
+                            + " coalesced="
+                            + std::to_string(result.pipeline.visualStageCoalescedBlocks)
+                            + " skipped="
+                            + std::to_string(visualStageSkippedBlocks(result)));
+    }
     const auto budgetEvaluation = evaluateLatencyBudget(result);
     if (!latencyBudgetIsHard(result) && budgetEvaluation.hasWarnings()) {
         printSustainWarning("latency/backlog budget exceeded in report-only mode");
@@ -2197,6 +2370,13 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
                  "strict target raw full pipeline has no fan-out blocks in flight after flush");
     test.require(result.pipeline.blockPoolInUse == 0,
                  "strict target raw full pipeline returns all blocks to the pool after flush");
+    test.require(result.pipeline.signalParameterStageDroppedByPolicy == 0,
+                 "strict target raw full pipeline keeps signal parameter policy drops at zero");
+    test.require(result.pipeline.signalParameterStageCoalescedByPolicy == 0,
+                 "strict target raw full pipeline keeps signal parameter policy coalesces at zero");
+    test.require(!visualDegradationActive(result)
+                     || result.allowVisualDegradationInStrict,
+                 "strict target raw full pipeline allows visual degradation only by explicit env");
     test.require(result.source.simulatorBackpressureEvents == 0,
                  "strict target raw full pipeline source reports no backpressure events");
     const double rawThroughputRelativeError =
@@ -2218,9 +2398,23 @@ double processedToInputRatio(const AuditResult& result)
                        static_cast<double>(result.pipeline.inputSamples));
 }
 
+bool visualDegradationActive(const AuditResult& result);
+
 const char* passFailName(bool pass)
 {
     return pass ? "PASS" : "FAIL";
+}
+
+BudgetStatus visualDegradationStatus(const AuditResult& result)
+{
+    if (!visualDegradationActive(result)) {
+        return BudgetStatus::Pass;
+    }
+    if (strictTargetRawPipelineSustainRequired()
+        && !result.allowVisualDegradationInStrict) {
+        return BudgetStatus::Fail;
+    }
+    return BudgetStatus::Warn;
 }
 
 bool budgetStatusPasses(BudgetStatus status)
@@ -2377,7 +2571,21 @@ bool batchProfileBudgetPasses(const BatchProfileScore& score)
 
 bool auditInfrastructureSucceeded(const AuditResult& result);
 
-bool noDropPasses(const AuditResult& result)
+std::uint64_t visualStageSkippedBlocks(const AuditResult& result)
+{
+    return result.pipeline.waterfallStage.skippedBlocks
+        + result.pipeline.spectrumStage.skippedBlocks
+        + result.pipeline.bearingStage.skippedBlocks;
+}
+
+bool visualDegradationActive(const AuditResult& result)
+{
+    return result.pipeline.visualStageDroppedBlocks > 0
+        || result.pipeline.visualStageCoalescedBlocks > 0
+        || visualStageSkippedBlocks(result) > 0;
+}
+
+bool criticalNoDropPasses(const AuditResult& result)
 {
     return auditInfrastructureSucceeded(result)
         && result.profileSetupSucceeded
@@ -2397,7 +2605,17 @@ bool noDropPasses(const AuditResult& result)
         && result.pipeline.parallelFanOutRejectedBlocks == 0
         && result.pipeline.parallelFanOutInFlightBlocks == 0
         && result.pipeline.blockPoolInUse == 0
+        && result.pipeline.signalParameterStageDroppedByPolicy == 0
+        && result.pipeline.signalParameterStageCoalescedByPolicy == 0
         && result.source.simulatorBackpressureEvents == 0;
+}
+
+bool noDropPasses(const AuditResult& result)
+{
+    return criticalNoDropPasses(result)
+        && (!strictTargetRawPipelineSustainRequired()
+            || !visualDegradationActive(result)
+            || result.allowVisualDegradationInStrict);
 }
 
 std::uint64_t profileDroppedBlocks(const AuditResult& result)

@@ -52,10 +52,37 @@ enum class ProcessingMode
     ParallelFanOut,
 };
 
+enum class StageOverloadPolicy
+{
+    LosslessRequired,
+    BoundedLatencyDropOldest,
+    RealtimeLatestOnly,
+};
+
+struct StageOverloadConfig
+{
+    StageOverloadPolicy waterfall = StageOverloadPolicy::LosslessRequired;
+    StageOverloadPolicy spectrum = StageOverloadPolicy::LosslessRequired;
+    StageOverloadPolicy bearing = StageOverloadPolicy::LosslessRequired;
+    StageOverloadPolicy signalParameter = StageOverloadPolicy::LosslessRequired;
+    std::chrono::milliseconds maxVisualQueueWait{1000};
+    double maxVisualQueueDepthRatio = 0.50;
+};
+
+struct StageDebugDelayConfig
+{
+    std::chrono::milliseconds waterfall{0};
+    std::chrono::milliseconds spectrum{0};
+    std::chrono::milliseconds bearing{0};
+    std::chrono::milliseconds signalParameter{0};
+};
+
 struct ProcessingEngineConfig
 {
     ProcessingMode processingMode = ProcessingMode::Sequential;
     std::size_t stageQueueCapacity = 64;
+    StageOverloadConfig overloadPolicy;
+    StageDebugDelayConfig stageDebugDelay;
 };
 
 class ProcessingEngine
@@ -125,6 +152,13 @@ private:
         std::size_t queueCapacity = 0;
     };
 
+    struct SkippedStageJob
+    {
+        FanOutStage stage = FanOutStage::Waterfall;
+        StageJob job;
+        StageSkipReason reason = StageSkipReason::DroppedByOverloadPolicy;
+    };
+
     static constexpr std::size_t kFanOutStageCount = 4;
 
     void workerLoop();
@@ -160,12 +194,30 @@ private:
     void stopFanOutWorkers();
     void resetFanOutQueues();
     bool submitFanOutContext(const std::shared_ptr<FanOutBlockContext>& context);
+    bool submitFanOutStageLocked(FanOutStage stage,
+                                 const std::shared_ptr<FanOutBlockContext>& context,
+                                 std::chrono::steady_clock::time_point enqueuedAt,
+                                 std::vector<SkippedStageJob>* skippedJobs,
+                                 std::size_t* queueDepth);
+    std::size_t replacePendingStageJobsLocked(FanOutStage stage,
+                                              const std::shared_ptr<FanOutBlockContext>& context,
+                                              std::chrono::steady_clock::time_point enqueuedAt,
+                                              std::vector<SkippedStageJob>* skippedJobs);
+    std::size_t dropOldestStageJobsLocked(FanOutStage stage,
+                                          std::chrono::steady_clock::time_point now,
+                                          std::vector<SkippedStageJob>* skippedJobs);
     StageJob popFanOutStageJob(FanOutStage stage);
     void stageWorkerLoop(FanOutStage stage);
     void processFanOutStage(FanOutStage stage, const SignalBlock& block);
     void completeFanOutStage(const std::shared_ptr<FanOutBlockContext>& context);
+    void completeFanOutStageSkipped(const std::shared_ptr<FanOutBlockContext>& context,
+                                    FanOutStage stage,
+                                    StageSkipReason reason);
     bool fanOutDrained() const;
     bool stageWorkersJoinable() const noexcept;
+    StageOverloadPolicy fanOutStagePolicy(FanOutStage stage) const noexcept;
+    std::chrono::milliseconds fanOutStageDebugDelay(FanOutStage stage) const noexcept;
+    static ProcessingEngineConfig normalizeProcessingConfig(ProcessingEngineConfig config);
     static std::size_t fanOutStageIndex(FanOutStage stage) noexcept;
     static PipelineStageMetric fanOutStageMetric(FanOutStage stage) noexcept;
     static PipelineStageMetric fanOutStageMetricAt(std::size_t index) noexcept;

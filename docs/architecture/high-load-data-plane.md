@@ -170,6 +170,14 @@ Current experimental mode:
   preallocates block storage. If larger capacity only delays saturation and backlog
   continues growing, the next work is service-latency optimization or latency-aware
   policy, not silently making the larger buffer a production default.
+- `SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY=1` enables audit-only visual-stage
+  degradation for `ParallelFanOut`. Spectrum and Waterfall can use
+  `SIRIUSSCOPE_VISUAL_STAGE_POLICY=latest-only|drop-oldest`; Bearing stays lossless
+  unless `SIRIUSSCOPE_VISUAL_BEARING_BEST_EFFORT=1`; SignalParameter is always
+  normalized to `LosslessRequired`. Visual skipped/coalesced/dropped jobs complete their
+  fan-out contexts and are reported separately from critical raw/control data loss.
+  Strict target-raw runs fail on visual degradation unless
+  `SIRIUSSCOPE_ALLOW_VISUAL_DEGRADATION_IN_STRICT=1` is set.
 
 Strict profile selection:
 
@@ -202,6 +210,17 @@ $env:SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP = "1"
 $env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
 $env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
 $env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+Visual overload audit:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER = "8"
+$env:SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY = "1"
+$env:SIRIUSSCOPE_VISUAL_STAGE_POLICY = "latest-only"
 ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
 ```
 

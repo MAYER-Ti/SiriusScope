@@ -315,6 +315,12 @@ void testParallelFanOutMetrics(TestRunner& test)
                                  std::chrono::milliseconds{8},
                                  100);
     metrics.recordStageSubmitFailure(pipeline::PipelineStageMetric::Bearing, 8, 8);
+    metrics.recordStageDroppedByPolicy(pipeline::PipelineStageMetric::Waterfall, 2);
+    metrics.recordStageCoalescedByPolicy(pipeline::PipelineStageMetric::Spectrum, 3);
+    metrics.recordStageSkipped(pipeline::PipelineStageMetric::Bearing,
+                               pipeline::StageSkipReason::DroppedByOverloadPolicy);
+    metrics.recordStageSkipped(pipeline::PipelineStageMetric::SignalParameter,
+                               pipeline::StageSkipReason::ReplacedByLatest);
     metrics.recordParallelFanOutEndToEndLatency(std::chrono::milliseconds{7});
 
     const auto snapshot = metrics.snapshot({}, {}, {}, queueMetrics);
@@ -356,6 +362,26 @@ void testParallelFanOutMetrics(TestRunner& test)
                  "parallel fan-out stage processed samples are tracked");
     test.require(snapshot.bearingStage.submitFailures == 1,
                  "parallel fan-out stage submit failures are tracked");
+    test.require(snapshot.waterfallStage.droppedByOverloadPolicy == 2
+                     && snapshot.waterfallStage.skippedBlocks == 2,
+                 "parallel fan-out waterfall policy drops are tracked");
+    test.require(snapshot.spectrumStage.coalescedByOverloadPolicy == 3
+                     && snapshot.spectrumStage.skippedBlocks == 3,
+                 "parallel fan-out spectrum policy coalesces are tracked");
+    test.require(snapshot.bearingStage.droppedByOverloadPolicy == 1
+                     && snapshot.bearingStage.skippedBlocks == 1,
+                 "parallel fan-out bearing skipped drop is tracked");
+    test.require(snapshot.signalParameterStage.coalescedByOverloadPolicy == 1
+                     && snapshot.signalParameterStage.skippedBlocks == 1,
+                 "parallel fan-out signal parameter skipped coalesce is tracked");
+    test.require(snapshot.waterfallStageDroppedByPolicy == 2
+                     && snapshot.spectrumStageCoalescedByPolicy == 3
+                     && snapshot.bearingStageDroppedByPolicy == 1
+                     && snapshot.signalParameterStageCoalescedByPolicy == 1,
+                 "parallel fan-out stage policy aliases are exposed");
+    test.require(snapshot.visualStageDroppedBlocks == 3
+                     && snapshot.visualStageCoalescedBlocks == 3,
+                 "parallel fan-out visual policy totals exclude signal parameter");
     test.requireNear(snapshot.waterfallStage.queueWaitLatency.averageMs(),
                      2.0,
                      0.0001,
@@ -470,6 +496,10 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordStageSubmitFailure(pipeline::PipelineStageMetric::SignalParameter,
                                      16,
                                      16);
+    metrics.recordStageDroppedByPolicy(pipeline::PipelineStageMetric::Waterfall, 1);
+    metrics.recordStageCoalescedByPolicy(pipeline::PipelineStageMetric::Spectrum, 1);
+    metrics.recordStageSkipped(pipeline::PipelineStageMetric::Bearing,
+                               pipeline::StageSkipReason::DroppedByOverloadPolicy);
     metrics.recordParallelFanOutEndToEndLatency(std::chrono::milliseconds{5});
     metrics.reset();
 
@@ -538,6 +568,15 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears stage processed samples");
     test.require(snapshot.signalParameterStage.submitFailures == 0,
                  "reset clears stage submit failures");
+    test.require(snapshot.waterfallStageDroppedByPolicy == 0,
+                 "reset clears waterfall policy drops");
+    test.require(snapshot.spectrumStageCoalescedByPolicy == 0,
+                 "reset clears spectrum policy coalesces");
+    test.require(snapshot.bearingStageSkippedBlocks == 0,
+                 "reset clears stage skipped blocks");
+    test.require(snapshot.visualStageDroppedBlocks == 0
+                     && snapshot.visualStageCoalescedBlocks == 0,
+                 "reset clears visual policy totals");
     test.require(snapshot.parallelFanOutEndToEndLatency.count == 0,
                  "reset clears parallel fan-out end-to-end latency");
 }

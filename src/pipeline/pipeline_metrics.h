@@ -32,6 +32,12 @@ enum class PipelineStageMetric
     SignalParameter,
 };
 
+enum class StageSkipReason
+{
+    DroppedByOverloadPolicy,
+    ReplacedByLatest,
+};
+
 struct StageMetricsSnapshot
 {
     std::uint64_t enqueuedBlocks = 0;
@@ -39,6 +45,9 @@ struct StageMetricsSnapshot
     std::uint64_t processedBlocks = 0;
     std::uint64_t processedSamples = 0;
     std::uint64_t submitFailures = 0;
+    std::uint64_t droppedByOverloadPolicy = 0;
+    std::uint64_t coalescedByOverloadPolicy = 0;
+    std::uint64_t skippedBlocks = 0;
     std::size_t queueDepth = 0;
     std::size_t queueMaxDepth = 0;
     std::size_t queueCapacity = 0;
@@ -149,6 +158,20 @@ struct PipelineMetricsSnapshot
     StageMetricsSnapshot spectrumStage;
     StageMetricsSnapshot bearingStage;
     StageMetricsSnapshot signalParameterStage;
+    std::uint64_t waterfallStageDroppedByPolicy = 0;
+    std::uint64_t spectrumStageDroppedByPolicy = 0;
+    std::uint64_t bearingStageDroppedByPolicy = 0;
+    std::uint64_t signalParameterStageDroppedByPolicy = 0;
+    std::uint64_t waterfallStageCoalescedByPolicy = 0;
+    std::uint64_t spectrumStageCoalescedByPolicy = 0;
+    std::uint64_t bearingStageCoalescedByPolicy = 0;
+    std::uint64_t signalParameterStageCoalescedByPolicy = 0;
+    std::uint64_t waterfallStageSkippedBlocks = 0;
+    std::uint64_t spectrumStageSkippedBlocks = 0;
+    std::uint64_t bearingStageSkippedBlocks = 0;
+    std::uint64_t signalParameterStageSkippedBlocks = 0;
+    std::uint64_t visualStageDroppedBlocks = 0;
+    std::uint64_t visualStageCoalescedBlocks = 0;
     std::size_t waterfallStageQueueDepth = 0;
     std::size_t spectrumStageQueueDepth = 0;
     std::size_t bearingStageQueueDepth = 0;
@@ -254,6 +277,9 @@ public:
     void recordStageQueueDepth(PipelineStageMetric stage,
                                std::size_t queueDepth,
                                std::size_t capacity);
+    void recordStageDroppedByPolicy(PipelineStageMetric stage, std::size_t count);
+    void recordStageCoalescedByPolicy(PipelineStageMetric stage, std::size_t count);
+    void recordStageSkipped(PipelineStageMetric stage, StageSkipReason reason);
     void recordWaterfallStageProcessedBlock();
     void recordSpectrumStageProcessedBlock();
     void recordBearingStageProcessedBlock();

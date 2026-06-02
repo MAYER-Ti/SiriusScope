@@ -284,5 +284,45 @@ profiles are audit-only and do not change GUI runtime defaults. If a larger prof
 delays saturation and backlog still grows, continue service-latency optimization or add
 a latency-aware policy instead of treating the larger buffer as a production fix.
 
+Visual-stage overload policy is another audit-only control for `ParallelFanOut`. By
+default every stage remains `LosslessRequired`. When enabled, Spectrum and Waterfall may
+coalesce or drop pending visual jobs while SignalParameter remains lossless. Bearing also
+remains lossless unless explicitly moved to best-effort for the perf audit. Visual
+degradation is reported separately from critical data loss.
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER = "8"
+$env:SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY = "1"
+$env:SIRIUSSCOPE_VISUAL_STAGE_POLICY = "latest-only"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY
+Remove-Item Env:\SIRIUSSCOPE_VISUAL_STAGE_POLICY
+```
+
+Strict mode treats visual degradation as a failure unless explicitly allowed:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+$env:SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER = "8"
+$env:SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY = "1"
+$env:SIRIUSSCOPE_VISUAL_STAGE_POLICY = "latest-only"
+$env:SIRIUSSCOPE_ALLOW_VISUAL_DEGRADATION_IN_STRICT = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
+Remove-Item Env:\SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY
+Remove-Item Env:\SIRIUSSCOPE_VISUAL_STAGE_POLICY
+Remove-Item Env:\SIRIUSSCOPE_ALLOW_VISUAL_DEGRADATION_IN_STRICT
+```
+
 For performance-sensitive work, also follow the high-load acceptance criteria in
 `docs/development/build-and-test.md`.

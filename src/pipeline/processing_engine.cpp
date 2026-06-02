@@ -1,6 +1,7 @@
 #include "pipeline/processing_engine.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <utility>
@@ -31,7 +32,7 @@ ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
     , m_spectrumSnapshots(spectrumSnapshots)
     , m_bearingSnapshots(bearingSnapshots)
     , m_signalParameterSnapshots(signalParameterSnapshots)
-    , m_processingConfig(processingConfig)
+    , m_processingConfig(normalizeProcessingConfig(std::move(processingConfig)))
     , m_waterfallAggregator(std::move(waterfallConfig))
     , m_spectrumAggregator(std::move(spectrumConfig))
     , m_bearingAggregator(std::move(bearingConfig))
@@ -808,6 +809,13 @@ bool ProcessingEngine::submitFanOutContext(
     std::size_t failedStageIndex = kFanOutStageCount;
     bool failedAllStages = false;
     bool submitted = false;
+    std::vector<SkippedStageJob> skippedJobs;
+    const std::array<FanOutStage, kFanOutStageCount> stages{
+        FanOutStage::Waterfall,
+        FanOutStage::Spectrum,
+        FanOutStage::Bearing,
+        FanOutStage::SignalParameter,
+    };
 
     {
         std::lock_guard lock(m_stageMutex);
@@ -818,9 +826,11 @@ bool ProcessingEngine::submitFanOutContext(
         if (capacity == 0) {
             failedAllStages = true;
         } else {
-            for (std::size_t index = 0; index < m_stageQueues.size(); ++index) {
+            for (std::size_t index = 0; index < stages.size(); ++index) {
                 depths[index] = m_stageQueues[index].size();
-                if (m_stageQueues[index].size() >= capacity) {
+                if (fanOutStagePolicy(stages[index])
+                        == StageOverloadPolicy::LosslessRequired
+                    && m_stageQueues[index].size() >= capacity) {
                     failedStageIndex = index;
                     break;
                 }
@@ -828,11 +838,19 @@ bool ProcessingEngine::submitFanOutContext(
 
             if (failedStageIndex == kFanOutStageCount) {
                 const auto enqueuedAt = Clock::now();
-                for (std::size_t index = 0; index < m_stageQueues.size(); ++index) {
-                    m_stageQueues[index].push_back(StageJob{context, enqueuedAt});
-                    depths[index] = m_stageQueues[index].size();
+                for (std::size_t index = 0; index < stages.size(); ++index) {
+                    if (!submitFanOutStageLocked(stages[index],
+                                                 context,
+                                                 enqueuedAt,
+                                                 &skippedJobs,
+                                                 &depths[index])) {
+                        failedStageIndex = index;
+                        break;
+                    }
                 }
-                submitted = true;
+                if (failedStageIndex == kFanOutStageCount) {
+                    submitted = true;
+                }
             }
         }
     }
@@ -866,8 +884,114 @@ bool ProcessingEngine::submitFanOutContext(
                                            capacity);
         }
     }
+    for (const auto& skipped : skippedJobs) {
+        completeFanOutStageSkipped(skipped.job.context, skipped.stage, skipped.reason);
+    }
     m_stageCondition.notify_all();
     return true;
+}
+
+bool ProcessingEngine::submitFanOutStageLocked(
+    FanOutStage stage,
+    const std::shared_ptr<FanOutBlockContext>& context,
+    std::chrono::steady_clock::time_point enqueuedAt,
+    std::vector<SkippedStageJob>* skippedJobs,
+    std::size_t* queueDepth)
+{
+    const auto index = fanOutStageIndex(stage);
+    const auto capacity = m_processingConfig.stageQueueCapacity;
+    auto& queue = m_stageQueues[index];
+
+    switch (fanOutStagePolicy(stage)) {
+    case StageOverloadPolicy::LosslessRequired:
+        if (queue.size() >= capacity) {
+            return false;
+        }
+        queue.push_back(StageJob{context, enqueuedAt});
+        break;
+    case StageOverloadPolicy::RealtimeLatestOnly:
+        replacePendingStageJobsLocked(stage, context, enqueuedAt, skippedJobs);
+        break;
+    case StageOverloadPolicy::BoundedLatencyDropOldest:
+        dropOldestStageJobsLocked(stage, enqueuedAt, skippedJobs);
+        if (queue.size() >= capacity) {
+            return false;
+        }
+        queue.push_back(StageJob{context, enqueuedAt});
+        break;
+    }
+
+    if (queueDepth) {
+        *queueDepth = queue.size();
+    }
+    return true;
+}
+
+std::size_t ProcessingEngine::replacePendingStageJobsLocked(
+    FanOutStage stage,
+    const std::shared_ptr<FanOutBlockContext>& context,
+    std::chrono::steady_clock::time_point enqueuedAt,
+    std::vector<SkippedStageJob>* skippedJobs)
+{
+    const auto index = fanOutStageIndex(stage);
+    auto& queue = m_stageQueues[index];
+    std::size_t replaced = 0;
+    while (!queue.empty()) {
+        if (skippedJobs) {
+            skippedJobs->push_back(SkippedStageJob{
+                stage,
+                std::move(queue.front()),
+                StageSkipReason::ReplacedByLatest,
+            });
+        }
+        queue.pop_front();
+        ++replaced;
+    }
+
+    queue.push_back(StageJob{context, enqueuedAt});
+    return replaced;
+}
+
+std::size_t ProcessingEngine::dropOldestStageJobsLocked(
+    FanOutStage stage,
+    std::chrono::steady_clock::time_point now,
+    std::vector<SkippedStageJob>* skippedJobs)
+{
+    const auto index = fanOutStageIndex(stage);
+    const auto capacity = m_processingConfig.stageQueueCapacity;
+    auto& queue = m_stageQueues[index];
+    if (capacity == 0) {
+        return 0;
+    }
+
+    const auto maxDepthByRatio = std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(
+            std::floor(static_cast<double>(capacity)
+                       * m_processingConfig.overloadPolicy.maxVisualQueueDepthRatio)));
+    const auto maxQueueWait = m_processingConfig.overloadPolicy.maxVisualQueueWait;
+    std::size_t dropped = 0;
+    while (!queue.empty()) {
+        const bool full = queue.size() >= capacity;
+        const bool overDepthBudget = queue.size() >= maxDepthByRatio;
+        const bool overWaitBudget =
+            now - queue.front().enqueuedAt > maxQueueWait;
+        if (!full && !overDepthBudget && !overWaitBudget) {
+            break;
+        }
+
+        if (skippedJobs) {
+            skippedJobs->push_back(SkippedStageJob{
+                stage,
+                std::move(queue.front()),
+                StageSkipReason::DroppedByOverloadPolicy,
+            });
+        }
+        queue.pop_front();
+        ++dropped;
+    }
+
+    return dropped;
 }
 
 ProcessingEngine::StageJob
@@ -906,6 +1030,11 @@ void ProcessingEngine::stageWorkerLoop(FanOutStage stage)
                                           startedAt - job.enqueuedAt,
                                           job.queueDepthAfterPop,
                                           job.queueCapacity);
+        }
+
+        const auto debugDelay = fanOutStageDebugDelay(stage);
+        if (debugDelay.count() > 0) {
+            std::this_thread::sleep_for(debugDelay);
         }
 
         const auto serviceStartedAt = Clock::now();
@@ -958,6 +1087,17 @@ void ProcessingEngine::completeFanOutStage(
     m_flushCondition.notify_all();
 }
 
+void ProcessingEngine::completeFanOutStageSkipped(
+    const std::shared_ptr<FanOutBlockContext>& context,
+    FanOutStage stage,
+    StageSkipReason reason)
+{
+    if (m_metrics) {
+        m_metrics->recordStageSkipped(fanOutStageMetric(stage), reason);
+    }
+    completeFanOutStage(context);
+}
+
 bool ProcessingEngine::fanOutDrained() const
 {
     if (m_inFlightFanOutBlocks.load(std::memory_order_acquire) != 0) {
@@ -975,6 +1115,56 @@ bool ProcessingEngine::stageWorkersJoinable() const noexcept
     return std::any_of(m_stageWorkers.begin(), m_stageWorkers.end(), [](const auto& worker) {
         return worker.joinable();
     });
+}
+
+StageOverloadPolicy ProcessingEngine::fanOutStagePolicy(FanOutStage stage) const noexcept
+{
+    switch (stage) {
+    case FanOutStage::Waterfall:
+        return m_processingConfig.overloadPolicy.waterfall;
+    case FanOutStage::Spectrum:
+        return m_processingConfig.overloadPolicy.spectrum;
+    case FanOutStage::Bearing:
+        return m_processingConfig.overloadPolicy.bearing;
+    case FanOutStage::SignalParameter:
+        return m_processingConfig.overloadPolicy.signalParameter;
+    }
+
+    return StageOverloadPolicy::LosslessRequired;
+}
+
+std::chrono::milliseconds
+ProcessingEngine::fanOutStageDebugDelay(FanOutStage stage) const noexcept
+{
+    switch (stage) {
+    case FanOutStage::Waterfall:
+        return m_processingConfig.stageDebugDelay.waterfall;
+    case FanOutStage::Spectrum:
+        return m_processingConfig.stageDebugDelay.spectrum;
+    case FanOutStage::Bearing:
+        return m_processingConfig.stageDebugDelay.bearing;
+    case FanOutStage::SignalParameter:
+        return m_processingConfig.stageDebugDelay.signalParameter;
+    }
+
+    return std::chrono::milliseconds{0};
+}
+
+ProcessingEngineConfig
+ProcessingEngine::normalizeProcessingConfig(ProcessingEngineConfig config)
+{
+    const StageOverloadConfig defaults;
+    config.overloadPolicy.signalParameter = StageOverloadPolicy::LosslessRequired;
+    if (config.overloadPolicy.maxVisualQueueWait.count() <= 0) {
+        config.overloadPolicy.maxVisualQueueWait = defaults.maxVisualQueueWait;
+    }
+    if (!std::isfinite(config.overloadPolicy.maxVisualQueueDepthRatio)
+        || config.overloadPolicy.maxVisualQueueDepthRatio <= 0.0
+        || config.overloadPolicy.maxVisualQueueDepthRatio > 1.0) {
+        config.overloadPolicy.maxVisualQueueDepthRatio =
+            defaults.maxVisualQueueDepthRatio;
+    }
+    return config;
 }
 
 std::size_t ProcessingEngine::fanOutStageIndex(FanOutStage stage) noexcept

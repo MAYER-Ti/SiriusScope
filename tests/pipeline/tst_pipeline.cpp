@@ -109,6 +109,35 @@ hardware::BcoStreamConfig makeStreamConfig()
     return config;
 }
 
+bool queueTinyFanOutBlock(pipeline::SignalBlockPool& pool,
+                          pipeline::BoundedBlockQueue& queue,
+                          pipeline::PipelineMetrics& metrics,
+                          const core::BandConfig& band,
+                          std::uint64_t blockIndex)
+{
+    auto block = pool.acquire();
+    if (!block) {
+        return false;
+    }
+
+    const auto firstSampleIndex = blockIndex * 10;
+    pipeline::SignalBlockMetadata metadata{
+        blockIndex,
+        firstSampleIndex,
+        firstSampleIndex + 1,
+        std::chrono::steady_clock::now(),
+    };
+    metadata.antennaAzimuthDeg = 45.0;
+    block->reset(metadata);
+    const std::vector<core::SignalSample> samples{
+        makeSample(band, firstSampleIndex, 0, 40),
+        makeSample(band, firstSampleIndex, 1, 80),
+    };
+    block->assignSamples(samples);
+    metrics.recordInputBlock(block->sampleCount(), block->producedAt());
+    return queue.tryPush(std::move(block));
+}
+
 void testProcessingEngineConfigDefaultsToSequential(TestRunner& test)
 {
     pipeline::ProcessingEngineConfig config;
@@ -117,6 +146,19 @@ void testProcessingEngineConfigDefaultsToSequential(TestRunner& test)
                  "processing engine defaults to sequential mode");
     test.require(config.stageQueueCapacity == 64,
                  "processing engine defaults stage queue capacity");
+    test.require(config.overloadPolicy.waterfall
+                     == pipeline::StageOverloadPolicy::LosslessRequired
+                     && config.overloadPolicy.spectrum
+                         == pipeline::StageOverloadPolicy::LosslessRequired
+                     && config.overloadPolicy.bearing
+                         == pipeline::StageOverloadPolicy::LosslessRequired
+                     && config.overloadPolicy.signalParameter
+                         == pipeline::StageOverloadPolicy::LosslessRequired,
+                 "processing engine defaults stage overload policies to lossless");
+    test.require(config.overloadPolicy.maxVisualQueueWait
+                         == std::chrono::milliseconds{1000}
+                     && config.overloadPolicy.maxVisualQueueDepthRatio == 0.50,
+                 "processing engine defaults visual overload budgets");
 }
 
 void testSignalBlockPoolAcquireReleaseExhaustion(TestRunner& test)
@@ -551,6 +593,204 @@ void testProcessingEngineParallelFanOutFallbackRecordsStageFailures(TestRunner& 
                  "parallel fallback releases pooled block");
 }
 
+void testParallelFanOutLatestOnlyCoalescesPendingVisualJobs(TestRunner& test)
+{
+    const auto band = makeBand(0);
+    pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{24, 8});
+    pipeline::BoundedBlockQueue queue(24);
+    pipeline::PipelineMetrics metrics;
+    pipeline::WaterfallRowQueue waterfallRows;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
+    pipeline::SnapshotExchange<pipeline::SignalParameterSnapshot> signalParameterSnapshots;
+    pipeline::ProcessingEngineConfig processingConfig;
+    processingConfig.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    processingConfig.stageQueueCapacity = 16;
+    processingConfig.overloadPolicy.spectrum =
+        pipeline::StageOverloadPolicy::RealtimeLatestOnly;
+    processingConfig.stageDebugDelay.spectrum = std::chrono::milliseconds{100};
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      nullptr,
+                                      &waterfallRows,
+                                      {},
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots,
+                                      {},
+                                      &signalParameterSnapshots,
+                                      {},
+                                      processingConfig);
+
+    const auto started = engine.start();
+    std::size_t queuedBlocks = 0;
+    for (std::uint64_t blockIndex = 0; blockIndex < 12; ++blockIndex) {
+        if (queueTinyFanOutBlock(pool, queue, metrics, band, blockIndex)) {
+            ++queuedBlocks;
+        }
+    }
+
+    const auto flushed = engine.flush(std::chrono::milliseconds{5000});
+    const auto summary = engine.lastSummary();
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(),
+                         pool.counters(),
+                         waterfallRows.metrics(),
+                         engine.parallelFanOutQueueMetrics());
+    engine.stop();
+
+    test.require(started.success, "latest-only fan-out test starts engine");
+    test.require(queuedBlocks == 12, "latest-only fan-out test queues all blocks");
+    test.require(flushed.success, "latest-only fan-out test flushes");
+    test.require(summary.processedBlocks == 12,
+                 "latest-only skipped visual jobs still complete fan-out contexts");
+    test.require(metricsSnapshot.spectrumStageCoalescedByPolicy > 0,
+                 "latest-only coalesces pending spectrum jobs");
+    test.require(metricsSnapshot.spectrumStageSkippedBlocks
+                     == metricsSnapshot.spectrumStageCoalescedByPolicy,
+                 "latest-only records coalesced spectrum jobs as skipped");
+    test.require(metricsSnapshot.signalParameterStageDroppedByPolicy == 0
+                     && metricsSnapshot.signalParameterStageCoalescedByPolicy == 0,
+                 "latest-only does not affect signal parameter stage");
+    test.require(metricsSnapshot.parallelFanOutFallbackBlocks == 0
+                     && metricsSnapshot.parallelFanOutRejectedBlocks == 0,
+                 "latest-only visual policy avoids fan-out fallback");
+    test.require(metricsSnapshot.parallelFanOutInFlightBlocks == 0,
+                 "latest-only flush leaves no in-flight contexts");
+    test.require(pool.counters().inUse == 0,
+                 "latest-only skipped jobs release pooled blocks");
+}
+
+void testParallelFanOutDropOldestDropsPendingVisualJobs(TestRunner& test)
+{
+    const auto band = makeBand(0);
+    pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{24, 8});
+    pipeline::BoundedBlockQueue queue(24);
+    pipeline::PipelineMetrics metrics;
+    pipeline::WaterfallRowQueue waterfallRows;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
+    pipeline::SnapshotExchange<pipeline::SignalParameterSnapshot> signalParameterSnapshots;
+    pipeline::ProcessingEngineConfig processingConfig;
+    processingConfig.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    processingConfig.stageQueueCapacity = 16;
+    processingConfig.overloadPolicy.spectrum =
+        pipeline::StageOverloadPolicy::BoundedLatencyDropOldest;
+    processingConfig.overloadPolicy.maxVisualQueueDepthRatio = 0.25;
+    processingConfig.stageDebugDelay.spectrum = std::chrono::milliseconds{100};
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      nullptr,
+                                      &waterfallRows,
+                                      {},
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots,
+                                      {},
+                                      &signalParameterSnapshots,
+                                      {},
+                                      processingConfig);
+
+    const auto started = engine.start();
+    std::size_t queuedBlocks = 0;
+    for (std::uint64_t blockIndex = 0; blockIndex < 12; ++blockIndex) {
+        if (queueTinyFanOutBlock(pool, queue, metrics, band, blockIndex)) {
+            ++queuedBlocks;
+        }
+    }
+
+    const auto flushed = engine.flush(std::chrono::milliseconds{5000});
+    const auto summary = engine.lastSummary();
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(),
+                         pool.counters(),
+                         waterfallRows.metrics(),
+                         engine.parallelFanOutQueueMetrics());
+    engine.stop();
+
+    test.require(started.success, "drop-oldest fan-out test starts engine");
+    test.require(queuedBlocks == 12, "drop-oldest fan-out test queues all blocks");
+    test.require(flushed.success, "drop-oldest fan-out test flushes");
+    test.require(summary.processedBlocks == 12,
+                 "drop-oldest skipped visual jobs still complete fan-out contexts");
+    test.require(metricsSnapshot.spectrumStageDroppedByPolicy > 0,
+                 "drop-oldest drops pending spectrum jobs");
+    test.require(metricsSnapshot.spectrumStageSkippedBlocks
+                     == metricsSnapshot.spectrumStageDroppedByPolicy,
+                 "drop-oldest records dropped spectrum jobs as skipped");
+    test.require(metricsSnapshot.signalParameterStageDroppedByPolicy == 0
+                     && metricsSnapshot.signalParameterStageCoalescedByPolicy == 0,
+                 "drop-oldest does not affect signal parameter stage");
+    test.require(metricsSnapshot.parallelFanOutInFlightBlocks == 0,
+                 "drop-oldest flush leaves no in-flight contexts");
+    test.require(pool.counters().inUse == 0,
+                 "drop-oldest skipped jobs release pooled blocks");
+}
+
+void testSignalParameterOverloadPolicyIsForcedLossless(TestRunner& test)
+{
+    const auto band = makeBand(0);
+    pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{24, 8});
+    pipeline::BoundedBlockQueue queue(24);
+    pipeline::PipelineMetrics metrics;
+    pipeline::WaterfallRowQueue waterfallRows;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
+    pipeline::SnapshotExchange<pipeline::SignalParameterSnapshot> signalParameterSnapshots;
+    pipeline::ProcessingEngineConfig processingConfig;
+    processingConfig.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    processingConfig.stageQueueCapacity = 16;
+    processingConfig.overloadPolicy.signalParameter =
+        pipeline::StageOverloadPolicy::RealtimeLatestOnly;
+    processingConfig.stageDebugDelay.signalParameter = std::chrono::milliseconds{100};
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      nullptr,
+                                      &waterfallRows,
+                                      {},
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots,
+                                      {},
+                                      &signalParameterSnapshots,
+                                      {},
+                                      processingConfig);
+
+    const auto started = engine.start();
+    std::size_t queuedBlocks = 0;
+    for (std::uint64_t blockIndex = 0; blockIndex < 12; ++blockIndex) {
+        if (queueTinyFanOutBlock(pool, queue, metrics, band, blockIndex)) {
+            ++queuedBlocks;
+        }
+    }
+
+    const auto flushed = engine.flush(std::chrono::milliseconds{5000});
+    const auto summary = engine.lastSummary();
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(),
+                         pool.counters(),
+                         waterfallRows.metrics(),
+                         engine.parallelFanOutQueueMetrics());
+    engine.stop();
+
+    test.require(started.success, "signal parameter lossless policy test starts engine");
+    test.require(queuedBlocks == 12,
+                 "signal parameter lossless policy test queues all blocks");
+    test.require(flushed.success, "signal parameter lossless policy test flushes");
+    test.require(summary.processedBlocks == 12,
+                 "signal parameter lossless policy processes every fan-out context");
+    test.require(metricsSnapshot.signalParameterStageProcessedBlocks == 12,
+                 "signal parameter stage processes every block despite lossy config");
+    test.require(metricsSnapshot.signalParameterStageDroppedByPolicy == 0
+                     && metricsSnapshot.signalParameterStageCoalescedByPolicy == 0
+                     && metricsSnapshot.signalParameterStageSkippedBlocks == 0,
+                 "signal parameter stage policy counters stay zero");
+    test.require(metricsSnapshot.parallelFanOutInFlightBlocks == 0,
+                 "signal parameter lossless policy leaves no in-flight contexts");
+    test.require(pool.counters().inUse == 0,
+                 "signal parameter lossless policy releases pooled blocks");
+}
+
 void testDiagnosticsAreAggregated(TestRunner& test)
 {
     RecordingDiagnosticsSink sink;
@@ -822,6 +1062,9 @@ int main()
     testProcessingEngineParallelFanOutProcessesBlocksAndFlushes(test);
     testProcessingEngineParallelFanOutStopDrainsWithoutDeadlock(test);
     testProcessingEngineParallelFanOutFallbackRecordsStageFailures(test);
+    testParallelFanOutLatestOnlyCoalescesPendingVisualJobs(test);
+    testParallelFanOutDropOldestDropsPendingVisualJobs(test);
+    testSignalParameterOverloadPolicyIsForcedLossless(test);
     testDiagnosticsAreAggregated(test);
     testDataPipelineDrainsAllWaterfallRows(test);
     testWaterfallRowQueueOverflowIsCounted(test);
