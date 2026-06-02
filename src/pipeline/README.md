@@ -41,6 +41,16 @@ fixed-band batch ingest loop, so accumulator updates and per-band sample span tr
 share one tight pass over accepted samples while validated, sorted, and map-backed safe
 modes remain available for untrusted inputs.
 
+`ProcessingEngine` supports an experimental `ParallelFanOut` mode for high-load audits.
+In this mode a popped `SignalBlock` is fanned out to separate Waterfall, Spectrum,
+Bearing, and SignalParameter stage workers. The pooled block handle is owned by a shared
+fan-out context and returns to the pool only after all four stages complete. Sequential
+processing remains the default runtime mode; perf tests can opt into fan-out with:
+
+```powershell
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+```
+
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable
 `BcoSampleBlock` pointers into a bounded RX queue; a dedicated bridge worker performs the

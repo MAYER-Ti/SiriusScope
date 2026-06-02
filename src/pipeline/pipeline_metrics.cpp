@@ -33,6 +33,13 @@ void PipelineMetrics::reset()
     m_missingBeam1Candidates = 0;
     m_producedSignalParameterSnapshots = 0;
     m_signalParameterTrustedFixedBandFastPathBlocks = 0;
+    m_parallelFanOutBlocks = 0;
+    m_parallelFanOutFallbackBlocks = 0;
+    m_parallelFanOutRejectedBlocks = 0;
+    m_waterfallStageProcessedBlocks = 0;
+    m_spectrumStageProcessedBlocks = 0;
+    m_bearingStageProcessedBlocks = 0;
+    m_signalParameterStageProcessedBlocks = 0;
     m_bearingFastCandidateStorageBlocks = 0;
     m_spectrumFastWindowBlocks = 0;
     m_spectrumFastBinBlocks = 0;
@@ -69,6 +76,7 @@ void PipelineMetrics::reset()
     m_signalParameterSnapshotDecisionLatency = {};
     m_signalParameterFinalizeLatency = {};
     m_signalParameterSnapshotBuildLatency = {};
+    m_parallelFanOutEndToEndLatency = {};
     m_waterfallRowPublishLatency = {};
     m_spectrumSnapshotPublishLatency = {};
     m_bearingSnapshotPublishLatency = {};
@@ -370,6 +378,55 @@ void PipelineMetrics::recordSignalParameterTrustedFixedBandFastPathBlock()
     ++m_signalParameterTrustedFixedBandFastPathBlocks;
 }
 
+void PipelineMetrics::recordParallelFanOutBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_parallelFanOutBlocks;
+}
+
+void PipelineMetrics::recordParallelFanOutFallbackBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_parallelFanOutFallbackBlocks;
+}
+
+void PipelineMetrics::recordParallelFanOutRejectedBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_parallelFanOutRejectedBlocks;
+}
+
+void PipelineMetrics::recordWaterfallStageProcessedBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_waterfallStageProcessedBlocks;
+}
+
+void PipelineMetrics::recordSpectrumStageProcessedBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_spectrumStageProcessedBlocks;
+}
+
+void PipelineMetrics::recordBearingStageProcessedBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_bearingStageProcessedBlocks;
+}
+
+void PipelineMetrics::recordSignalParameterStageProcessedBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_signalParameterStageProcessedBlocks;
+}
+
+void PipelineMetrics::recordParallelFanOutEndToEndLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_parallelFanOutEndToEndLatency, millisecondsFor(elapsed));
+}
+
 void PipelineMetrics::recordBearingFastCandidateStorageBlock()
 {
     std::lock_guard lock(m_mutex);
@@ -412,7 +469,8 @@ void PipelineMetrics::recordSpectrumBlockLocalAccumulationBlock()
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters,
-    const WaterfallRowQueueMetrics& waterfallRowMetrics) const
+    const WaterfallRowQueueMetrics& waterfallRowMetrics,
+    const ParallelFanOutQueueMetrics& parallelFanOutQueueMetrics) const
 {
     std::lock_guard lock(m_mutex);
     const auto elapsedSeconds =
@@ -457,6 +515,7 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
         m_signalParameterSnapshotDecisionLatency;
     snapshot.signalParameterFinalizeLatency = m_signalParameterFinalizeLatency;
     snapshot.signalParameterSnapshotBuildLatency = m_signalParameterSnapshotBuildLatency;
+    snapshot.parallelFanOutEndToEndLatency = m_parallelFanOutEndToEndLatency;
     snapshot.waterfallRowPublishLatency = m_waterfallRowPublishLatency;
     snapshot.spectrumSnapshotPublishLatency = m_spectrumSnapshotPublishLatency;
     snapshot.bearingSnapshotPublishLatency = m_bearingSnapshotPublishLatency;
@@ -509,6 +568,24 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.producedSignalParameterSnapshots = m_producedSignalParameterSnapshots;
     snapshot.signalParameterTrustedFixedBandFastPathBlocks =
         m_signalParameterTrustedFixedBandFastPathBlocks;
+    snapshot.parallelFanOutBlocks = m_parallelFanOutBlocks;
+    snapshot.parallelFanOutFallbackBlocks = m_parallelFanOutFallbackBlocks;
+    snapshot.parallelFanOutRejectedBlocks = m_parallelFanOutRejectedBlocks;
+    snapshot.waterfallStageQueueDepth =
+        parallelFanOutQueueMetrics.waterfallStageQueueDepth;
+    snapshot.spectrumStageQueueDepth =
+        parallelFanOutQueueMetrics.spectrumStageQueueDepth;
+    snapshot.bearingStageQueueDepth =
+        parallelFanOutQueueMetrics.bearingStageQueueDepth;
+    snapshot.signalParameterStageQueueDepth =
+        parallelFanOutQueueMetrics.signalParameterStageQueueDepth;
+    snapshot.parallelFanOutInFlightBlocks =
+        parallelFanOutQueueMetrics.inFlightBlocks;
+    snapshot.waterfallStageProcessedBlocks = m_waterfallStageProcessedBlocks;
+    snapshot.spectrumStageProcessedBlocks = m_spectrumStageProcessedBlocks;
+    snapshot.bearingStageProcessedBlocks = m_bearingStageProcessedBlocks;
+    snapshot.signalParameterStageProcessedBlocks =
+        m_signalParameterStageProcessedBlocks;
     snapshot.queueDepth = queueMetrics.depth;
     snapshot.queueCapacity = queueMetrics.capacity;
     snapshot.queuePushedBlocks = queueMetrics.pushedBlocks;

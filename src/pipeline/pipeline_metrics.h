@@ -23,6 +23,15 @@ struct LatencyStats
     }
 };
 
+struct ParallelFanOutQueueMetrics
+{
+    std::size_t waterfallStageQueueDepth = 0;
+    std::size_t spectrumStageQueueDepth = 0;
+    std::size_t bearingStageQueueDepth = 0;
+    std::size_t signalParameterStageQueueDepth = 0;
+    std::uint64_t inFlightBlocks = 0;
+};
+
 struct PipelineMetricsSnapshot
 {
     std::uint64_t inputBlocks = 0;
@@ -61,6 +70,7 @@ struct PipelineMetricsSnapshot
     LatencyStats signalParameterSnapshotDecisionLatency;
     LatencyStats signalParameterFinalizeLatency;
     LatencyStats signalParameterSnapshotBuildLatency;
+    LatencyStats parallelFanOutEndToEndLatency;
     LatencyStats waterfallRowPublishLatency;
     LatencyStats spectrumSnapshotPublishLatency;
     LatencyStats bearingSnapshotPublishLatency;
@@ -104,6 +114,18 @@ struct PipelineMetricsSnapshot
     std::uint64_t bearingFastCandidateStorageBlocks = 0;
     std::uint64_t producedSignalParameterSnapshots = 0;
     std::uint64_t signalParameterTrustedFixedBandFastPathBlocks = 0;
+    std::uint64_t parallelFanOutBlocks = 0;
+    std::uint64_t parallelFanOutFallbackBlocks = 0;
+    std::uint64_t parallelFanOutRejectedBlocks = 0;
+    std::size_t waterfallStageQueueDepth = 0;
+    std::size_t spectrumStageQueueDepth = 0;
+    std::size_t bearingStageQueueDepth = 0;
+    std::size_t signalParameterStageQueueDepth = 0;
+    std::uint64_t parallelFanOutInFlightBlocks = 0;
+    std::uint64_t waterfallStageProcessedBlocks = 0;
+    std::uint64_t spectrumStageProcessedBlocks = 0;
+    std::uint64_t bearingStageProcessedBlocks = 0;
+    std::uint64_t signalParameterStageProcessedBlocks = 0;
     std::size_t queueDepth = 0;
     std::size_t queueCapacity = 0;
     std::uint64_t queuePushedBlocks = 0;
@@ -181,6 +203,15 @@ public:
                                   std::chrono::milliseconds aggregationLatency);
     void recordSignalParameterSnapshotProduced(std::uint64_t producedSnapshots);
     void recordSignalParameterTrustedFixedBandFastPathBlock();
+    void recordParallelFanOutBlock();
+    void recordParallelFanOutFallbackBlock();
+    void recordParallelFanOutRejectedBlock();
+    void recordWaterfallStageProcessedBlock();
+    void recordSpectrumStageProcessedBlock();
+    void recordBearingStageProcessedBlock();
+    void recordSignalParameterStageProcessedBlock();
+    void recordParallelFanOutEndToEndLatency(
+        std::chrono::steady_clock::duration elapsed);
     void recordBearingFastCandidateStorageBlock();
     void recordSpectrumFastPathUsage(bool fastWindow,
                                      bool fastBin,
@@ -192,7 +223,8 @@ public:
     PipelineMetricsSnapshot snapshot(
         const BoundedBlockQueueMetrics& queueMetrics,
         const SignalBlockPoolCounters& poolCounters,
-        const WaterfallRowQueueMetrics& waterfallRowMetrics = {}) const;
+        const WaterfallRowQueueMetrics& waterfallRowMetrics = {},
+        const ParallelFanOutQueueMetrics& parallelFanOutQueueMetrics = {}) const;
 
 private:
     static double megabytesForSamples(std::uint64_t sampleCount);
@@ -253,11 +285,19 @@ private:
     LatencyStats m_signalParameterSnapshotDecisionLatency;
     LatencyStats m_signalParameterFinalizeLatency;
     LatencyStats m_signalParameterSnapshotBuildLatency;
+    LatencyStats m_parallelFanOutEndToEndLatency;
     LatencyStats m_waterfallRowPublishLatency;
     LatencyStats m_spectrumSnapshotPublishLatency;
     LatencyStats m_bearingSnapshotPublishLatency;
     LatencyStats m_signalParameterSnapshotPublishLatency;
     std::uint64_t m_processedBlockSamplesTotal = 0;
+    std::uint64_t m_parallelFanOutBlocks = 0;
+    std::uint64_t m_parallelFanOutFallbackBlocks = 0;
+    std::uint64_t m_parallelFanOutRejectedBlocks = 0;
+    std::uint64_t m_waterfallStageProcessedBlocks = 0;
+    std::uint64_t m_spectrumStageProcessedBlocks = 0;
+    std::uint64_t m_bearingStageProcessedBlocks = 0;
+    std::uint64_t m_signalParameterStageProcessedBlocks = 0;
     std::uint64_t m_bearingFastCandidateStorageBlocks = 0;
     std::uint64_t m_spectrumFastWindowBlocks = 0;
     std::uint64_t m_spectrumFastBinBlocks = 0;

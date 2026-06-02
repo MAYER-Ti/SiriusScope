@@ -74,6 +74,7 @@ struct AuditResult
 {
     std::string profileName;
     std::chrono::seconds duration{0};
+    pipeline::ProcessingMode processingMode = pipeline::ProcessingMode::Sequential;
     hardware::BcoSourceMetrics source;
     pipeline::SourceToPipelineBridgeMetrics bridge;
     pipeline::PipelineMetricsSnapshot pipeline;
@@ -159,6 +160,23 @@ bool strictTargetRawPipelineSustainRequired()
 bool detailedSpectrumTimingEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_ENABLE_DETAILED_SPECTRUM_TIMING");
+}
+
+bool parallelProcessingEngineEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE");
+}
+
+const char* processingModeName(pipeline::ProcessingMode mode)
+{
+    switch (mode) {
+    case pipeline::ProcessingMode::Sequential:
+        return "Sequential";
+    case pipeline::ProcessingMode::ParallelFanOut:
+        return "ParallelFanOut";
+    }
+
+    return "Unknown";
 }
 
 std::vector<LatencyStage> stageLatencies(const pipeline::PipelineMetricsSnapshot& metrics)
@@ -486,6 +504,11 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     config.bearing.timeBase = timeBase;
 
     config.signalParameters.estimatorConfig.samplePeriodNs = timeBase.samplePeriodNs;
+    if (parallelProcessingEngineEnabled()) {
+        config.processing.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+        config.processing.stageQueueCapacity =
+            sizing == AuditPipelineSizing::FullTargetRawSustain ? 512 : 64;
+    }
     return config;
 }
 
@@ -525,9 +548,9 @@ AuditResult runAudit(std::chrono::seconds duration,
     result.duration = duration;
 
     const auto streamConfig = makeStreamConfig(profile);
-    pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(streamConfig.timeBase,
-                                                                 profile,
-                                                                 sizing));
+    auto pipelineConfig = makePipelineConfig(streamConfig.timeBase, profile, sizing);
+    result.processingMode = pipelineConfig.processing.processingMode;
+    pipeline::DataIngestPipeline dataPipeline(std::move(pipelineConfig));
     FixedAntennaAzimuthProvider antenna(45.0);
     hardware::HighLoadSimulatorBcoStreamSource source(makeLoadConfig(profile),
                                                       nullptr,
@@ -632,6 +655,8 @@ void printAuditSummary(const AuditResult& result)
               << "  strictNoDropMode = "
               << (strictTargetRawPipelineSustainRequired() ? "true" : "false")
               << '\n'
+              << "  processingMode = " << processingModeName(result.processingMode)
+              << '\n'
               << "  source producedSamples = " << result.source.producedSamples << '\n'
               << "  source producedBatches = " << result.source.producedBatches << '\n'
               << "  source producedSamplesPerSecond = "
@@ -693,6 +718,30 @@ void printAuditSummary(const AuditResult& result)
               << "  queuePushedBlocks = " << result.pipeline.queuePushedBlocks << '\n'
               << "  queuePoppedBlocks = " << result.pipeline.queuePoppedBlocks << '\n'
               << "  queueDroppedBlocks = " << result.pipeline.queueDroppedBlocks << '\n'
+              << "  parallelFanOutBlocks = "
+              << result.pipeline.parallelFanOutBlocks << '\n'
+              << "  parallelFanOutFallbackBlocks = "
+              << result.pipeline.parallelFanOutFallbackBlocks << '\n'
+              << "  parallelFanOutRejectedBlocks = "
+              << result.pipeline.parallelFanOutRejectedBlocks << '\n'
+              << "  parallelFanOutInFlightBlocks = "
+              << result.pipeline.parallelFanOutInFlightBlocks << '\n'
+              << "  waterfallStageQueueDepth = "
+              << result.pipeline.waterfallStageQueueDepth << '\n'
+              << "  spectrumStageQueueDepth = "
+              << result.pipeline.spectrumStageQueueDepth << '\n'
+              << "  bearingStageQueueDepth = "
+              << result.pipeline.bearingStageQueueDepth << '\n'
+              << "  signalParameterStageQueueDepth = "
+              << result.pipeline.signalParameterStageQueueDepth << '\n'
+              << "  waterfallStageProcessedBlocks = "
+              << result.pipeline.waterfallStageProcessedBlocks << '\n'
+              << "  spectrumStageProcessedBlocks = "
+              << result.pipeline.spectrumStageProcessedBlocks << '\n'
+              << "  bearingStageProcessedBlocks = "
+              << result.pipeline.bearingStageProcessedBlocks << '\n'
+              << "  signalParameterStageProcessedBlocks = "
+              << result.pipeline.signalParameterStageProcessedBlocks << '\n'
               << "  blockPoolCapacity = " << result.pipeline.blockPoolCapacity << '\n'
               << "  blockPoolAvailable = " << result.pipeline.blockPoolAvailable << '\n'
               << "  blockPoolInUse = " << result.pipeline.blockPoolInUse << '\n'
@@ -705,6 +754,9 @@ void printAuditSummary(const AuditResult& result)
               << "  totalProcessBlockMs avg/max = "
               << result.pipeline.processBlockLatency.averageMs() << "/"
               << result.pipeline.processBlockLatency.maxMs << '\n'
+              << "  parallelFanOutEndToEndMs avg/max = "
+              << result.pipeline.parallelFanOutEndToEndLatency.averageMs() << "/"
+              << result.pipeline.parallelFanOutEndToEndLatency.maxMs << '\n'
               << "  waterfallMs avg/max = "
               << result.pipeline.waterfallAggregationLatency.averageMs() << "/"
               << result.pipeline.waterfallAggregationLatency.maxMs << '\n'
@@ -899,6 +951,11 @@ void printSustainWarnings(const AuditResult& result)
     if (result.pipeline.waterfallDroppedRows > 0) {
         printSustainWarning("waterfall row queue dropped rows: "
                             + std::to_string(result.pipeline.waterfallDroppedRows));
+    }
+    if (result.pipeline.parallelFanOutFallbackBlocks > 0) {
+        printSustainWarning("parallel fan-out fell back to sequential blocks: "
+                            + std::to_string(
+                                result.pipeline.parallelFanOutFallbackBlocks));
     }
 }
 

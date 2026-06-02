@@ -22,7 +22,8 @@ ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
                                    SnapshotExchange<BearingSnapshot>* bearingSnapshots,
                                    BearingAggregatorConfig bearingConfig,
                                    SnapshotExchange<SignalParameterSnapshot>* signalParameterSnapshots,
-                                   SignalParameterAggregatorConfig signalParameterConfig)
+                                   SignalParameterAggregatorConfig signalParameterConfig,
+                                   ProcessingEngineConfig processingConfig)
     : m_queue(queue)
     , m_metrics(metrics)
     , m_diagnostics(diagnostics)
@@ -30,6 +31,7 @@ ProcessingEngine::ProcessingEngine(BoundedBlockQueue* queue,
     , m_spectrumSnapshots(spectrumSnapshots)
     , m_bearingSnapshots(bearingSnapshots)
     , m_signalParameterSnapshots(signalParameterSnapshots)
+    , m_processingConfig(processingConfig)
     , m_waterfallAggregator(std::move(waterfallConfig))
     , m_spectrumAggregator(std::move(spectrumConfig))
     , m_bearingAggregator(std::move(bearingConfig))
@@ -56,6 +58,8 @@ core::OperationResult ProcessingEngine::start()
     m_processingBlock = false;
     m_summary = {};
     m_completedQueuePops = 0;
+    m_inFlightFanOutBlocks.store(0, std::memory_order_release);
+    resetFanOutQueues();
     {
         std::lock_guard waterfallLock(m_waterfallMutex);
         m_waterfallAggregator.reset();
@@ -73,6 +77,9 @@ core::OperationResult ProcessingEngine::start()
         std::lock_guard signalParameterLock(m_signalParameterMutex);
         m_signalParameterAggregator.reset();
     }
+    if (m_processingConfig.processingMode == ProcessingMode::ParallelFanOut) {
+        startFanOutWorkers();
+    }
     m_worker = std::thread(&ProcessingEngine::workerLoop, this);
     return core::OperationResult::ok();
 }
@@ -85,7 +92,7 @@ void ProcessingEngine::stop()
 
     {
         std::lock_guard lock(m_mutex);
-        if (!m_running && !m_worker.joinable()) {
+        if (!m_running && !m_worker.joinable() && !stageWorkersJoinable()) {
             return;
         }
         m_running = false;
@@ -95,6 +102,8 @@ void ProcessingEngine::stop()
     if (m_worker.joinable() && m_worker.get_id() != std::this_thread::get_id()) {
         m_worker.join();
     }
+
+    stopFanOutWorkers();
 
     flushWaterfallRows();
     flushSpectrumSnapshots();
@@ -120,7 +129,8 @@ core::OperationResult ProcessingEngine::flush(std::chrono::milliseconds timeout)
         const auto isDrained = [this, targetCompletedQueuePops] {
             return (!m_queue || m_queue->metrics().depth == 0)
                 && m_completedQueuePops >= targetCompletedQueuePops
-                && !m_processingBlock;
+                && !m_processingBlock
+                && fanOutDrained();
         };
 
         completed = isDrained() || m_flushCondition.wait_for(lock, timeout, isDrained);
@@ -140,6 +150,23 @@ ProcessingEngineSummary ProcessingEngine::lastSummary() const
 {
     std::lock_guard lock(m_mutex);
     return m_summary;
+}
+
+ParallelFanOutQueueMetrics ProcessingEngine::parallelFanOutQueueMetrics() const
+{
+    std::lock_guard lock(m_stageMutex);
+    ParallelFanOutQueueMetrics metrics;
+    metrics.waterfallStageQueueDepth =
+        m_stageQueues[fanOutStageIndex(FanOutStage::Waterfall)].size();
+    metrics.spectrumStageQueueDepth =
+        m_stageQueues[fanOutStageIndex(FanOutStage::Spectrum)].size();
+    metrics.bearingStageQueueDepth =
+        m_stageQueues[fanOutStageIndex(FanOutStage::Bearing)].size();
+    metrics.signalParameterStageQueueDepth =
+        m_stageQueues[fanOutStageIndex(FanOutStage::SignalParameter)].size();
+    metrics.inFlightBlocks =
+        m_inFlightFanOutBlocks.load(std::memory_order_acquire);
+    return metrics;
 }
 
 bool ProcessingEngine::running() const noexcept
@@ -204,8 +231,8 @@ void ProcessingEngine::workerLoop()
             m_processingBlock = true;
         }
 
-        processBlock(**block);
-        block->reset();
+        auto handle = std::move(*block);
+        processBlock(std::move(handle));
 
         {
             std::lock_guard lock(m_mutex);
@@ -223,27 +250,85 @@ void ProcessingEngine::workerLoop()
     m_flushCondition.notify_all();
 }
 
-void ProcessingEngine::processBlock(const SignalBlock& block)
+void ProcessingEngine::processBlock(SignalBlockHandle block)
+{
+    if (!block) {
+        return;
+    }
+
+    if (m_processingConfig.processingMode == ProcessingMode::ParallelFanOut) {
+        processBlockParallel(std::move(block));
+        return;
+    }
+
+    processBlockSequential(*block);
+}
+
+void ProcessingEngine::processBlockSequential(const SignalBlock& block)
 {
     const auto startedAt = Clock::now();
+    const auto accounting = makeBlockAccounting(block, startedAt);
+    processWaterfallStage(block);
+    processSpectrumStage(block);
+    processBearingStage(block);
+    processSignalParameterStage(block);
+    recordBlockCompleted(accounting, Clock::now() - startedAt);
+}
+
+void ProcessingEngine::processBlockParallel(SignalBlockHandle block)
+{
+    const auto startedAt = Clock::now();
+    auto accounting = makeBlockAccounting(*block, startedAt);
+
+    auto context = std::make_shared<FanOutBlockContext>();
+    context->block = std::move(block);
+    context->accounting = std::move(accounting);
+    context->startedAt = startedAt;
+    context->remainingStages.store(static_cast<int>(kFanOutStageCount),
+                                   std::memory_order_release);
+
+    m_inFlightFanOutBlocks.fetch_add(1, std::memory_order_acq_rel);
+    if (!submitFanOutContext(context)) {
+        m_inFlightFanOutBlocks.fetch_sub(1, std::memory_order_acq_rel);
+        m_flushCondition.notify_all();
+        if (m_metrics) {
+            m_metrics->recordParallelFanOutRejectedBlock();
+            m_metrics->recordParallelFanOutFallbackBlock();
+        }
+        processBlockSequential(*context->block);
+        return;
+    }
+
+    if (m_metrics) {
+        m_metrics->recordParallelFanOutBlock();
+    }
+}
+
+ProcessingEngine::BlockAccountingData ProcessingEngine::makeBlockAccounting(
+    const SignalBlock& block,
+    std::chrono::steady_clock::time_point startedAt) const
+{
+    BlockAccountingData accounting;
+    accounting.sampleCount = static_cast<std::uint64_t>(block.sampleCount());
+    accounting.firstSampleIndex = block.firstSampleIndex();
+    accounting.lastSampleIndex = block.lastSampleIndex();
+
     const auto producedAt = block.producedAt();
-    const auto blockAge = producedAt == Clock::time_point{}
+    accounting.blockAge = producedAt == Clock::time_point{}
         ? std::chrono::milliseconds{0}
         : std::chrono::duration_cast<std::chrono::milliseconds>(startedAt - producedAt);
 
     std::map<std::pair<int, int>, BandBeamAggregateSummary> aggregates;
-    std::uint64_t firstSampleIndex = block.firstSampleIndex();
-    std::uint64_t lastSampleIndex = block.lastSampleIndex();
-    bool sawSample = false;
-
     for (const auto& sample : block.samples()) {
-        if (!sawSample) {
-            firstSampleIndex = sample.sampleIndex;
-            lastSampleIndex = sample.sampleIndex;
-            sawSample = true;
+        if (!accounting.hasSamples) {
+            accounting.firstSampleIndex = sample.sampleIndex;
+            accounting.lastSampleIndex = sample.sampleIndex;
+            accounting.hasSamples = true;
         } else {
-            firstSampleIndex = std::min(firstSampleIndex, sample.sampleIndex);
-            lastSampleIndex = std::max(lastSampleIndex, sample.sampleIndex);
+            accounting.firstSampleIndex =
+                std::min(accounting.firstSampleIndex, sample.sampleIndex);
+            accounting.lastSampleIndex =
+                std::max(accounting.lastSampleIndex, sample.sampleIndex);
         }
 
         auto& summary = aggregates[{sample.bandIndex, sample.beamIndex}];
@@ -253,6 +338,66 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
         summary.maxAmplitude = std::max(summary.maxAmplitude, sample.amplitude);
     }
 
+    accounting.bandBeamSummaries.reserve(aggregates.size());
+    for (const auto& [key, value] : aggregates) {
+        (void)key;
+        accounting.bandBeamSummaries.push_back(value);
+    }
+
+    return accounting;
+}
+
+void ProcessingEngine::recordBlockCompleted(
+    const BlockAccountingData& accounting,
+    std::chrono::steady_clock::duration processingElapsed)
+{
+    {
+        std::lock_guard lock(m_mutex);
+        ++m_summary.processedBlocks;
+        m_summary.processedSamples += accounting.sampleCount;
+        if (accounting.hasSamples || accounting.sampleCount == 0) {
+            if (m_summary.processedBlocks == 1) {
+                m_summary.firstSampleIndex = accounting.firstSampleIndex;
+                m_summary.lastSampleIndex = accounting.lastSampleIndex;
+            } else {
+                m_summary.firstSampleIndex =
+                    std::min(m_summary.firstSampleIndex, accounting.firstSampleIndex);
+                m_summary.lastSampleIndex =
+                    std::max(m_summary.lastSampleIndex, accounting.lastSampleIndex);
+            }
+        }
+
+        for (const auto& value : accounting.bandBeamSummaries) {
+            const auto found =
+                std::find_if(m_summary.bandBeamSummaries.begin(),
+                             m_summary.bandBeamSummaries.end(),
+                             [&value](const auto& existing) {
+                                 return existing.bandIndex == value.bandIndex
+                                     && existing.beamIndex == value.beamIndex;
+                             });
+            if (found == m_summary.bandBeamSummaries.end()) {
+                m_summary.bandBeamSummaries.push_back(value);
+            } else {
+                found->sampleCount += value.sampleCount;
+                found->maxAmplitude = std::max(found->maxAmplitude, value.maxAmplitude);
+            }
+        }
+    }
+
+    const auto processingLatency =
+        std::chrono::duration_cast<std::chrono::milliseconds>(processingElapsed);
+    if (m_metrics) {
+        m_metrics->recordProcessedBlock(static_cast<std::size_t>(accounting.sampleCount),
+                                        accounting.blockAge,
+                                        processingElapsed);
+    }
+    if (m_diagnostics) {
+        m_diagnostics->recordProcessingLatency(processingLatency);
+    }
+}
+
+void ProcessingEngine::processWaterfallStage(const SignalBlock& block)
+{
     WaterfallAggregationResult waterfallResult;
     WaterfallAggregatorConfig waterfallConfig;
     const auto waterfallAggregationStartedAt = Clock::now();
@@ -268,7 +413,18 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
     if (m_metrics) {
         m_metrics->recordWaterfallAggregationLatency(waterfallAggregationElapsed);
     }
+    Clock::duration waterfallPublishLatency{};
+    publishWaterfallRows(std::move(waterfallResult),
+                         std::move(waterfallConfig),
+                         waterfallAggregationLatency,
+                         &waterfallPublishLatency);
+    if (m_metrics) {
+        m_metrics->recordWaterfallRowPublishLatency(waterfallPublishLatency);
+    }
+}
 
+void ProcessingEngine::processSpectrumStage(const SignalBlock& block)
+{
     SpectrumAggregationResult spectrumResult;
     const auto spectrumAggregationStartedAt = Clock::now();
     {
@@ -303,7 +459,17 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             m_metrics->recordSpectrumBlockLocalAccumulationBlock();
         }
     }
+    Clock::duration spectrumPublishLatency{};
+    publishSpectrumSnapshots(std::move(spectrumResult),
+                             spectrumAggregationLatency,
+                             &spectrumPublishLatency);
+    if (m_metrics) {
+        m_metrics->recordSpectrumSnapshotPublishLatency(spectrumPublishLatency);
+    }
+}
 
+void ProcessingEngine::processBearingStage(const SignalBlock& block)
+{
     BearingAggregationResult bearingResult;
     const auto bearingAggregationStartedAt = Clock::now();
     {
@@ -332,7 +498,17 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             m_metrics->recordBearingFastCandidateStorageBlock();
         }
     }
+    Clock::duration bearingPublishLatency{};
+    publishBearingSnapshots(std::move(bearingResult),
+                            bearingAggregationLatency,
+                            &bearingPublishLatency);
+    if (m_metrics) {
+        m_metrics->recordBearingSnapshotPublishLatency(bearingPublishLatency);
+    }
+}
 
+void ProcessingEngine::processSignalParameterStage(const SignalBlock& block)
+{
     SignalParameterAggregationResult signalParameterResult;
     const auto signalParameterAggregationStartedAt = Clock::now();
     {
@@ -358,31 +534,6 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
         }
     }
 
-    Clock::duration waterfallPublishLatency{};
-    publishWaterfallRows(std::move(waterfallResult),
-                         std::move(waterfallConfig),
-                         waterfallAggregationLatency,
-                         &waterfallPublishLatency);
-    if (m_metrics) {
-        m_metrics->recordWaterfallRowPublishLatency(waterfallPublishLatency);
-    }
-
-    Clock::duration spectrumPublishLatency{};
-    publishSpectrumSnapshots(std::move(spectrumResult),
-                             spectrumAggregationLatency,
-                             &spectrumPublishLatency);
-    if (m_metrics) {
-        m_metrics->recordSpectrumSnapshotPublishLatency(spectrumPublishLatency);
-    }
-
-    Clock::duration bearingPublishLatency{};
-    publishBearingSnapshots(std::move(bearingResult),
-                            bearingAggregationLatency,
-                            &bearingPublishLatency);
-    if (m_metrics) {
-        m_metrics->recordBearingSnapshotPublishLatency(bearingPublishLatency);
-    }
-
     Clock::duration signalParameterPublishLatency{};
     publishSignalParameterSnapshots(std::move(signalParameterResult),
                                     signalParameterAggregationLatency,
@@ -390,49 +541,6 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
     if (m_metrics) {
         m_metrics->recordSignalParameterSnapshotPublishLatency(
             signalParameterPublishLatency);
-    }
-
-    {
-        std::lock_guard lock(m_mutex);
-        ++m_summary.processedBlocks;
-        m_summary.processedSamples += static_cast<std::uint64_t>(block.sampleCount());
-        if (sawSample || block.sampleCount() == 0) {
-            if (m_summary.processedBlocks == 1) {
-                m_summary.firstSampleIndex = firstSampleIndex;
-                m_summary.lastSampleIndex = lastSampleIndex;
-            } else {
-                m_summary.firstSampleIndex =
-                    std::min(m_summary.firstSampleIndex, firstSampleIndex);
-                m_summary.lastSampleIndex =
-                    std::max(m_summary.lastSampleIndex, lastSampleIndex);
-            }
-        }
-
-        for (const auto& [key, value] : aggregates) {
-            const auto found =
-                std::find_if(m_summary.bandBeamSummaries.begin(),
-                             m_summary.bandBeamSummaries.end(),
-                             [&value](const auto& existing) {
-                                 return existing.bandIndex == value.bandIndex
-                                     && existing.beamIndex == value.beamIndex;
-                             });
-            if (found == m_summary.bandBeamSummaries.end()) {
-                m_summary.bandBeamSummaries.push_back(value);
-            } else {
-                found->sampleCount += value.sampleCount;
-                found->maxAmplitude = std::max(found->maxAmplitude, value.maxAmplitude);
-            }
-        }
-    }
-
-    const auto processingElapsed = Clock::now() - startedAt;
-    const auto processingLatency =
-        std::chrono::duration_cast<std::chrono::milliseconds>(processingElapsed);
-    if (m_metrics) {
-        m_metrics->recordProcessedBlock(block.sampleCount(), blockAge, processingElapsed);
-    }
-    if (m_diagnostics) {
-        m_diagnostics->recordProcessingLatency(processingLatency);
     }
 }
 
@@ -637,6 +745,198 @@ void ProcessingEngine::flushBearingSnapshots()
         std::chrono::duration_cast<std::chrono::milliseconds>(
             Clock::now() - aggregationStartedAt);
     publishBearingSnapshots(std::move(result), aggregationLatency);
+}
+
+void ProcessingEngine::startFanOutWorkers()
+{
+    m_stageWorkers[fanOutStageIndex(FanOutStage::Waterfall)] =
+        std::thread(&ProcessingEngine::stageWorkerLoop, this, FanOutStage::Waterfall);
+    m_stageWorkers[fanOutStageIndex(FanOutStage::Spectrum)] =
+        std::thread(&ProcessingEngine::stageWorkerLoop, this, FanOutStage::Spectrum);
+    m_stageWorkers[fanOutStageIndex(FanOutStage::Bearing)] =
+        std::thread(&ProcessingEngine::stageWorkerLoop, this, FanOutStage::Bearing);
+    m_stageWorkers[fanOutStageIndex(FanOutStage::SignalParameter)] =
+        std::thread(&ProcessingEngine::stageWorkerLoop, this, FanOutStage::SignalParameter);
+}
+
+void ProcessingEngine::stopFanOutWorkers()
+{
+    {
+        std::lock_guard lock(m_stageMutex);
+        m_stageStopRequested = true;
+    }
+    m_stageCondition.notify_all();
+
+    for (auto& worker : m_stageWorkers) {
+        if (worker.joinable() && worker.get_id() != std::this_thread::get_id()) {
+            worker.join();
+        }
+    }
+    m_flushCondition.notify_all();
+}
+
+void ProcessingEngine::resetFanOutQueues()
+{
+    std::lock_guard lock(m_stageMutex);
+    for (auto& queue : m_stageQueues) {
+        queue.clear();
+    }
+    m_stageStopRequested = false;
+}
+
+bool ProcessingEngine::submitFanOutContext(
+    const std::shared_ptr<FanOutBlockContext>& context)
+{
+    if (!context) {
+        return false;
+    }
+
+    std::lock_guard lock(m_stageMutex);
+    if (m_stageStopRequested || m_processingConfig.stageQueueCapacity == 0) {
+        return false;
+    }
+
+    for (const auto& queue : m_stageQueues) {
+        if (queue.size() >= m_processingConfig.stageQueueCapacity) {
+            return false;
+        }
+    }
+
+    m_stageQueues[fanOutStageIndex(FanOutStage::Waterfall)].push_back(context);
+    m_stageQueues[fanOutStageIndex(FanOutStage::Spectrum)].push_back(context);
+    m_stageQueues[fanOutStageIndex(FanOutStage::Bearing)].push_back(context);
+    m_stageQueues[fanOutStageIndex(FanOutStage::SignalParameter)].push_back(context);
+    m_stageCondition.notify_all();
+    return true;
+}
+
+std::shared_ptr<ProcessingEngine::FanOutBlockContext>
+ProcessingEngine::popFanOutStageJob(FanOutStage stage)
+{
+    const auto index = fanOutStageIndex(stage);
+    std::unique_lock lock(m_stageMutex);
+    m_stageCondition.wait(lock, [this, index] {
+        return m_stageStopRequested || !m_stageQueues[index].empty();
+    });
+
+    if (m_stageQueues[index].empty()) {
+        return {};
+    }
+
+    auto context = std::move(m_stageQueues[index].front());
+    m_stageQueues[index].pop_front();
+    lock.unlock();
+    m_flushCondition.notify_all();
+    return context;
+}
+
+void ProcessingEngine::stageWorkerLoop(FanOutStage stage)
+{
+    for (;;) {
+        auto context = popFanOutStageJob(stage);
+        if (!context) {
+            break;
+        }
+
+        processFanOutStage(stage, *context->block);
+        recordFanOutStageProcessed(stage);
+        completeFanOutStage(context);
+    }
+}
+
+void ProcessingEngine::processFanOutStage(FanOutStage stage, const SignalBlock& block)
+{
+    switch (stage) {
+    case FanOutStage::Waterfall:
+        processWaterfallStage(block);
+        break;
+    case FanOutStage::Spectrum:
+        processSpectrumStage(block);
+        break;
+    case FanOutStage::Bearing:
+        processBearingStage(block);
+        break;
+    case FanOutStage::SignalParameter:
+        processSignalParameterStage(block);
+        break;
+    }
+}
+
+void ProcessingEngine::recordFanOutStageProcessed(FanOutStage stage)
+{
+    if (!m_metrics) {
+        return;
+    }
+
+    switch (stage) {
+    case FanOutStage::Waterfall:
+        m_metrics->recordWaterfallStageProcessedBlock();
+        break;
+    case FanOutStage::Spectrum:
+        m_metrics->recordSpectrumStageProcessedBlock();
+        break;
+    case FanOutStage::Bearing:
+        m_metrics->recordBearingStageProcessedBlock();
+        break;
+    case FanOutStage::SignalParameter:
+        m_metrics->recordSignalParameterStageProcessedBlock();
+        break;
+    }
+}
+
+void ProcessingEngine::completeFanOutStage(
+    const std::shared_ptr<FanOutBlockContext>& context)
+{
+    if (!context) {
+        return;
+    }
+
+    if (context->remainingStages.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+        return;
+    }
+
+    const auto elapsed = Clock::now() - context->startedAt;
+    recordBlockCompleted(context->accounting, elapsed);
+    if (m_metrics) {
+        m_metrics->recordParallelFanOutEndToEndLatency(elapsed);
+    }
+    m_inFlightFanOutBlocks.fetch_sub(1, std::memory_order_acq_rel);
+    m_flushCondition.notify_all();
+}
+
+bool ProcessingEngine::fanOutDrained() const
+{
+    if (m_inFlightFanOutBlocks.load(std::memory_order_acquire) != 0) {
+        return false;
+    }
+
+    std::lock_guard lock(m_stageMutex);
+    return std::all_of(m_stageQueues.begin(), m_stageQueues.end(), [](const auto& queue) {
+        return queue.empty();
+    });
+}
+
+bool ProcessingEngine::stageWorkersJoinable() const noexcept
+{
+    return std::any_of(m_stageWorkers.begin(), m_stageWorkers.end(), [](const auto& worker) {
+        return worker.joinable();
+    });
+}
+
+std::size_t ProcessingEngine::fanOutStageIndex(FanOutStage stage) noexcept
+{
+    switch (stage) {
+    case FanOutStage::Waterfall:
+        return 0;
+    case FanOutStage::Spectrum:
+        return 1;
+    case FanOutStage::Bearing:
+        return 2;
+    case FanOutStage::SignalParameter:
+        return 3;
+    }
+
+    return 0;
 }
 
 } // namespace siriusscope::pipeline

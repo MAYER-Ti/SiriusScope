@@ -38,6 +38,7 @@ struct DataIngestPipelineConfig
     SpectrumAggregatorConfig spectrum;
     BearingAggregatorConfig bearing;
     SignalParameterAggregatorConfig signalParameters;
+    ProcessingEngineConfig processing;
 };
 
 class DataIngestPipeline

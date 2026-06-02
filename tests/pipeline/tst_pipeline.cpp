@@ -109,6 +109,16 @@ hardware::BcoStreamConfig makeStreamConfig()
     return config;
 }
 
+void testProcessingEngineConfigDefaultsToSequential(TestRunner& test)
+{
+    pipeline::ProcessingEngineConfig config;
+
+    test.require(config.processingMode == pipeline::ProcessingMode::Sequential,
+                 "processing engine defaults to sequential mode");
+    test.require(config.stageQueueCapacity == 64,
+                 "processing engine defaults stage queue capacity");
+}
+
 void testSignalBlockPoolAcquireReleaseExhaustion(TestRunner& test)
 {
     pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{2, 4});
@@ -278,6 +288,171 @@ void testProcessingEngineProcessesBlocksAndFlushes(TestRunner& test)
         }
     }
     test.require(sawBeam1, "processing engine aggregates max amplitude per band/beam");
+}
+
+void testProcessingEngineParallelFanOutProcessesBlocksAndFlushes(TestRunner& test)
+{
+    const auto band = makeBand(0);
+    pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{4, 8});
+    pipeline::BoundedBlockQueue queue(4);
+    pipeline::PipelineMetrics metrics;
+    pipeline::PipelineDiagnostics diagnostics(
+        pipeline::PipelineDiagnosticsConfig{std::chrono::milliseconds{1}, "ProcessingEngine"});
+    pipeline::WaterfallRowQueue waterfallRows;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
+    pipeline::SnapshotExchange<pipeline::SignalParameterSnapshot> signalParameterSnapshots;
+    pipeline::ProcessingEngineConfig processingConfig;
+    processingConfig.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    processingConfig.stageQueueCapacity = 8;
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      &diagnostics,
+                                      &waterfallRows,
+                                      {},
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots,
+                                      {},
+                                      &signalParameterSnapshots,
+                                      {},
+                                      processingConfig);
+
+    const auto started = engine.start();
+    auto block = pool.acquire();
+    pipeline::SignalBlockMetadata metadata{0, 10, 11, std::chrono::steady_clock::now()};
+    metadata.antennaAzimuthDeg = 45.0;
+    block->reset(metadata);
+    const std::vector<core::SignalSample> samples{
+        makeSample(band, 10, 0, 40),
+        makeSample(band, 10, 1, 90),
+        makeSample(band, 11, 1, 45),
+    };
+    block->assignSamples(samples);
+    metrics.recordInputBlock(block->sampleCount(), block->producedAt());
+    const bool queued = queue.tryPush(std::move(block));
+    const auto flushed = engine.flush(std::chrono::milliseconds{1500});
+    const auto summary = engine.lastSummary();
+    const auto drainedWaterfallRows = waterfallRows.drain(10);
+    const auto spectrumSnapshot = spectrumSnapshots.latest();
+    const auto bearingSnapshot = bearingSnapshots.latest();
+    const auto signalParameterSnapshot = signalParameterSnapshots.latest();
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(),
+                         pool.counters(),
+                         waterfallRows.metrics(),
+                         engine.parallelFanOutQueueMetrics());
+    engine.stop();
+
+    test.require(started.success, "parallel processing engine starts");
+    test.require(queued, "parallel processing engine test queues block");
+    test.require(flushed.success, "parallel processing engine flushes queued block");
+    test.require(summary.processedBlocks == 1,
+                 "parallel processing engine counts processed block once");
+    test.require(summary.processedSamples == 3,
+                 "parallel processing engine counts processed samples once");
+    test.require(!drainedWaterfallRows.empty(),
+                 "parallel processing engine queues waterfall rows");
+    test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
+                 "parallel processing engine publishes spectrum snapshot");
+    test.require(bearingSnapshot && !bearingSnapshot->estimates.empty(),
+                 "parallel processing engine publishes bearing snapshot");
+    test.require(signalParameterSnapshot != nullptr,
+                 "parallel processing engine publishes signal parameter snapshot");
+    test.require(metricsSnapshot.parallelFanOutBlocks == 1,
+                 "parallel metrics count fan-out block");
+    test.require(metricsSnapshot.parallelFanOutFallbackBlocks == 0,
+                 "parallel metrics report no fallback on happy path");
+    test.require(metricsSnapshot.parallelFanOutRejectedBlocks == 0,
+                 "parallel metrics report no rejected fan-out block on happy path");
+    test.require(metricsSnapshot.parallelFanOutEndToEndLatency.count == 1,
+                 "parallel metrics count fan-out end-to-end latency");
+    test.require(metricsSnapshot.processBlockLatency.count == 1,
+                 "parallel processing still records one process block latency");
+    test.require(metricsSnapshot.waterfallStageProcessedBlocks == 1,
+                 "parallel metrics count waterfall stage block");
+    test.require(metricsSnapshot.spectrumStageProcessedBlocks == 1,
+                 "parallel metrics count spectrum stage block");
+    test.require(metricsSnapshot.bearingStageProcessedBlocks == 1,
+                 "parallel metrics count bearing stage block");
+    test.require(metricsSnapshot.signalParameterStageProcessedBlocks == 1,
+                 "parallel metrics count signal parameter stage block");
+    test.require(metricsSnapshot.parallelFanOutInFlightBlocks == 0,
+                 "parallel flush leaves no in-flight fan-out blocks");
+    test.require(metricsSnapshot.waterfallStageQueueDepth == 0
+                     && metricsSnapshot.spectrumStageQueueDepth == 0
+                     && metricsSnapshot.bearingStageQueueDepth == 0
+                     && metricsSnapshot.signalParameterStageQueueDepth == 0,
+                 "parallel flush leaves stage queues empty");
+    test.require(pool.counters().inUse == 0,
+                 "parallel fan-out releases pooled block after all stages complete");
+}
+
+void testProcessingEngineParallelFanOutStopDrainsWithoutDeadlock(TestRunner& test)
+{
+    const auto band = makeBand(0);
+    pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{8, 8});
+    pipeline::BoundedBlockQueue queue(8);
+    pipeline::PipelineMetrics metrics;
+    pipeline::WaterfallRowQueue waterfallRows;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
+    pipeline::SnapshotExchange<pipeline::SignalParameterSnapshot> signalParameterSnapshots;
+    pipeline::ProcessingEngineConfig processingConfig;
+    processingConfig.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    processingConfig.stageQueueCapacity = 8;
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      nullptr,
+                                      &waterfallRows,
+                                      {},
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots,
+                                      {},
+                                      &signalParameterSnapshots,
+                                      {},
+                                      processingConfig);
+
+    const auto started = engine.start();
+    std::size_t queuedBlocks = 0;
+    for (std::uint64_t blockIndex = 0; blockIndex < 3; ++blockIndex) {
+        auto block = pool.acquire();
+        pipeline::SignalBlockMetadata metadata{
+            blockIndex,
+            blockIndex * 10,
+            blockIndex * 10 + 1,
+            std::chrono::steady_clock::now(),
+        };
+        metadata.antennaAzimuthDeg = 45.0;
+        block->reset(metadata);
+        const std::vector<core::SignalSample> samples{
+            makeSample(band, blockIndex * 10, 0, 40),
+            makeSample(band, blockIndex * 10, 1, 80),
+        };
+        block->assignSamples(samples);
+        metrics.recordInputBlock(block->sampleCount(), block->producedAt());
+        if (queue.tryPush(std::move(block))) {
+            ++queuedBlocks;
+        }
+    }
+
+    engine.stop();
+    const auto summary = engine.lastSummary();
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(),
+                         pool.counters(),
+                         waterfallRows.metrics(),
+                         engine.parallelFanOutQueueMetrics());
+
+    test.require(started.success, "parallel stop test starts engine");
+    test.require(queuedBlocks == 3, "parallel stop test queues all blocks");
+    test.require(summary.processedSamples == 6,
+                 "parallel stop drains queued blocks before returning");
+    test.require(metricsSnapshot.parallelFanOutInFlightBlocks == 0,
+                 "parallel stop leaves no in-flight fan-out blocks");
+    test.require(pool.counters().inUse == 0,
+                 "parallel stop releases all pooled blocks");
 }
 
 void testDiagnosticsAreAggregated(TestRunner& test)
@@ -544,9 +719,12 @@ int main()
 {
     TestRunner test;
 
+    testProcessingEngineConfigDefaultsToSequential(test);
     testSignalBlockPoolAcquireReleaseExhaustion(test);
     testBoundedBlockQueuePushPopOverflowShutdown(test);
     testProcessingEngineProcessesBlocksAndFlushes(test);
+    testProcessingEngineParallelFanOutProcessesBlocksAndFlushes(test);
+    testProcessingEngineParallelFanOutStopDrainsWithoutDeadlock(test);
     testDiagnosticsAreAggregated(test);
     testDataPipelineDrainsAllWaterfallRows(test);
     testWaterfallRowQueueOverflowIsCounted(test);

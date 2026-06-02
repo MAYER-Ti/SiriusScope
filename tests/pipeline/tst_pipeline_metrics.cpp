@@ -274,6 +274,56 @@ void testBearingFastCandidateStorageCounter(TestRunner& test)
                  "bearing fast candidate storage blocks are counted");
 }
 
+void testParallelFanOutMetrics(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+    pipeline::ParallelFanOutQueueMetrics queueMetrics;
+    queueMetrics.waterfallStageQueueDepth = 1;
+    queueMetrics.spectrumStageQueueDepth = 2;
+    queueMetrics.bearingStageQueueDepth = 3;
+    queueMetrics.signalParameterStageQueueDepth = 4;
+    queueMetrics.inFlightBlocks = 5;
+
+    metrics.recordParallelFanOutBlock();
+    metrics.recordParallelFanOutFallbackBlock();
+    metrics.recordParallelFanOutRejectedBlock();
+    metrics.recordWaterfallStageProcessedBlock();
+    metrics.recordSpectrumStageProcessedBlock();
+    metrics.recordBearingStageProcessedBlock();
+    metrics.recordSignalParameterStageProcessedBlock();
+    metrics.recordParallelFanOutEndToEndLatency(std::chrono::milliseconds{7});
+
+    const auto snapshot = metrics.snapshot({}, {}, {}, queueMetrics);
+    test.require(snapshot.parallelFanOutBlocks == 1,
+                 "parallel fan-out blocks are counted");
+    test.require(snapshot.parallelFanOutFallbackBlocks == 1,
+                 "parallel fan-out fallback blocks are counted");
+    test.require(snapshot.parallelFanOutRejectedBlocks == 1,
+                 "parallel fan-out rejected blocks are counted");
+    test.require(snapshot.waterfallStageQueueDepth == 1,
+                 "parallel fan-out waterfall queue depth is exposed");
+    test.require(snapshot.spectrumStageQueueDepth == 2,
+                 "parallel fan-out spectrum queue depth is exposed");
+    test.require(snapshot.bearingStageQueueDepth == 3,
+                 "parallel fan-out bearing queue depth is exposed");
+    test.require(snapshot.signalParameterStageQueueDepth == 4,
+                 "parallel fan-out signal parameter queue depth is exposed");
+    test.require(snapshot.parallelFanOutInFlightBlocks == 5,
+                 "parallel fan-out in-flight blocks are exposed");
+    test.require(snapshot.waterfallStageProcessedBlocks == 1,
+                 "parallel fan-out waterfall stage blocks are counted");
+    test.require(snapshot.spectrumStageProcessedBlocks == 1,
+                 "parallel fan-out spectrum stage blocks are counted");
+    test.require(snapshot.bearingStageProcessedBlocks == 1,
+                 "parallel fan-out bearing stage blocks are counted");
+    test.require(snapshot.signalParameterStageProcessedBlocks == 1,
+                 "parallel fan-out signal parameter stage blocks are counted");
+    test.requireNear(snapshot.parallelFanOutEndToEndLatency.averageMs(),
+                     7.0,
+                     0.0001,
+                     "parallel fan-out end-to-end latency is tracked");
+}
+
 void testResetClearsLatencyStats(TestRunner& test)
 {
     pipeline::PipelineMetrics metrics;
@@ -290,6 +340,14 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordBearingSampleLoopLatency(std::chrono::milliseconds{2});
     metrics.recordBearingCandidateUpdateLatency(std::chrono::milliseconds{3});
     metrics.recordBearingFastCandidateStorageBlock();
+    metrics.recordParallelFanOutBlock();
+    metrics.recordParallelFanOutFallbackBlock();
+    metrics.recordParallelFanOutRejectedBlock();
+    metrics.recordWaterfallStageProcessedBlock();
+    metrics.recordSpectrumStageProcessedBlock();
+    metrics.recordBearingStageProcessedBlock();
+    metrics.recordSignalParameterStageProcessedBlock();
+    metrics.recordParallelFanOutEndToEndLatency(std::chrono::milliseconds{5});
     metrics.reset();
 
     const auto snapshot = snapshotFor(metrics);
@@ -329,6 +387,22 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears bearing candidate update latency count");
     test.require(snapshot.bearingFastCandidateStorageBlocks == 0,
                  "reset clears bearing fast candidate storage counter");
+    test.require(snapshot.parallelFanOutBlocks == 0,
+                 "reset clears parallel fan-out block counter");
+    test.require(snapshot.parallelFanOutFallbackBlocks == 0,
+                 "reset clears parallel fan-out fallback counter");
+    test.require(snapshot.parallelFanOutRejectedBlocks == 0,
+                 "reset clears parallel fan-out rejected counter");
+    test.require(snapshot.waterfallStageProcessedBlocks == 0,
+                 "reset clears waterfall stage processed counter");
+    test.require(snapshot.spectrumStageProcessedBlocks == 0,
+                 "reset clears spectrum stage processed counter");
+    test.require(snapshot.bearingStageProcessedBlocks == 0,
+                 "reset clears bearing stage processed counter");
+    test.require(snapshot.signalParameterStageProcessedBlocks == 0,
+                 "reset clears signal parameter stage processed counter");
+    test.require(snapshot.parallelFanOutEndToEndLatency.count == 0,
+                 "reset clears parallel fan-out end-to-end latency");
 }
 
 } // namespace
@@ -345,6 +419,7 @@ int main()
     testSpectrumFastPathCounter(test);
     testBearingMicroBreakdownLatencyStats(test);
     testBearingFastCandidateStorageCounter(test);
+    testParallelFanOutMetrics(test);
     testResetClearsLatencyStats(test);
 
     return test.result();

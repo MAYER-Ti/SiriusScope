@@ -25,7 +25,8 @@ DataIngestPipeline::DataIngestPipeline(DataIngestPipelineConfig config,
                &m_bearingSnapshots,
                m_config.bearing,
                &m_signalParameterSnapshots,
-               m_config.signalParameters)
+               m_config.signalParameters,
+               m_config.processing)
 {
 }
 
@@ -137,7 +138,10 @@ core::OperationResult DataIngestPipeline::flushProcessing(std::chrono::milliseco
 
 PipelineMetricsSnapshot DataIngestPipeline::metricsSnapshot() const
 {
-    return m_metrics.snapshot(m_queue.metrics(), m_pool.counters(), m_waterfallRows.metrics());
+    return m_metrics.snapshot(m_queue.metrics(),
+                              m_pool.counters(),
+                              m_waterfallRows.metrics(),
+                              m_engine.parallelFanOutQueueMetrics());
 }
 
 ProcessingEngineSummary DataIngestPipeline::lastSummary() const

@@ -126,6 +126,21 @@ The processing engine must not depend on QML, `QObject` presentation wrappers, o
 `QAbstractListModel`. Algorithmic components such as `BearingService` remain replaceable,
 but their high-load input must be prepared by data plane aggregators.
 
+Current experimental mode:
+
+- `ProcessingEngine` defaults to `Sequential` processing, where one worker runs
+  Waterfall, Spectrum, Bearing, and SignalParameter aggregation in order.
+- `ParallelFanOut` is an opt-in high-load audit mode. It fans each pooled `SignalBlock`
+  out to separate stage workers for Waterfall, Spectrum, Bearing, and SignalParameter
+  aggregation.
+- The fan-out context owns the pooled block handle until every stage completes, so stage
+  workers read the same block without copying samples and the block is not returned to
+  the pool early.
+- Stage queues are bounded and expose queue depth, fallback/rejection, per-stage block,
+  in-flight block, and end-to-end fan-out latency metrics.
+- `ParallelFanOut` must not become the GUI runtime default until audit results prove the
+  behavior is stable enough for production use.
+
 ## 6. Waterfall Aggregation
 
 Waterfall must not be modeled as a per-`sampleIndex` UI feed.
