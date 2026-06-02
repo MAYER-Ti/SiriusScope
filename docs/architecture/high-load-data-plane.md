@@ -154,6 +154,34 @@ Current experimental mode:
   control. It scales target-raw samples per batch and batch period together, preserving
   raw throughput while reducing source block rate. `SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP=1`
   runs a report-oriented comparison across all supported multipliers.
+- `SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION=1` runs an audit-only profile selection
+  comparison, defaulting to multipliers `4` and `8`. With
+  `SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS=1`, the comparison runs every candidate before
+  failing, and fails only if no candidate passes no-drop or the selected candidate
+  violates a hard latency/backlog budget. The selected multiplier is engineering audit
+  guidance only and does not change the normal GUI runtime default.
+
+Strict profile selection:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+Soak profile selection:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
 
 ## 6. Waterfall Aggregation
 

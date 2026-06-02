@@ -127,6 +127,35 @@ ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-f
 The sweep prints raw throughput, blocks per second, samples per block, queue backlog, and
 per-stage service latency. It is not a replacement for strict no-drop validation.
 
+To compare the current high-load batch candidates and select an audit recommendation,
+run profile selection. This mode compares `m=4` and `m=8` by default, prints no-drop,
+latency, queue, service, and block-pool summaries, and applies strict failures only after
+all candidates have run:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+Soak profile selection remains opt-in and uses the soak duration:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+`SIRIUSSCOPE_90MBPS_PROFILE_SELECTION_MULTIPLIERS=4,8` can override the candidate
+list with supported multipliers. The selected multiplier is audit guidance only; it does
+not change the ordinary runtime GUI default.
+
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable
 `BcoSampleBlock` pointers into a bounded RX queue; a dedicated bridge worker performs the

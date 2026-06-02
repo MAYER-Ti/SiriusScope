@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
@@ -187,6 +188,30 @@ struct LatencyBudgetEvaluation
                 || stage.queueDepthStatus == BudgetStatus::Warn;
         });
     }
+};
+
+struct BatchProfileScore
+{
+    std::size_t multiplier = 1;
+    bool noDropPass = false;
+    bool latencyBudgetPass = false;
+    bool queueDepthBudgetPass = false;
+    double rawMBps = 0.0;
+    double fanOutMaxMs = 0.0;
+    double maxQueueDepthRatio = 0.0;
+    std::uint64_t rejectedBlocks = 0;
+    std::uint64_t blockPoolExhausted = 0;
+    std::uint64_t inputSamples = 0;
+    std::uint64_t processedSamples = 0;
+    std::uint64_t droppedBlocks = 0;
+    std::uint64_t droppedSamples = 0;
+    std::uint64_t queueDroppedBlocks = 0;
+};
+
+struct BatchProfileSelection
+{
+    std::optional<BatchProfileScore> selected;
+    std::string reason;
 };
 
 std::int64_t nowUtcNs()
@@ -385,9 +410,94 @@ bool targetRawBatchSweepEnabled()
     return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP");
 }
 
+bool targetRawProfileSelectionEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION");
+}
+
 std::vector<std::size_t> batchSweepMultipliers()
 {
     return {1, 2, 4, 8};
+}
+
+std::vector<std::size_t> defaultProfileSelectionMultipliers()
+{
+    return {4, 8};
+}
+
+std::string trimAsciiWhitespace(const std::string& text)
+{
+    std::size_t begin = 0;
+    while (begin < text.size()
+           && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
+        ++begin;
+    }
+
+    std::size_t end = text.size();
+    while (end > begin
+           && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+        --end;
+    }
+
+    return text.substr(begin, end - begin);
+}
+
+std::optional<std::vector<std::size_t>> parseBatchMultiplierList(const char* text)
+{
+    if (!text || *text == '\0') {
+        return std::nullopt;
+    }
+
+    std::vector<std::size_t> multipliers;
+    const std::string value(text);
+    std::size_t tokenBegin = 0;
+    while (tokenBegin <= value.size()) {
+        const auto tokenEnd = value.find(',', tokenBegin);
+        const auto length =
+            tokenEnd == std::string::npos ? std::string::npos : tokenEnd - tokenBegin;
+        const auto token = trimAsciiWhitespace(value.substr(tokenBegin, length));
+        if (token.empty()) {
+            return std::nullopt;
+        }
+
+        const auto parsed = parseBatchMultiplier(token.c_str());
+        if (!parsed) {
+            return std::nullopt;
+        }
+        if (std::find(multipliers.begin(), multipliers.end(), *parsed)
+            == multipliers.end()) {
+            multipliers.push_back(*parsed);
+        }
+
+        if (tokenEnd == std::string::npos) {
+            break;
+        }
+        tokenBegin = tokenEnd + 1;
+    }
+
+    if (multipliers.empty()) {
+        return std::nullopt;
+    }
+    return multipliers;
+}
+
+std::vector<std::size_t> profileSelectionMultipliers()
+{
+    const char* value =
+        std::getenv("SIRIUSSCOPE_90MBPS_PROFILE_SELECTION_MULTIPLIERS");
+    if (!value) {
+        return defaultProfileSelectionMultipliers();
+    }
+
+    const auto parsed = parseBatchMultiplierList(value);
+    if (parsed) {
+        return *parsed;
+    }
+
+    std::cout
+        << "WARNING: invalid SIRIUSSCOPE_90MBPS_PROFILE_SELECTION_MULTIPLIERS='"
+        << value << "', using 4,8\n";
+    return defaultProfileSelectionMultipliers();
 }
 
 bool targetRawPipelineTestEnabled()
@@ -1813,10 +1923,205 @@ double processedToInputRatio(const AuditResult& result)
                        static_cast<double>(result.pipeline.inputSamples));
 }
 
+const char* passFailName(bool pass)
+{
+    return pass ? "PASS" : "FAIL";
+}
+
+bool budgetStatusPasses(BudgetStatus status)
+{
+    return status == BudgetStatus::Pass || status == BudgetStatus::NotApplicable;
+}
+
+bool latencyBudgetPasses(const LatencyBudgetEvaluation& evaluation)
+{
+    if (!budgetStatusPasses(evaluation.fanOutEndToEndStatus)) {
+        return false;
+    }
+
+    return std::all_of(evaluation.stages.begin(),
+                       evaluation.stages.end(),
+                       [](const auto& stage) {
+                           return budgetStatusPasses(stage.queueWaitStatus);
+                       });
+}
+
+bool queueDepthBudgetPasses(const LatencyBudgetEvaluation& evaluation)
+{
+    return std::all_of(evaluation.stages.begin(),
+                       evaluation.stages.end(),
+                       [](const auto& stage) {
+                           return budgetStatusPasses(stage.queueDepthStatus);
+                       });
+}
+
+BudgetStatus worstBudgetStatus(BudgetStatus current, BudgetStatus next)
+{
+    if (current == BudgetStatus::Fail || next == BudgetStatus::Fail) {
+        return BudgetStatus::Fail;
+    }
+    if (current == BudgetStatus::Warn || next == BudgetStatus::Warn) {
+        return BudgetStatus::Warn;
+    }
+    if (current == BudgetStatus::Pass || next == BudgetStatus::Pass) {
+        return BudgetStatus::Pass;
+    }
+    return BudgetStatus::NotApplicable;
+}
+
+BudgetStatus combinedLatencyBacklogStatus(const LatencyBudgetEvaluation& evaluation)
+{
+    auto status = evaluation.fanOutEndToEndStatus;
+    for (const auto& stage : evaluation.stages) {
+        status = worstBudgetStatus(status, stage.queueWaitStatus);
+        status = worstBudgetStatus(status, stage.queueDepthStatus);
+    }
+    return status;
+}
+
+bool batchProfileBudgetPasses(const BatchProfileScore& score)
+{
+    return score.latencyBudgetPass && score.queueDepthBudgetPass;
+}
+
+std::uint64_t profileDroppedBlocks(const AuditResult& result)
+{
+    return result.bridge.droppedBlocks + result.pipeline.droppedBlocks
+        + result.pipeline.queueDroppedBlocks;
+}
+
+std::uint64_t profileDroppedSamples(const AuditResult& result)
+{
+    return result.bridge.droppedSamples + result.pipeline.droppedSamples;
+}
+
+double maxStageQueueWaitAverageMs(const AuditResult& result)
+{
+    double maxAverageMs = 0.0;
+    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+        maxAverageMs =
+            std::max(maxAverageMs, stage.metrics.queueWaitLatency.averageMs());
+    }
+    return maxAverageMs;
+}
+
+double maxStageQueueWaitMaxMs(const AuditResult& result)
+{
+    double maxMs = 0.0;
+    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+        maxMs = std::max(maxMs, stage.metrics.queueWaitLatency.maxMs);
+    }
+    return maxMs;
+}
+
+double maxStageServiceMaxMs(const AuditResult& result)
+{
+    double maxMs = 0.0;
+    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+        maxMs = std::max(maxMs, stage.metrics.serviceLatency.maxMs);
+    }
+    return maxMs;
+}
+
 bool auditInfrastructureSucceeded(const AuditResult& result)
 {
     return result.sourceConfigured && result.pipelineStarted && result.bridgeStarted
         && result.sourceStarted && result.sourceStopped && result.bridgeFlushed;
+}
+
+BatchProfileScore makeBatchProfileScore(const AuditResult& result)
+{
+    const auto evaluation = evaluateLatencyBudget(result);
+    BatchProfileScore score;
+    score.multiplier = result.batchSizeMultiplier;
+    score.latencyBudgetPass = latencyBudgetPasses(evaluation);
+    score.queueDepthBudgetPass = queueDepthBudgetPasses(evaluation);
+    score.rawMBps = rawMegabytesPerSecond(result);
+    score.fanOutMaxMs = result.pipeline.parallelFanOutEndToEndLatency.maxMs;
+    score.maxQueueDepthRatio = maxStageQueueDepthRatio(result);
+    score.rejectedBlocks = result.rejectedBlocks;
+    score.blockPoolExhausted = result.pipeline.blockPoolExhausted;
+    score.inputSamples = result.pipeline.inputSamples;
+    score.processedSamples = result.pipeline.processedSamples;
+    score.droppedBlocks = profileDroppedBlocks(result);
+    score.droppedSamples = profileDroppedSamples(result);
+    score.queueDroppedBlocks = result.pipeline.queueDroppedBlocks;
+    score.noDropPass =
+        auditInfrastructureSucceeded(result)
+        && result.flushed
+        && result.pipeline.inputSamples > 0
+        && result.pipeline.processedSamples > 0
+        && result.bridge.droppedBlocks == 0
+        && result.bridge.droppedSamples == 0
+        && result.bridge.rejectedBlocks == 0
+        && result.bridge.rejectedSamples == 0
+        && result.pipeline.droppedBlocks == 0
+        && result.pipeline.droppedSamples == 0
+        && result.pipeline.queueDroppedBlocks == 0
+        && result.pipeline.blockPoolExhausted == 0
+        && result.pipeline.processedSamples == result.pipeline.inputSamples
+        && result.pipeline.parallelFanOutFallbackBlocks == 0
+        && result.pipeline.parallelFanOutRejectedBlocks == 0
+        && result.pipeline.parallelFanOutInFlightBlocks == 0
+        && result.pipeline.blockPoolInUse == 0
+        && result.source.simulatorBackpressureEvents == 0;
+    return score;
+}
+
+std::vector<BatchProfileScore> makeBatchProfileScores(
+    const std::vector<AuditResult>& results)
+{
+    std::vector<BatchProfileScore> scores;
+    scores.reserve(results.size());
+    for (const auto& result : results) {
+        scores.push_back(makeBatchProfileScore(result));
+    }
+    return scores;
+}
+
+bool shouldPreferBatchProfile(const BatchProfileScore& candidate,
+                              const BatchProfileScore& current)
+{
+    constexpr double kFanOutCloseToleranceMs = 1.0;
+    const bool candidateBudgetPasses = batchProfileBudgetPasses(candidate);
+    const bool currentBudgetPasses = batchProfileBudgetPasses(current);
+    if (candidateBudgetPasses != currentBudgetPasses) {
+        return candidateBudgetPasses;
+    }
+
+    const auto fanOutDelta = std::abs(candidate.fanOutMaxMs - current.fanOutMaxMs);
+    if (fanOutDelta > kFanOutCloseToleranceMs) {
+        return candidate.fanOutMaxMs < current.fanOutMaxMs;
+    }
+
+    return candidate.multiplier < current.multiplier;
+}
+
+BatchProfileSelection selectRecommendedBatchProfile(
+    const std::vector<BatchProfileScore>& scores)
+{
+    BatchProfileSelection selection;
+    for (const auto& score : scores) {
+        if (!score.noDropPass) {
+            continue;
+        }
+        if (!selection.selected
+            || shouldPreferBatchProfile(score, *selection.selected)) {
+            selection.selected = score;
+        }
+    }
+
+    if (!selection.selected) {
+        selection.reason =
+            "No production profile selected; continue optimization or capacity tuning.";
+        return selection;
+    }
+
+    selection.reason = batchProfileBudgetPasses(*selection.selected)
+        ? "selected no-drop profile that passes latency/backlog budget"
+        : "selected no-drop profile with lowest fanOutEndToEnd max; "
+          "latency/backlog budget is not fully passing";
+    return selection;
 }
 
 bool rawThroughputValid(const AuditResult& result)
@@ -1887,6 +2192,93 @@ void printBatchSweepSummary(const std::vector<AuditResult>& results)
     }
 }
 
+void printBatchProfileSelectionSummary(
+    const std::vector<AuditResult>& results,
+    const std::vector<BatchProfileScore>& scores,
+    const BatchProfileSelection& selection)
+{
+    if (results.empty() || scores.empty()) {
+        return;
+    }
+
+    const auto& first = results.front();
+    std::cout << "Batch profile selection summary:\n"
+              << "  strictMode = "
+              << (strictTargetRawPipelineSustainRequired() ? "true" : "false")
+              << '\n'
+              << "  soakMode = "
+              << (first.auditMode == AuditMode::TargetRawSoak ? "true" : "false")
+              << '\n'
+              << "  durationSec = " << first.duration.count() << '\n'
+              << "  m  rawMBps  noDrop  budget  rejected  poolExh  dropped  "
+                 "input/processed  inputMBps  processedMBps  blockPoolUsage\n";
+
+    for (std::size_t index = 0; index < results.size() && index < scores.size();
+         ++index) {
+        const auto& result = results[index];
+        const auto& score = scores[index];
+        const auto budgetStatus =
+            combinedLatencyBacklogStatus(evaluateLatencyBudget(result));
+        std::cout << "  " << score.multiplier << "  "
+                  << score.rawMBps << "  "
+                  << passFailName(score.noDropPass) << "  "
+                  << budgetStatusName(budgetStatus) << "  "
+                  << score.rejectedBlocks << "  "
+                  << score.blockPoolExhausted << "  "
+                  << score.droppedBlocks << "  "
+                  << score.inputSamples << "/" << score.processedSamples << "  "
+                  << result.pipeline.inputMegabytesPerSecond << "  "
+                  << result.pipeline.processedMegabytesPerSecond << "  "
+                  << result.pipeline.blockPoolUsage << '\n';
+    }
+
+    std::cout << "Latency/backlog:\n"
+              << "  m  fanoutAvg  fanoutMax  queueWaitAvg  queueWaitMax  "
+                 "maxQueueRatio  spectrumQmax  signalQmax\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.batchSizeMultiplier << "  "
+                  << result.pipeline.parallelFanOutEndToEndLatency.averageMs()
+                  << "  "
+                  << result.pipeline.parallelFanOutEndToEndLatency.maxMs
+                  << "  "
+                  << maxStageQueueWaitAverageMs(result) << "  "
+                  << maxStageQueueWaitMaxMs(result) << "  "
+                  << maxStageQueueDepthRatio(result) << "  "
+                  << result.pipeline.spectrumStage.queueMaxDepth << "  "
+                  << result.pipeline.signalParameterStage.queueMaxDepth << '\n';
+    }
+
+    std::cout
+        << "Service:\n"
+        << "  m  waterfallAvg/Max  spectrumAvg/Max  bearingAvg/Max  "
+           "signalAvg/Max  maxStageServiceMax\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.batchSizeMultiplier << "  "
+                  << result.pipeline.waterfallStage.serviceLatency.averageMs()
+                  << "/" << result.pipeline.waterfallStage.serviceLatency.maxMs
+                  << "  "
+                  << result.pipeline.spectrumStage.serviceLatency.averageMs()
+                  << "/" << result.pipeline.spectrumStage.serviceLatency.maxMs
+                  << "  "
+                  << result.pipeline.bearingStage.serviceLatency.averageMs()
+                  << "/" << result.pipeline.bearingStage.serviceLatency.maxMs
+                  << "  "
+                  << result.pipeline.signalParameterStage.serviceLatency.averageMs()
+                  << "/" << result.pipeline.signalParameterStage.serviceLatency.maxMs
+                  << "  "
+                  << maxStageServiceMaxMs(result) << '\n';
+    }
+
+    std::cout << "Recommendation:\n";
+    if (selection.selected) {
+        std::cout << "  selectedMultiplier = "
+                  << selection.selected->multiplier << '\n';
+    } else {
+        std::cout << "  selectedMultiplier = none\n";
+    }
+    std::cout << "  reason = " << selection.reason << '\n';
+}
+
 bool stressTestsEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_RUN_STRESS_TESTS");
@@ -1919,6 +2311,20 @@ void testAuditHelperParsingAndBudget(TestRunner& test)
     const auto sweepMultipliers = batchSweepMultipliers();
     test.require(sweepMultipliers == std::vector<std::size_t>({1, 2, 4, 8}),
                  "batch sweep values are 1, 2, 4, 8");
+    test.require(defaultProfileSelectionMultipliers()
+                     == std::vector<std::size_t>({4, 8}),
+                 "profile selection defaults to multipliers 4 and 8");
+    test.require(parseBatchMultiplierList("4,8").value_or(std::vector<std::size_t>{})
+                     == std::vector<std::size_t>({4, 8}),
+                 "profile multiplier list accepts 4,8");
+    test.require(parseBatchMultiplierList(" 4, 8,4 ")
+                     .value_or(std::vector<std::size_t>{})
+                     == std::vector<std::size_t>({4, 8}),
+                 "profile multiplier list trims whitespace and de-duplicates");
+    test.require(!parseBatchMultiplierList("4,3"),
+                 "profile multiplier list rejects unsupported values");
+    test.require(!parseBatchMultiplierList("4,,8"),
+                 "profile multiplier list rejects empty entries");
     test.require(std::abs(parsePositiveDouble("8000.5").value_or(0.0) - 8000.5)
                      < 0.0001,
                  "positive double env value is parsed");
@@ -1962,6 +2368,67 @@ void testAuditHelperParsingAndBudget(TestRunner& test)
                  "strict stage queue wait violation is a failure");
     test.require(evaluation.stages.front().queueDepthStatus == BudgetStatus::Fail,
                  "strict stage queue depth violation is a failure");
+
+    AuditResult noDropResult;
+    noDropResult.auditMode = AuditMode::TargetRawShort;
+    noDropResult.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    noDropResult.latencyBudget = LatencyBudget{true, 8000.0, 8000.0, 0.95};
+    noDropResult.batchSizeMultiplier = 4;
+    noDropResult.sourceConfigured = true;
+    noDropResult.pipelineStarted = true;
+    noDropResult.bridgeStarted = true;
+    noDropResult.sourceStarted = true;
+    noDropResult.sourceStopped = true;
+    noDropResult.bridgeFlushed = true;
+    noDropResult.flushed = true;
+    noDropResult.source.producedRawBytesPerSecond = 90'000'000.0;
+    noDropResult.pipeline.inputSamples = 100;
+    noDropResult.pipeline.processedSamples = 100;
+    noDropResult.pipeline.parallelFanOutEndToEndLatency.count = 1;
+    noDropResult.pipeline.parallelFanOutEndToEndLatency.maxMs = 100.0;
+
+    auto score = makeBatchProfileScore(noDropResult);
+    test.require(score.noDropPass,
+                 "profile score passes when no drops/rejections/exhaustion are present");
+    noDropResult.pipeline.blockPoolExhausted = 1;
+    score = makeBatchProfileScore(noDropResult);
+    test.require(!score.noDropPass,
+                 "profile score fails when block pool is exhausted");
+
+    const auto makeScore = [](std::size_t multiplier,
+                              bool noDropPass,
+                              bool latencyPass,
+                              bool queueDepthPass,
+                              double fanOutMaxMs) {
+        BatchProfileScore profileScore;
+        profileScore.multiplier = multiplier;
+        profileScore.noDropPass = noDropPass;
+        profileScore.latencyBudgetPass = latencyPass;
+        profileScore.queueDepthBudgetPass = queueDepthPass;
+        profileScore.fanOutMaxMs = fanOutMaxMs;
+        return profileScore;
+    };
+
+    auto selection = selectRecommendedBatchProfile({
+        makeScore(4, true, true, true, 500.0),
+        makeScore(8, true, true, true, 100.0),
+    });
+    test.require(selection.selected && selection.selected->multiplier == 8,
+                 "profile selection chooses lower fan-out max when both pass");
+
+    selection = selectRecommendedBatchProfile({
+        makeScore(4, true, true, true, 100.0),
+        makeScore(8, true, true, true, 100.0),
+    });
+    test.require(selection.selected && selection.selected->multiplier == 4,
+                 "profile selection tie chooses smaller multiplier");
+
+    selection = selectRecommendedBatchProfile({
+        makeScore(4, false, true, true, 100.0),
+        makeScore(8, false, true, true, 50.0),
+    });
+    test.require(!selection.selected,
+                 "profile selection returns none when no candidate passes no-drop");
 }
 
 void highLoadDataPlaneSmoke(TestRunner& test)
@@ -2037,7 +2504,8 @@ void targetRaw90mbpsAccountingSmoke(TestRunner& test)
 
 void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
 {
-    if (!targetRawPipelineTestEnabled() || targetRawBatchSweepEnabled()) {
+    if (!targetRawPipelineTestEnabled() || targetRawBatchSweepEnabled()
+        || targetRawProfileSelectionEnabled()) {
         return;
     }
 
@@ -2059,9 +2527,64 @@ void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
     assertTargetRawPipelineSustain(test, result);
 }
 
+void targetRaw90mbpsProfileSelectionAudit(TestRunner& test)
+{
+    if (!targetRawPipelineTestEnabled() || !targetRawProfileSelectionEnabled()) {
+        return;
+    }
+
+    if (!parallelProcessingEngineEnabled()) {
+        test.require(false,
+                     "target raw profile selection requires ParallelFanOut mode");
+        return;
+    }
+
+    const auto auditMode = targetRawSoakTestEnabled()
+        ? AuditMode::TargetRawSoak
+        : (strictTargetRawPipelineSustainRequired()
+               ? AuditMode::TargetRawStrict
+               : AuditMode::TargetRawShort);
+    const auto duration = targetRawSoakTestEnabled()
+        ? targetRawSoakDuration()
+        : targetRawAuditDuration();
+
+    std::vector<AuditResult> results;
+    const auto multipliers = profileSelectionMultipliers();
+    results.reserve(multipliers.size());
+    for (const auto multiplier : multipliers) {
+        auto result = runAudit(duration,
+                               hardware::SimulatorLoadProfile::
+                                   TargetRawThroughput90MBps,
+                               std::chrono::seconds{10},
+                               std::nullopt,
+                               AuditPipelineSizing::FullTargetRawSustain,
+                               auditMode,
+                               targetRawLatencyBudget(),
+                               multiplier);
+        printAuditSummary(result);
+        printSustainWarnings(result);
+        results.push_back(std::move(result));
+    }
+
+    const auto scores = makeBatchProfileScores(results);
+    const auto selection = selectRecommendedBatchProfile(scores);
+    printBatchProfileSelectionSummary(results, scores, selection);
+
+    test.require(!results.empty(),
+                 "profile selection has at least one candidate multiplier");
+    if (strictTargetRawPipelineSustainRequired()) {
+        test.require(selection.selected.has_value(),
+                     "strict profile selection finds a no-drop candidate");
+    }
+    if (selection.selected && latencyBudgetIsHard(results.front())) {
+        test.require(batchProfileBudgetPasses(*selection.selected),
+                     "strict/soak profile selection selected candidate satisfies latency/backlog budget");
+    }
+}
+
 void targetRaw90mbpsBatchSweepAudit(TestRunner& test)
 {
-    if (!targetRawBatchSweepEnabled()) {
+    if (!targetRawBatchSweepEnabled() || targetRawProfileSelectionEnabled()) {
         return;
     }
 
@@ -2088,7 +2611,8 @@ void targetRaw90mbpsBatchSweepAudit(TestRunner& test)
 void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
 {
     if (!targetRawPipelineTestEnabled() || !parallelProcessingEngineEnabled()
-        || !targetRawSoakTestEnabled() || targetRawBatchSweepEnabled()) {
+        || !targetRawSoakTestEnabled() || targetRawBatchSweepEnabled()
+        || targetRawProfileSelectionEnabled()) {
         return;
     }
 
@@ -2117,6 +2641,7 @@ int main()
     highLoadDataPlaneSmoke(test);
     targetRaw90mbpsAccountingSmoke(test);
     targetRaw90mbpsPipelineSustainAudit(test);
+    targetRaw90mbpsProfileSelectionAudit(test);
     targetRaw90mbpsBatchSweepAudit(test);
     targetRaw90mbpsParallelSoakAudit(test);
     highLoadDataPlaneStress(test);

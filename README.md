@@ -206,5 +206,42 @@ Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
 Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_BATCH_SWEEP
 ```
 
+To compare the current production-audit candidates and select a recommended batch
+multiplier for high-load validation, run profile selection:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION
+Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
+```
+
+Soak profile selection is also opt-in:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST
+Remove-Item Env:\SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC
+Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
+```
+
+`SIRIUSSCOPE_90MBPS_PROFILE_SELECTION_MULTIPLIERS=4,8` can override the candidate
+list with supported multipliers. The selected multiplier is audit guidance only and does
+not change the ordinary runtime GUI default.
+
 For performance-sensitive work, also follow the high-load acceptance criteria in
 `docs/development/build-and-test.md`.
