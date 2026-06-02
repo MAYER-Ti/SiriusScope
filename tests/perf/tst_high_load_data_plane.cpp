@@ -11,11 +11,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <thread>
@@ -70,15 +72,45 @@ private:
     double m_azimuthDeg = 0.0;
 };
 
+enum class AuditMode
+{
+    Smoke,
+    TargetRawShort,
+    TargetRawStrict,
+    TargetRawSoak,
+};
+
+struct LatencyBudget
+{
+    bool enabled = false;
+    double maxFanOutEndToEndMs = 0.0;
+    double maxStageQueueWaitMs = 0.0;
+    double maxStageQueueDepthRatio = 0.0;
+};
+
+struct BacklogSample
+{
+    double elapsedSec = 0.0;
+    std::size_t waterfallDepth = 0;
+    std::size_t spectrumDepth = 0;
+    std::size_t bearingDepth = 0;
+    std::size_t signalParameterDepth = 0;
+    std::uint64_t inFlightFanOutBlocks = 0;
+    std::size_t blockPoolInUse = 0;
+};
+
 struct AuditResult
 {
+    AuditMode auditMode = AuditMode::Smoke;
     std::string profileName;
     std::chrono::seconds duration{0};
     pipeline::ProcessingMode processingMode = pipeline::ProcessingMode::Sequential;
+    LatencyBudget latencyBudget;
     hardware::BcoSourceMetrics source;
     pipeline::SourceToPipelineBridgeMetrics bridge;
     pipeline::PipelineMetricsSnapshot pipeline;
     pipeline::WaterfallRowQueueMetrics waterfallRows;
+    std::vector<BacklogSample> backlogSamples;
     std::uint64_t rejectedBlocks = 0;
     std::uint64_t rejectedSamples = 0;
     std::size_t drainedWaterfallRows = 0;
@@ -112,6 +144,50 @@ enum class AuditPipelineSizing
     FullTargetRawSustain,
 };
 
+enum class BudgetStatus
+{
+    NotApplicable,
+    Pass,
+    Warn,
+    Fail,
+};
+
+struct StageBudgetEvaluation
+{
+    const char* name = "";
+    double queueMaxDepthRatio = 0.0;
+    BudgetStatus queueWaitStatus = BudgetStatus::NotApplicable;
+    BudgetStatus queueDepthStatus = BudgetStatus::NotApplicable;
+};
+
+struct LatencyBudgetEvaluation
+{
+    BudgetStatus fanOutEndToEndStatus = BudgetStatus::NotApplicable;
+    std::vector<StageBudgetEvaluation> stages;
+
+    bool hasFailures() const
+    {
+        if (fanOutEndToEndStatus == BudgetStatus::Fail) {
+            return true;
+        }
+        return std::any_of(stages.begin(), stages.end(), [](const auto& stage) {
+            return stage.queueWaitStatus == BudgetStatus::Fail
+                || stage.queueDepthStatus == BudgetStatus::Fail;
+        });
+    }
+
+    bool hasWarnings() const
+    {
+        if (fanOutEndToEndStatus == BudgetStatus::Warn) {
+            return true;
+        }
+        return std::any_of(stages.begin(), stages.end(), [](const auto& stage) {
+            return stage.queueWaitStatus == BudgetStatus::Warn
+                || stage.queueDepthStatus == BudgetStatus::Warn;
+        });
+    }
+};
+
 std::int64_t nowUtcNs()
 {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -140,6 +216,64 @@ double ratioOrZero(double numerator, double denominator)
     }
 
     return numerator / denominator;
+}
+
+std::optional<int> parsePositiveInt(const char* text)
+{
+    if (!text || *text == '\0') {
+        return std::nullopt;
+    }
+
+    errno = 0;
+    char* end = nullptr;
+    const auto parsed = std::strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || parsed < 1
+        || parsed > std::numeric_limits<int>::max()) {
+        return std::nullopt;
+    }
+
+    return static_cast<int>(parsed);
+}
+
+std::optional<double> parsePositiveDouble(const char* text)
+{
+    if (!text || *text == '\0') {
+        return std::nullopt;
+    }
+
+    errno = 0;
+    char* end = nullptr;
+    const auto parsed = std::strtod(text, &end);
+    if (errno != 0 || end == text || *end != '\0' || !std::isfinite(parsed)
+        || parsed <= 0.0) {
+        return std::nullopt;
+    }
+
+    return parsed;
+}
+
+std::optional<double> parseDepthRatio(const char* text)
+{
+    const auto parsed = parsePositiveDouble(text);
+    if (!parsed || *parsed > 1.0) {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
+int envPositiveIntOr(const char* name, int defaultValue)
+{
+    return parsePositiveInt(std::getenv(name)).value_or(defaultValue);
+}
+
+double envPositiveDoubleOr(const char* name, double defaultValue)
+{
+    return parsePositiveDouble(std::getenv(name)).value_or(defaultValue);
+}
+
+double envDepthRatioOr(const char* name, double defaultValue)
+{
+    return parseDepthRatio(std::getenv(name)).value_or(defaultValue);
 }
 
 bool envFlagEnabled(const char* name)
@@ -178,6 +312,51 @@ bool parallelProcessingEngineEnabled()
     return envFlagEnabled("SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE");
 }
 
+bool targetRawSoakTestEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST");
+}
+
+std::chrono::seconds targetRawAuditDuration()
+{
+    return std::chrono::seconds{
+        envPositiveIntOr("SIRIUSSCOPE_90MBPS_DURATION_SEC", 10),
+    };
+}
+
+std::chrono::seconds targetRawSoakDuration()
+{
+    return std::chrono::seconds{
+        envPositiveIntOr("SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC", 30),
+    };
+}
+
+LatencyBudget targetRawLatencyBudget()
+{
+    return LatencyBudget{
+        true,
+        envPositiveDoubleOr("SIRIUSSCOPE_MAX_FANOUT_END_TO_END_MS", 8000.0),
+        envPositiveDoubleOr("SIRIUSSCOPE_MAX_STAGE_QUEUE_WAIT_MS", 8000.0),
+        envDepthRatioOr("SIRIUSSCOPE_MAX_STAGE_QUEUE_DEPTH_RATIO", 0.95),
+    };
+}
+
+const char* auditModeName(AuditMode mode)
+{
+    switch (mode) {
+    case AuditMode::Smoke:
+        return "Smoke";
+    case AuditMode::TargetRawShort:
+        return "TargetRawShort";
+    case AuditMode::TargetRawStrict:
+        return "TargetRawStrict";
+    case AuditMode::TargetRawSoak:
+        return "TargetRawSoak";
+    }
+
+    return "Unknown";
+}
+
 const char* processingModeName(pipeline::ProcessingMode mode)
 {
     switch (mode) {
@@ -188,6 +367,22 @@ const char* processingModeName(pipeline::ProcessingMode mode)
     }
 
     return "Unknown";
+}
+
+const char* budgetStatusName(BudgetStatus status)
+{
+    switch (status) {
+    case BudgetStatus::NotApplicable:
+        return "N/A";
+    case BudgetStatus::Pass:
+        return "PASS";
+    case BudgetStatus::Warn:
+        return "WARN";
+    case BudgetStatus::Fail:
+        return "FAIL";
+    }
+
+    return "UNKNOWN";
 }
 
 std::vector<LatencyStage> stageLatencies(const pipeline::PipelineMetricsSnapshot& metrics)
@@ -213,6 +408,180 @@ std::vector<StageBacklog> parallelStageBacklogs(
         {"bearing", metrics.bearingStage},
         {"signalParameter", metrics.signalParameterStage},
     };
+}
+
+double queueDepthRatio(const pipeline::StageMetricsSnapshot& metrics)
+{
+    return ratioOrZero(static_cast<double>(metrics.queueMaxDepth),
+                       static_cast<double>(metrics.queueCapacity));
+}
+
+bool latencyBudgetIsHard(const AuditResult& result)
+{
+    return result.auditMode == AuditMode::TargetRawStrict
+        || result.auditMode == AuditMode::TargetRawSoak;
+}
+
+BudgetStatus budgetStatus(bool enabled, bool applicable, bool violated, bool hard)
+{
+    if (!enabled || !applicable) {
+        return BudgetStatus::NotApplicable;
+    }
+    if (violated) {
+        return hard ? BudgetStatus::Fail : BudgetStatus::Warn;
+    }
+    return BudgetStatus::Pass;
+}
+
+LatencyBudgetEvaluation evaluateLatencyBudget(const AuditResult& result)
+{
+    LatencyBudgetEvaluation evaluation;
+    const bool active = result.latencyBudget.enabled
+        && result.processingMode == pipeline::ProcessingMode::ParallelFanOut;
+    const bool hard = latencyBudgetIsHard(result);
+
+    const bool fanOutApplicable =
+        active && result.pipeline.parallelFanOutEndToEndLatency.count > 0;
+    const bool fanOutViolated =
+        fanOutApplicable
+        && result.pipeline.parallelFanOutEndToEndLatency.maxMs
+            > result.latencyBudget.maxFanOutEndToEndMs;
+    evaluation.fanOutEndToEndStatus =
+        budgetStatus(result.latencyBudget.enabled, fanOutApplicable, fanOutViolated, hard);
+
+    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+        const auto& metrics = stage.metrics;
+        const bool queueWaitApplicable = active && metrics.queueWaitLatency.count > 0;
+        const bool queueWaitViolated =
+            queueWaitApplicable
+            && metrics.queueWaitLatency.maxMs > result.latencyBudget.maxStageQueueWaitMs;
+        const bool queueDepthApplicable = active && metrics.queueCapacity > 0;
+        const auto depthRatio = queueDepthRatio(metrics);
+        const bool queueDepthViolated =
+            queueDepthApplicable
+            && depthRatio > result.latencyBudget.maxStageQueueDepthRatio;
+
+        evaluation.stages.push_back(StageBudgetEvaluation{
+            stage.name,
+            depthRatio,
+            budgetStatus(result.latencyBudget.enabled,
+                         queueWaitApplicable,
+                         queueWaitViolated,
+                         hard),
+            budgetStatus(result.latencyBudget.enabled,
+                         queueDepthApplicable,
+                         queueDepthViolated,
+                         hard),
+        });
+    }
+
+    return evaluation;
+}
+
+BacklogSample makeBacklogSample(double elapsedSec,
+                                const pipeline::PipelineMetricsSnapshot& metrics)
+{
+    return BacklogSample{
+        elapsedSec,
+        metrics.waterfallStageQueueDepth,
+        metrics.spectrumStageQueueDepth,
+        metrics.bearingStageQueueDepth,
+        metrics.signalParameterStageQueueDepth,
+        metrics.parallelFanOutInFlightBlocks,
+        metrics.blockPoolInUse,
+    };
+}
+
+void printQueueStability(const AuditResult& result)
+{
+    const auto evaluation = evaluateLatencyBudget(result);
+    const auto stages = parallelStageBacklogs(result.pipeline);
+
+    std::cout << "Queue stability:\n"
+              << "  latencyBudgetEnabled = "
+              << (result.latencyBudget.enabled ? "true" : "false") << '\n'
+              << "  latencyBudgetHard = "
+              << (latencyBudgetIsHard(result) ? "true" : "false") << '\n'
+              << "  fanOutEndToEnd max/budget/status = "
+              << result.pipeline.parallelFanOutEndToEndLatency.maxMs << "/"
+              << result.latencyBudget.maxFanOutEndToEndMs << "/"
+              << budgetStatusName(evaluation.fanOutEndToEndStatus) << '\n'
+              << "  maxStageQueueWait budget = "
+              << result.latencyBudget.maxStageQueueWaitMs << '\n'
+              << "  maxStageQueueDepthRatio budget = "
+              << result.latencyBudget.maxStageQueueDepthRatio << '\n';
+
+    for (std::size_t index = 0; index < stages.size(); ++index) {
+        const auto& stage = stages[index];
+        const auto& metrics = stage.metrics;
+        const auto& stageEvaluation = evaluation.stages[index];
+        std::cout << "  " << stage.name << " maxDepth/capacity/ratio/status = "
+                  << metrics.queueMaxDepth << "/" << metrics.queueCapacity << "/"
+                  << stageEvaluation.queueMaxDepthRatio << "/"
+                  << budgetStatusName(stageEvaluation.queueDepthStatus) << '\n'
+                  << "  " << stage.name << " queueWaitMaxMs/budget/status = "
+                  << metrics.queueWaitLatency.maxMs << "/"
+                  << result.latencyBudget.maxStageQueueWaitMs << "/"
+                  << budgetStatusName(stageEvaluation.queueWaitStatus) << '\n';
+    }
+}
+
+void printBacklogTrend(const AuditResult& result)
+{
+    std::cout << "Backlog samples:\n";
+    if (result.backlogSamples.empty()) {
+        std::cout << "  no active samples\n";
+        return;
+    }
+
+    std::size_t waterfallMax = 0;
+    std::size_t spectrumMax = 0;
+    std::size_t bearingMax = 0;
+    std::size_t signalParameterMax = 0;
+    std::uint64_t inFlightMax = 0;
+    std::size_t blockPoolInUseMax = 0;
+
+    for (const auto& sample : result.backlogSamples) {
+        waterfallMax = std::max(waterfallMax, sample.waterfallDepth);
+        spectrumMax = std::max(spectrumMax, sample.spectrumDepth);
+        bearingMax = std::max(bearingMax, sample.bearingDepth);
+        signalParameterMax = std::max(signalParameterMax, sample.signalParameterDepth);
+        inFlightMax = std::max(inFlightMax, sample.inFlightFanOutBlocks);
+        blockPoolInUseMax = std::max(blockPoolInUseMax, sample.blockPoolInUse);
+
+        std::cout << "  t=" << sample.elapsedSec
+                  << "s waterfallDepth=" << sample.waterfallDepth
+                  << " spectrumDepth=" << sample.spectrumDepth
+                  << " bearingDepth=" << sample.bearingDepth
+                  << " signalParameterDepth=" << sample.signalParameterDepth
+                  << " inFlightFanOutBlocks=" << sample.inFlightFanOutBlocks
+                  << " blockPoolInUse=" << sample.blockPoolInUse << '\n';
+    }
+
+    const auto& first = result.backlogSamples.front();
+    const auto& last = result.backlogSamples.back();
+    std::cout << "Backlog trend:\n"
+              << "  waterfall first/last/max/finalAfterFlush = "
+              << first.waterfallDepth << "/" << last.waterfallDepth << "/"
+              << waterfallMax << "/" << result.pipeline.waterfallStageQueueDepth << '\n'
+              << "  spectrum first/last/max/finalAfterFlush = "
+              << first.spectrumDepth << "/" << last.spectrumDepth << "/"
+              << spectrumMax << "/" << result.pipeline.spectrumStageQueueDepth << '\n'
+              << "  bearing first/last/max/finalAfterFlush = "
+              << first.bearingDepth << "/" << last.bearingDepth << "/"
+              << bearingMax << "/" << result.pipeline.bearingStageQueueDepth << '\n'
+              << "  signalParameter first/last/max/finalAfterFlush = "
+              << first.signalParameterDepth << "/" << last.signalParameterDepth << "/"
+              << signalParameterMax << "/"
+              << result.pipeline.signalParameterStageQueueDepth << '\n'
+              << "  inFlight first/last/max/finalAfterFlush = "
+              << first.inFlightFanOutBlocks << "/" << last.inFlightFanOutBlocks
+              << "/" << inFlightMax << "/"
+              << result.pipeline.parallelFanOutInFlightBlocks << '\n'
+              << "  blockPoolInUse first/last/max/finalAfterFlush = "
+              << first.blockPoolInUse << "/" << last.blockPoolInUse << "/"
+              << blockPoolInUseMax << "/" << result.pipeline.blockPoolInUse
+              << '\n';
 }
 
 std::vector<LatencyStage> signalParameterInternalLatencies(
@@ -621,11 +990,15 @@ AuditResult runAudit(std::chrono::seconds duration,
                      hardware::SimulatorLoadProfile profile,
                      std::chrono::milliseconds flushTimeout = std::chrono::milliseconds{5000},
                      std::optional<std::uint64_t> maxPipelineIngestedBlocks = std::nullopt,
-                     AuditPipelineSizing sizing = AuditPipelineSizing::Default)
+                     AuditPipelineSizing sizing = AuditPipelineSizing::Default,
+                     AuditMode auditMode = AuditMode::Smoke,
+                     LatencyBudget latencyBudget = {})
 {
     AuditResult result;
+    result.auditMode = auditMode;
     result.profileName = profileName(profile);
     result.duration = duration;
+    result.latencyBudget = latencyBudget;
 
     const auto streamConfig = makeStreamConfig(profile);
     auto pipelineConfig = makePipelineConfig(streamConfig.timeBase, profile, sizing);
@@ -680,7 +1053,38 @@ AuditResult runAudit(std::chrono::seconds duration,
     result.sourceStarted = sourceStarted.success;
 
     if (sourceStarted) {
-        std::this_thread::sleep_for(duration);
+        const auto startedAt = std::chrono::steady_clock::now();
+        const auto stopAt = startedAt + duration;
+        auto nextSampleAt = startedAt + std::chrono::seconds{1};
+
+        while (std::chrono::steady_clock::now() < stopAt) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= nextSampleAt) {
+                const auto elapsedSec =
+                    std::chrono::duration<double>(now - startedAt).count();
+                result.backlogSamples.push_back(
+                    makeBacklogSample(elapsedSec, dataPipeline.metricsSnapshot()));
+                nextSampleAt += std::chrono::seconds{1};
+                continue;
+            }
+
+            const auto remaining = stopAt - now;
+            const auto untilNextSample = nextSampleAt - now;
+            auto sleepDuration = std::min(remaining, untilNextSample);
+            sleepDuration = std::min(
+                sleepDuration,
+                std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    std::chrono::milliseconds{100}));
+            if (sleepDuration > std::chrono::steady_clock::duration::zero()) {
+                std::this_thread::sleep_for(sleepDuration);
+            }
+        }
+
+        const auto elapsedSec =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt)
+                .count();
+        result.backlogSamples.push_back(
+            makeBacklogSample(elapsedSec, dataPipeline.metricsSnapshot()));
     }
 
     const auto sourceStopped = source.stop();
@@ -730,11 +1134,14 @@ void printAuditSummary(const AuditResult& result)
 
     std::cout << std::fixed << std::setprecision(2);
     std::cout << "High-load data plane audit:\n"
+              << "  auditMode = " << auditModeName(result.auditMode) << '\n'
               << "  profile = " << result.profileName << '\n'
               << "  durationSec = " << result.duration.count() << '\n'
               << "  strictNoDropMode = "
               << (strictTargetRawPipelineSustainRequired() ? "true" : "false")
               << '\n'
+              << "  latencyBudgetEnabled = "
+              << (result.latencyBudget.enabled ? "true" : "false") << '\n'
               << "  processingMode = " << processingModeName(result.processingMode)
               << '\n'
               << "  source producedSamples = " << result.source.producedSamples << '\n'
@@ -994,6 +1401,8 @@ void printAuditSummary(const AuditResult& result)
               << (result.hasSignalParameterSnapshot ? "true" : "false") << '\n'
               << "  rejectedBlocks = " << result.rejectedBlocks << '\n'
               << "  rejectedSamples = " << result.rejectedSamples << '\n';
+    printQueueStability(result);
+    printBacklogTrend(result);
     printParallelFanOutBacklog(result);
     printBottleneckHint(result);
 }
@@ -1043,6 +1452,29 @@ void printSustainWarnings(const AuditResult& result)
         printSustainWarning("parallel fan-out fell back to sequential blocks: "
                             + std::to_string(
                                 result.pipeline.parallelFanOutFallbackBlocks));
+    }
+    const auto budgetEvaluation = evaluateLatencyBudget(result);
+    if (!latencyBudgetIsHard(result) && budgetEvaluation.hasWarnings()) {
+        printSustainWarning("latency/backlog budget exceeded in report-only mode");
+    }
+}
+
+void assertLatencyBudgetSucceeded(TestRunner& test, const AuditResult& result)
+{
+    if (!result.latencyBudget.enabled || !latencyBudgetIsHard(result)) {
+        return;
+    }
+
+    const auto evaluation = evaluateLatencyBudget(result);
+    test.require(evaluation.fanOutEndToEndStatus != BudgetStatus::Fail,
+                 "strict/soak fan-out end-to-end latency budget passes");
+    for (const auto& stage : evaluation.stages) {
+        test.require(stage.queueWaitStatus != BudgetStatus::Fail,
+                     std::string{"strict/soak "} + stage.name
+                         + " queue wait latency budget passes");
+        test.require(stage.queueDepthStatus != BudgetStatus::Fail,
+                     std::string{"strict/soak "} + stage.name
+                         + " queue depth budget passes");
     }
 }
 
@@ -1174,6 +1606,8 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
                             "snapshots were produced");
     }
 
+    assertLatencyBudgetSucceeded(test, result);
+
     if (!strictTargetRawPipelineSustainRequired()) {
         return;
     }
@@ -1198,13 +1632,80 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
                  "strict target raw full pipeline block pool is not exhausted");
     test.require(result.pipeline.processedSamples == result.pipeline.inputSamples,
                  "strict target raw full pipeline processes every accepted sample");
+    test.require(result.pipeline.parallelFanOutFallbackBlocks == 0,
+                 "strict target raw full pipeline has no fan-out fallback blocks");
+    test.require(result.pipeline.parallelFanOutRejectedBlocks == 0,
+                 "strict target raw full pipeline has no fan-out rejected blocks");
+    test.require(result.pipeline.parallelFanOutInFlightBlocks == 0,
+                 "strict target raw full pipeline has no fan-out blocks in flight after flush");
+    test.require(result.pipeline.blockPoolInUse == 0,
+                 "strict target raw full pipeline returns all blocks to the pool after flush");
     test.require(result.source.simulatorBackpressureEvents == 0,
                  "strict target raw full pipeline source reports no backpressure events");
+    const double rawThroughputRelativeError =
+        std::abs(result.source.producedRawBytesPerSecond
+                 - static_cast<double>(result.source.targetBytesPerSecond))
+        / static_cast<double>(result.source.targetBytesPerSecond);
+    test.require(rawThroughputRelativeError <= 0.05,
+                 "strict target raw full pipeline raw throughput stays within 5 percent");
 }
 
 bool stressTestsEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_RUN_STRESS_TESTS");
+}
+
+void testAuditHelperParsingAndBudget(TestRunner& test)
+{
+    test.require(parsePositiveInt("30").value_or(0) == 30,
+                 "positive integer env value is parsed");
+    test.require(!parsePositiveInt("0"),
+                 "zero integer env value is rejected");
+    test.require(!parsePositiveInt("invalid"),
+                 "invalid integer env value is rejected");
+    test.require(std::abs(parsePositiveDouble("8000.5").value_or(0.0) - 8000.5)
+                     < 0.0001,
+                 "positive double env value is parsed");
+    test.require(!parsePositiveDouble("-1"),
+                 "negative double env value is rejected");
+    test.require(std::abs(parseDepthRatio("0.95").value_or(0.0) - 0.95) < 0.0001,
+                 "queue depth ratio env value is parsed");
+    test.require(!parseDepthRatio("1.50"),
+                 "queue depth ratio above one is rejected");
+
+    pipeline::StageMetricsSnapshot stageMetrics;
+    stageMetrics.queueMaxDepth = 95;
+    stageMetrics.queueCapacity = 100;
+    test.require(std::abs(queueDepthRatio(stageMetrics) - 0.95) < 0.0001,
+                 "queue depth ratio is calculated from max depth and capacity");
+
+    AuditResult result;
+    result.auditMode = AuditMode::TargetRawShort;
+    result.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    result.latencyBudget = LatencyBudget{true, 8.0, 8.0, 0.95};
+    result.pipeline.parallelFanOutEndToEndLatency.count = 1;
+    result.pipeline.parallelFanOutEndToEndLatency.maxMs = 9.0;
+    result.pipeline.waterfallStage.queueWaitLatency.count = 1;
+    result.pipeline.waterfallStage.queueWaitLatency.maxMs = 9.0;
+    result.pipeline.waterfallStage.queueMaxDepth = 96;
+    result.pipeline.waterfallStage.queueCapacity = 100;
+
+    auto evaluation = evaluateLatencyBudget(result);
+    test.require(evaluation.fanOutEndToEndStatus == BudgetStatus::Warn,
+                 "non-strict fan-out budget violation is a warning");
+    test.require(evaluation.stages.front().queueWaitStatus == BudgetStatus::Warn,
+                 "non-strict stage queue wait violation is a warning");
+    test.require(evaluation.stages.front().queueDepthStatus == BudgetStatus::Warn,
+                 "non-strict stage queue depth violation is a warning");
+
+    result.auditMode = AuditMode::TargetRawStrict;
+    evaluation = evaluateLatencyBudget(result);
+    test.require(evaluation.fanOutEndToEndStatus == BudgetStatus::Fail,
+                 "strict fan-out budget violation is a failure");
+    test.require(evaluation.stages.front().queueWaitStatus == BudgetStatus::Fail,
+                 "strict stage queue wait violation is a failure");
+    test.require(evaluation.stages.front().queueDepthStatus == BudgetStatus::Fail,
+                 "strict stage queue depth violation is a failure");
 }
 
 void highLoadDataPlaneSmoke(TestRunner& test)
@@ -1284,12 +1785,37 @@ void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
         return;
     }
 
-    const auto result = runAudit(std::chrono::seconds{10},
+    const auto auditMode = strictTargetRawPipelineSustainRequired()
+        ? AuditMode::TargetRawStrict
+        : AuditMode::TargetRawShort;
+    const auto result = runAudit(targetRawAuditDuration(),
                                  hardware::SimulatorLoadProfile::
                                      TargetRawThroughput90MBps,
                                  std::chrono::seconds{10},
                                  std::nullopt,
-                                 AuditPipelineSizing::FullTargetRawSustain);
+                                 AuditPipelineSizing::FullTargetRawSustain,
+                                 auditMode,
+                                 targetRawLatencyBudget());
+    printAuditSummary(result);
+    printSustainWarnings(result);
+    assertTargetRawPipelineSustain(test, result);
+}
+
+void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
+{
+    if (!targetRawPipelineTestEnabled() || !parallelProcessingEngineEnabled()
+        || !targetRawSoakTestEnabled()) {
+        return;
+    }
+
+    const auto result = runAudit(targetRawSoakDuration(),
+                                 hardware::SimulatorLoadProfile::
+                                     TargetRawThroughput90MBps,
+                                 std::chrono::seconds{10},
+                                 std::nullopt,
+                                 AuditPipelineSizing::FullTargetRawSustain,
+                                 AuditMode::TargetRawSoak,
+                                 targetRawLatencyBudget());
     printAuditSummary(result);
     printSustainWarnings(result);
     assertTargetRawPipelineSustain(test, result);
@@ -1301,9 +1827,11 @@ int main()
 {
     TestRunner test;
 
+    testAuditHelperParsingAndBudget(test);
     highLoadDataPlaneSmoke(test);
     targetRaw90mbpsAccountingSmoke(test);
     targetRaw90mbpsPipelineSustainAudit(test);
+    targetRaw90mbpsParallelSoakAudit(test);
     highLoadDataPlaneStress(test);
 
     return test.result();

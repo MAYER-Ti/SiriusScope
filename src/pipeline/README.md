@@ -64,6 +64,44 @@ caused by one slow stage or by accumulated queueing delay.
 $env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
 ```
 
+90 MB/s strict and soak validation is gated through perf-test environment variables so
+ordinary `ctest` runs stay short. A short strict no-drop audit can be run with:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+The active duration defaults to 10 seconds and can be changed with:
+
+```powershell
+$env:SIRIUSSCOPE_90MBPS_DURATION_SEC = "30"
+```
+
+Long soak validation is also opt-in:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "60"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+Latency and backlog budgets are configurable:
+
+```powershell
+$env:SIRIUSSCOPE_MAX_FANOUT_END_TO_END_MS = "8000"
+$env:SIRIUSSCOPE_MAX_STAGE_QUEUE_WAIT_MS = "8000"
+$env:SIRIUSSCOPE_MAX_STAGE_QUEUE_DEPTH_RATIO = "0.95"
+```
+
+In non-strict target-raw audits, budget violations are printed as report-only warnings.
+In strict and soak audits, enabled budget violations fail the perf test.
+
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable
 `BcoSampleBlock` pointers into a bounded RX queue; a dedicated bridge worker performs the

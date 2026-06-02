@@ -141,6 +141,15 @@ Current experimental mode:
   in-flight block, fallback/rejection, and end-to-end fan-out latency metrics.
 - `ParallelFanOut` must not become the GUI runtime default until audit results prove the
   behavior is stable enough for production use.
+- 90 MB/s target-raw validation remains gated by environment variables. The short audit
+  uses `SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST=1`; strict no-drop assertions are enabled by
+  `SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS=1`; long soak validation also requires
+  `SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST=1`.
+- Perf audits report queue stability and latency/backlog budget status. Defaults are
+  `SIRIUSSCOPE_MAX_FANOUT_END_TO_END_MS=8000`,
+  `SIRIUSSCOPE_MAX_STAGE_QUEUE_WAIT_MS=8000`, and
+  `SIRIUSSCOPE_MAX_STAGE_QUEUE_DEPTH_RATIO=0.95`; non-strict audits warn, while strict
+  and soak audits fail on enabled budget violations.
 
 ## 6. Waterfall Aggregation
 
