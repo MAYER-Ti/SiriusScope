@@ -2,6 +2,7 @@
 
 #include "processing/signal_parameter_estimator.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -11,11 +12,27 @@
 
 namespace siriusscope::processing {
 
+struct SignalParameterFastIngestTiming
+{
+    std::chrono::steady_clock::duration sampleLoop{};
+    std::chrono::steady_clock::duration bandLookup{};
+    std::chrono::steady_clock::duration pulseStateUpdate{};
+    std::chrono::steady_clock::duration spanUpdate{};
+};
+
 struct SignalParameterFastIngestSummary
 {
+    std::uint64_t inputSamples = 0;
     std::uint64_t acceptedSamples = 0;
     std::uint64_t rejectedSamples = 0;
+    std::uint64_t touchedBands = 0;
+    std::uint64_t pulseTransitions = 0;
+    std::uint64_t activePulseUpdates = 0;
     std::uint64_t closedPulses = 0;
+    std::uint64_t completedPulses = 0;
+    std::uint64_t outOfOrderSamples = 0;
+    std::uint64_t belowThresholdFastSkips = 0;
+    SignalParameterFastIngestTiming timing;
     std::optional<std::uint64_t> latestAcceptedSampleIndex = std::nullopt;
 };
 
@@ -33,7 +50,9 @@ public:
         std::span<const core::SignalSample> samples,
         std::span<std::uint64_t> firstSampleIndexByBand,
         std::span<std::uint64_t> lastSampleIndexByBand,
-        std::span<std::uint8_t> bandUsedFlags);
+        std::span<std::uint8_t> bandUsedFlags,
+        std::span<std::size_t> touchedBandIndexes = {},
+        bool enableDetailedTiming = false);
     SignalParameterSampleIngestResult ingestSample(const core::SignalSample& sample);
     std::vector<SignalParameters> finalize() const;
 
@@ -86,6 +105,7 @@ private:
     SignalParameterSampleIngestResult ingestOneTrustedSample(const core::SignalSample& sample);
     SignalParameterSampleIngestResult ingestValidSample(BandSignalAccumulator& state,
                                                         const core::SignalSample& sample);
+    bool isBelowPulseThreshold(const core::SignalSample& sample) const noexcept;
     std::size_t finalizedPulseCount(const BandSignalAccumulator& state) const noexcept;
 
     SignalParameterEstimatorConfig m_config;

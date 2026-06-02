@@ -6,6 +6,8 @@
 namespace siriusscope::processing {
 namespace {
 
+using Clock = std::chrono::steady_clock;
+
 bool hasValidAmplitude(const core::SignalSample& sample)
 {
     return core::validateAmplitude(sample.amplitude).isValid();
@@ -55,6 +57,13 @@ bool sampleLess(const core::SignalSample& lhs, const core::SignalSample& rhs)
 double samplesToMicroseconds(std::uint64_t sampleCount, std::uint64_t samplePeriodNs)
 {
     return static_cast<double>(sampleCount) * static_cast<double>(samplePeriodNs) / 1000.0;
+}
+
+int normalizedPulseAmplitudeThreshold(int threshold) noexcept
+{
+    return std::clamp(threshold,
+                      core::DomainConstraints::minAmplitude,
+                      core::DomainConstraints::maxAmplitude);
 }
 
 } // namespace
@@ -243,6 +252,8 @@ SignalParameterAccumulator::SignalParameterAccumulator(SignalParameterEstimatorC
     m_config.maxIntraPulseGapSamples =
         std::max<std::uint64_t>(1, m_config.maxIntraPulseGapSamples);
     m_config.minSamplesPerPulse = std::max<std::size_t>(1, m_config.minSamplesPerPulse);
+    m_config.pulseAmplitudeThreshold =
+        normalizedPulseAmplitudeThreshold(m_config.pulseAmplitudeThreshold);
     prepareBandVectorStorage();
 }
 
@@ -292,9 +303,24 @@ SignalParameterFastIngestSummary SignalParameterAccumulator::ingestTrustedFixedB
     std::span<const core::SignalSample> samples,
     std::span<std::uint64_t> firstSampleIndexByBand,
     std::span<std::uint64_t> lastSampleIndexByBand,
-    std::span<std::uint8_t> bandUsedFlags)
+    std::span<std::uint8_t> bandUsedFlags,
+    std::span<std::size_t> touchedBandIndexes,
+    bool enableDetailedTiming)
 {
     SignalParameterFastIngestSummary summary;
+    summary.inputSamples = static_cast<std::uint64_t>(samples.size());
+
+    const auto markBandTouched = [&](std::size_t index) {
+        if (bandUsedFlags[index] != 0) {
+            return;
+        }
+
+        bandUsedFlags[index] = 1;
+        if (summary.touchedBands < touchedBandIndexes.size()) {
+            touchedBandIndexes[static_cast<std::size_t>(summary.touchedBands)] = index;
+        }
+        ++summary.touchedBands;
+    };
 
     const auto updateSpanForAcceptedSample = [&](const core::SignalSample& sample) {
         if (sample.bandIndex < 0) {
@@ -311,7 +337,7 @@ SignalParameterFastIngestSummary SignalParameterAccumulator::ingestTrustedFixedB
         if (bandUsedFlags[index] == 0) {
             firstSampleIndexByBand[index] = sample.sampleIndex;
             lastSampleIndexByBand[index] = sample.sampleIndex;
-            bandUsedFlags[index] = 1;
+            markBandTouched(index);
             return;
         }
 
@@ -359,10 +385,22 @@ SignalParameterFastIngestSummary SignalParameterAccumulator::ingestTrustedFixedB
         return summary;
     }
 
+    const auto addTiming = [](std::chrono::steady_clock::duration& target,
+                              Clock::time_point startedAt,
+                              bool enabled) {
+        if (enabled) {
+            target += Clock::now() - startedAt;
+        }
+    };
+    const auto sampleLoopStartedAt = enableDetailedTiming ? Clock::now() : Clock::time_point{};
+
     for (const auto& sample : samples) {
+        const auto bandLookupStartedAt =
+            enableDetailedTiming ? Clock::now() : Clock::time_point{};
         if (sample.bandIndex < 0) {
             ++m_rejectedSampleCount;
             ++summary.rejectedSamples;
+            addTiming(summary.timing.bandLookup, bandLookupStartedAt, enableDetailedTiming);
             continue;
         }
 
@@ -370,6 +408,7 @@ SignalParameterFastIngestSummary SignalParameterAccumulator::ingestTrustedFixedB
         if (index >= requiredCapacity) {
             ++m_rejectedSampleCount;
             ++summary.rejectedSamples;
+            addTiming(summary.timing.bandLookup, bandLookupStartedAt, enableDetailedTiming);
             continue;
         }
 
@@ -380,27 +419,53 @@ SignalParameterFastIngestSummary SignalParameterAccumulator::ingestTrustedFixedB
             && sample.sampleIndex < *state.lastAcceptedSampleIndex) {
             ++m_rejectedSampleCount;
             ++summary.rejectedSamples;
+            ++summary.outOfOrderSamples;
+            addTiming(summary.timing.bandLookup, bandLookupStartedAt, enableDetailedTiming);
             continue;
         }
+        addTiming(summary.timing.bandLookup, bandLookupStartedAt, enableDetailedTiming);
 
         ++m_acceptedSampleCount;
         ++summary.acceptedSamples;
         state.lastAcceptedSampleIndex = sample.sampleIndex;
 
+        const auto spanStartedAt = enableDetailedTiming ? Clock::now() : Clock::time_point{};
         if (bandUsedFlags[index] == 0) {
             firstSampleIndexByBand[index] = sample.sampleIndex;
             lastSampleIndexByBand[index] = sample.sampleIndex;
-            bandUsedFlags[index] = 1;
+            markBandTouched(index);
         } else {
             firstSampleIndexByBand[index] =
                 std::min(firstSampleIndexByBand[index], sample.sampleIndex);
             lastSampleIndexByBand[index] =
                 std::max(lastSampleIndexByBand[index], sample.sampleIndex);
         }
+        addTiming(summary.timing.spanUpdate, spanStartedAt, enableDetailedTiming);
         updateLatestAcceptedSampleIndex(sample.sampleIndex);
+
+        const auto pulseStartedAt =
+            enableDetailedTiming ? Clock::now() : Clock::time_point{};
+        if (isBelowPulseThreshold(sample)) {
+            if (state.currentPulse) {
+                closePulse(state);
+                ++summary.closedPulses;
+                ++summary.completedPulses;
+                ++summary.pulseTransitions;
+            } else {
+                ++summary.belowThresholdFastSkips;
+            }
+            addTiming(summary.timing.pulseStateUpdate,
+                      pulseStartedAt,
+                      enableDetailedTiming);
+            continue;
+        }
 
         if (!state.currentPulse) {
             state.currentPulse = makePulse(sample);
+            ++summary.pulseTransitions;
+            addTiming(summary.timing.pulseStateUpdate,
+                      pulseStartedAt,
+                      enableDetailedTiming);
             continue;
         }
 
@@ -412,14 +477,26 @@ SignalParameterFastIngestSummary SignalParameterAccumulator::ingestTrustedFixedB
                 : 0;
         if (gap == 0 || gap <= m_config.maxIntraPulseGapSamples) {
             appendSample(pulse, sample);
+            ++summary.activePulseUpdates;
+            addTiming(summary.timing.pulseStateUpdate,
+                      pulseStartedAt,
+                      enableDetailedTiming);
             continue;
         }
 
         closePulse(state);
         ++summary.closedPulses;
+        ++summary.completedPulses;
+        summary.pulseTransitions += 2;
         state.currentPulse = makePulse(sample);
+        addTiming(summary.timing.pulseStateUpdate,
+                  pulseStartedAt,
+                  enableDetailedTiming);
     }
 
+    if (enableDetailedTiming) {
+        summary.timing.sampleLoop = Clock::now() - sampleLoopStartedAt;
+    }
     return summary;
 }
 
@@ -494,6 +571,11 @@ SignalParameterSampleIngestResult SignalParameterAccumulator::ingestValidSample(
     ++m_acceptedSampleCount;
     state.lastAcceptedSampleIndex = sample.sampleIndex;
 
+    if (isBelowPulseThreshold(sample)) {
+        closePulse(state);
+        return SignalParameterSampleIngestResult::Accepted;
+    }
+
     if (!state.currentPulse) {
         state.currentPulse = makePulse(sample);
         return SignalParameterSampleIngestResult::Accepted;
@@ -510,6 +592,12 @@ SignalParameterSampleIngestResult SignalParameterAccumulator::ingestValidSample(
     closePulse(state);
     state.currentPulse = makePulse(sample);
     return SignalParameterSampleIngestResult::Accepted;
+}
+
+bool SignalParameterAccumulator::isBelowPulseThreshold(
+    const core::SignalSample& sample) const noexcept
+{
+    return sample.amplitude < m_config.pulseAmplitudeThreshold;
 }
 
 std::vector<SignalParameters> SignalParameterAccumulator::finalize() const

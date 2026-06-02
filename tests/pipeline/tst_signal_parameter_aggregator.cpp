@@ -503,6 +503,39 @@ void testTimingFieldsAreReported(TestRunner& test)
                  "timing test records total duration including ingest");
     test.require(result.timing.total >= result.timing.snapshotDecision,
                  "timing test records snapshot decision duration");
+    test.require(!result.detailedTimingEnabled,
+                 "timing test leaves detailed timing disabled by default");
+    test.require(result.timing.sampleLoop == std::chrono::steady_clock::duration{},
+                 "timing test leaves hot-loop sample timing zero by default");
+    test.require(result.touchedBands == 1,
+                 "timing test exposes touched bands from fast path");
+    test.require(result.trustedFixedBandFastPathBlocks == 1,
+                 "timing test exposes trusted fast-path block counter");
+    test.require(result.blockLocalFastPathBlocks == 1,
+                 "timing test exposes block-local fast-path block counter");
+}
+
+void testDetailedTimingCanBeEnabled(TestRunner& test)
+{
+    auto config = microsecondConfig();
+    config.enableDetailedTiming = true;
+    pipeline::SignalParameterAggregator aggregator(config);
+    const auto result = consumeIndexes(aggregator, {10, 11, 12, 20});
+
+    test.require(result.snapshot != nullptr,
+                 "detailed timing test publishes snapshot");
+    test.require(result.detailedTimingEnabled,
+                 "detailed timing test marks timing enabled");
+    test.require(result.usedTrustedFixedBandFastPath,
+                 "detailed timing test keeps trusted fast path");
+    test.require(result.timing.sampleLoop >= std::chrono::steady_clock::duration{},
+                 "detailed timing test records valid sample-loop duration");
+    test.require(result.timing.bandLookup >= std::chrono::steady_clock::duration{},
+                 "detailed timing test records valid band lookup duration");
+    test.require(result.timing.pulseStateUpdate >= std::chrono::steady_clock::duration{},
+                 "detailed timing test records valid pulse update duration");
+    test.require(result.timing.spanUpdate >= std::chrono::steady_clock::duration{},
+                 "detailed timing test records valid span update duration");
 }
 
 void testNoSnapshotLeavesFinalizeAndBuildTimingZero(TestRunner& test)
@@ -549,6 +582,7 @@ int main()
     testPublishEveryBlockOverridesManualPolicy(test);
     testSourceTimePolicyUsesAcceptedSampleTime(test);
     testTimingFieldsAreReported(test);
+    testDetailedTimingCanBeEnabled(test);
     testNoSnapshotLeavesFinalizeAndBuildTimingZero(test);
 
     return test.result();

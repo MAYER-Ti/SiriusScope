@@ -536,12 +536,33 @@ void ProcessingEngine::processSignalParameterStage(const SignalBlock& block)
     if (m_metrics) {
         m_metrics->recordSignalParameterAggregationLatency(signalParameterAggregationElapsed);
         m_metrics->recordSignalParameterIngestLatency(signalParameterResult.timing.ingest);
+        if (signalParameterResult.detailedTimingEnabled) {
+            m_metrics->recordSignalParameterSampleLoopLatency(
+                signalParameterResult.timing.sampleLoop);
+            m_metrics->recordSignalParameterBandLookupLatency(
+                signalParameterResult.timing.bandLookup);
+            m_metrics->recordSignalParameterPulseStateUpdateLatency(
+                signalParameterResult.timing.pulseStateUpdate);
+            m_metrics->recordSignalParameterSpanUpdateLatency(
+                signalParameterResult.timing.spanUpdate);
+        }
         m_metrics->recordSignalParameterSnapshotDecisionLatency(
             signalParameterResult.timing.snapshotDecision);
         m_metrics->recordSignalParameterFinalizeLatency(
             signalParameterResult.timing.finalize);
         m_metrics->recordSignalParameterSnapshotBuildLatency(
             signalParameterResult.timing.snapshotBuild);
+        m_metrics->recordSignalParameterCriticalCounters(
+            signalParameterResult.inputSampleDelta,
+            signalParameterResult.acceptedSampleDelta,
+            signalParameterResult.rejectedSampleDelta,
+            signalParameterResult.touchedBands,
+            signalParameterResult.pulseTransitions,
+            signalParameterResult.activePulseUpdates,
+            signalParameterResult.completedPulses,
+            signalParameterResult.outOfOrderSamples,
+            signalParameterResult.blockLocalFastPathBlocks,
+            signalParameterResult.belowThresholdFastSkips);
         if (signalParameterResult.usedTrustedFixedBandFastPath) {
             m_metrics->recordSignalParameterTrustedFixedBandFastPathBlock();
         }

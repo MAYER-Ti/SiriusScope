@@ -18,6 +18,19 @@ bool hasValidBandIndex(const core::SignalSample& sample)
     return core::validateBandIndex(sample.bandIndex, core::defaultRuntimeCapabilities()).isValid();
 }
 
+int normalizedPulseAmplitudeThreshold(int threshold) noexcept
+{
+    return std::clamp(threshold,
+                      core::DomainConstraints::minAmplitude,
+                      core::DomainConstraints::maxAmplitude);
+}
+
+bool reachesPulseThreshold(const core::SignalSample& sample,
+                           const SignalParameterEstimatorConfig& config) noexcept
+{
+    return sample.amplitude >= config.pulseAmplitudeThreshold;
+}
+
 bool sampleLess(const core::SignalSample& lhs, const core::SignalSample& rhs)
 {
     if (lhs.sampleIndex != rhs.sampleIndex) {
@@ -144,6 +157,8 @@ SignalParameterEstimator::SignalParameterEstimator(SignalParameterEstimatorConfi
     m_config.maxIntraPulseGapSamples =
         std::max<std::uint64_t>(1, m_config.maxIntraPulseGapSamples);
     m_config.minSamplesPerPulse = std::max<std::size_t>(1, m_config.minSamplesPerPulse);
+    m_config.pulseAmplitudeThreshold =
+        normalizedPulseAmplitudeThreshold(m_config.pulseAmplitudeThreshold);
 }
 
 std::vector<SignalPulse> SignalParameterEstimator::buildPulses(
@@ -151,7 +166,8 @@ std::vector<SignalPulse> SignalParameterEstimator::buildPulses(
 {
     std::map<int, std::vector<core::SignalSample>> samplesByBand;
     for (const auto& sample : samples) {
-        if (!hasValidAmplitude(sample) || !hasValidBandIndex(sample)) {
+        if (!hasValidAmplitude(sample) || !hasValidBandIndex(sample)
+            || !reachesPulseThreshold(sample, m_config)) {
             continue;
         }
 

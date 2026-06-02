@@ -34,11 +34,16 @@ struct SignalParameterAggregatorConfig
         SignalParameterSnapshotPolicy::ProcessedBlockInterval;
     std::uint64_t snapshotBlockInterval = 20;
     std::chrono::milliseconds sourceTimeSnapshotPeriod{500};
+    bool enableDetailedTiming = false;
 };
 
 struct SignalParameterAggregatorTiming
 {
     std::chrono::steady_clock::duration ingest{};
+    std::chrono::steady_clock::duration sampleLoop{};
+    std::chrono::steady_clock::duration bandLookup{};
+    std::chrono::steady_clock::duration pulseStateUpdate{};
+    std::chrono::steady_clock::duration spanUpdate{};
     std::chrono::steady_clock::duration snapshotDecision{};
     std::chrono::steady_clock::duration finalize{};
     std::chrono::steady_clock::duration snapshotBuild{};
@@ -49,10 +54,21 @@ struct SignalParameterAggregationResult
 {
     std::shared_ptr<const SignalParameterSnapshot> snapshot;
     SignalParameterAggregatorTiming timing;
+    std::uint64_t inputSampleDelta = 0;
     std::uint64_t acceptedSampleDelta = 0;
     std::uint64_t rejectedSampleDelta = 0;
     std::uint64_t pulseCountDelta = 0;
+    std::uint64_t touchedBands = 0;
+    std::uint64_t pulseTransitions = 0;
+    std::uint64_t activePulseUpdates = 0;
+    std::uint64_t completedPulses = 0;
+    std::uint64_t outOfOrderSamples = 0;
+    std::uint64_t belowThresholdFastSkips = 0;
+    std::uint64_t trustedFixedBandFastPathBlocks = 0;
+    std::uint64_t blockLocalFastPathBlocks = 0;
     bool usedTrustedFixedBandFastPath = false;
+    bool usedBlockLocalFastPath = false;
+    bool detailedTimingEnabled = false;
     bool snapshotPublished = false;
 };
 
@@ -81,7 +97,7 @@ private:
     void updateBandSpans(std::span<const core::SignalSample> samples);
     void updateBandSpanForSample(const core::SignalSample& sample);
     void resetFastSpanBuffers();
-    void mergeFastSpanUpdates();
+    void mergeFastSpanUpdates(std::size_t touchedBandCount);
     void updateLatestAcceptedSampleIndex(std::uint64_t sampleIndex);
     bool usesStreamingSinglePass() const noexcept;
     bool usesTrustedFixedBandFastPath() const noexcept;
@@ -103,6 +119,7 @@ private:
     std::vector<std::uint64_t> m_fastFirstSampleIndexByBand;
     std::vector<std::uint64_t> m_fastLastSampleIndexByBand;
     std::vector<std::uint8_t> m_fastBandUsedFlags;
+    std::vector<std::size_t> m_fastTouchedBandIndexes;
     mutable std::uint64_t m_nextSequenceId = 1;
     std::chrono::steady_clock::time_point m_lastSnapshotAt{};
     bool m_snapshotDirty = false;

@@ -95,6 +95,10 @@ void testSignalParameterMicroBreakdownLatencyStats(TestRunner& test)
 
     metrics.recordSignalParameterIngestLatency(std::chrono::milliseconds{10});
     metrics.recordSignalParameterIngestLatency(std::chrono::milliseconds{30});
+    metrics.recordSignalParameterSampleLoopLatency(std::chrono::milliseconds{8});
+    metrics.recordSignalParameterBandLookupLatency(std::chrono::milliseconds{2});
+    metrics.recordSignalParameterPulseStateUpdateLatency(std::chrono::milliseconds{3});
+    metrics.recordSignalParameterSpanUpdateLatency(std::chrono::milliseconds{1});
     metrics.recordSignalParameterSnapshotDecisionLatency(std::chrono::milliseconds{1});
     metrics.recordSignalParameterFinalizeLatency(std::chrono::milliseconds{4});
     metrics.recordSignalParameterSnapshotBuildLatency(std::chrono::milliseconds{6});
@@ -110,6 +114,22 @@ void testSignalParameterMicroBreakdownLatencyStats(TestRunner& test)
                      30.0,
                      0.0001,
                      "signal parameter ingest latency max is tracked");
+    test.requireNear(snapshot.signalParameterSampleLoopLatency.averageMs(),
+                     8.0,
+                     0.0001,
+                     "signal parameter sample loop latency average is calculated");
+    test.requireNear(snapshot.signalParameterBandLookupLatency.maxMs,
+                     2.0,
+                     0.0001,
+                     "signal parameter band lookup latency max is tracked");
+    test.requireNear(snapshot.signalParameterPulseStateUpdateLatency.averageMs(),
+                     3.0,
+                     0.0001,
+                     "signal parameter pulse update latency average is calculated");
+    test.requireNear(snapshot.signalParameterSpanUpdateLatency.maxMs,
+                     1.0,
+                     0.0001,
+                     "signal parameter span update latency max is tracked");
     test.require(snapshot.signalParameterSnapshotDecisionLatency.count == 1,
                  "signal parameter snapshot decision latency count records");
     test.requireNear(snapshot.signalParameterFinalizeLatency.averageMs(),
@@ -128,10 +148,50 @@ void testSignalParameterFastPathCounter(TestRunner& test)
 
     metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
     metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
+    metrics.recordSignalParameterCriticalCounters(100,
+                                                  98,
+                                                  2,
+                                                  5,
+                                                  7,
+                                                  80,
+                                                  3,
+                                                  1,
+                                                  1,
+                                                  9);
+    metrics.recordSignalParameterCriticalCounters(50,
+                                                  50,
+                                                  0,
+                                                  2,
+                                                  4,
+                                                  40,
+                                                  1,
+                                                  0,
+                                                  1,
+                                                  6);
 
     const auto snapshot = snapshotFor(metrics);
     test.require(snapshot.signalParameterTrustedFixedBandFastPathBlocks == 2,
                  "signal parameter trusted fixed-band fast-path blocks are counted");
+    test.require(snapshot.signalParameterInputSamples == 150,
+                 "signal parameter input samples are counted");
+    test.require(snapshot.signalParameterAcceptedSamples == 148,
+                 "signal parameter accepted samples are counted");
+    test.require(snapshot.signalParameterRejectedSamples == 2,
+                 "signal parameter rejected samples are counted");
+    test.require(snapshot.signalParameterTouchedBands == 7,
+                 "signal parameter touched bands are counted");
+    test.require(snapshot.signalParameterPulseTransitions == 11,
+                 "signal parameter pulse transitions are counted");
+    test.require(snapshot.signalParameterActivePulseUpdates == 120,
+                 "signal parameter active pulse updates are counted");
+    test.require(snapshot.signalParameterCompletedPulses == 4,
+                 "signal parameter completed pulses are counted");
+    test.require(snapshot.signalParameterOutOfOrderSamples == 1,
+                 "signal parameter out-of-order samples are counted");
+    test.require(snapshot.signalParameterBlockLocalFastPathBlocks == 2,
+                 "signal parameter block-local fast-path blocks are counted");
+    test.require(snapshot.signalParameterBelowThresholdFastSkips == 15,
+                 "signal parameter below-threshold fast skips are counted");
 }
 
 void testSpectrumMicroBreakdownLatencyStats(TestRunner& test)
@@ -472,7 +532,12 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordProcessBlockLatency(std::chrono::milliseconds{1}, 100);
     metrics.recordSpectrumSnapshotPublishLatency(std::chrono::milliseconds{3});
     metrics.recordSignalParameterFinalizeLatency(std::chrono::milliseconds{4});
+    metrics.recordSignalParameterSampleLoopLatency(std::chrono::milliseconds{5});
+    metrics.recordSignalParameterBandLookupLatency(std::chrono::milliseconds{6});
+    metrics.recordSignalParameterPulseStateUpdateLatency(std::chrono::milliseconds{7});
+    metrics.recordSignalParameterSpanUpdateLatency(std::chrono::milliseconds{8});
     metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
+    metrics.recordSignalParameterCriticalCounters(10, 9, 1, 2, 3, 4, 5, 1, 1, 6);
     metrics.recordSpectrumSampleLoopLatency(std::chrono::milliseconds{6});
     metrics.recordSpectrumBandSummaryUpdateLatency(std::chrono::milliseconds{8});
     metrics.recordSpectrumFastPathUsage(true, true, true);
@@ -516,8 +581,22 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears publish latency count");
     test.require(snapshot.signalParameterFinalizeLatency.count == 0,
                  "reset clears signal parameter finalize latency count");
+    test.require(snapshot.signalParameterSampleLoopLatency.count == 0,
+                 "reset clears signal parameter sample loop latency count");
+    test.require(snapshot.signalParameterBandLookupLatency.count == 0,
+                 "reset clears signal parameter band lookup latency count");
+    test.require(snapshot.signalParameterPulseStateUpdateLatency.count == 0,
+                 "reset clears signal parameter pulse update latency count");
+    test.require(snapshot.signalParameterSpanUpdateLatency.count == 0,
+                 "reset clears signal parameter span update latency count");
     test.require(snapshot.signalParameterTrustedFixedBandFastPathBlocks == 0,
                  "reset clears signal parameter fast-path block counter");
+    test.require(snapshot.signalParameterInputSamples == 0,
+                 "reset clears signal parameter input sample counter");
+    test.require(snapshot.signalParameterBlockLocalFastPathBlocks == 0,
+                 "reset clears signal parameter block-local fast-path counter");
+    test.require(snapshot.signalParameterBelowThresholdFastSkips == 0,
+                 "reset clears signal parameter below-threshold fast-skip counter");
     test.require(snapshot.spectrumSampleLoopLatency.count == 0,
                  "reset clears spectrum sample loop latency count");
     test.require(snapshot.spectrumBandSummaryUpdateLatency.count == 0,

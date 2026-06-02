@@ -331,6 +331,27 @@ Current v1 implementation:
 - `BearingSnapshotAdapter` polls the latest snapshot at a bounded Qt cadence and passes
   low-volume estimates to `ScanController` only while a scan is active.
 
+## 8.1 SignalParameter Critical-Stage Diagnostics
+
+SignalParameter aggregation is a critical data-plane stage. It remains
+`LosslessRequired` even when audit-only visual overload policy is enabled, and
+SignalParameter jobs are not dropped, coalesced, or treated as best-effort UI work.
+
+Current v1 diagnostics:
+
+- `SignalParameterAggregator` publishes immutable per-band PRI/PW snapshots and keeps
+  raw samples out of Qt, QML, `ScanController`, and UI models.
+- The trusted fixed-band ingest path records critical counters: input, accepted and
+  rejected samples, touched bands, pulse transitions, active pulse updates, completed
+  pulses, out-of-order samples, below-threshold fast skips, and trusted/block-local
+  fast-path block counts.
+- Detailed hot-loop timing for sample loop, band lookup, pulse-state update, and span
+  update is disabled by default. Perf audits can enable it with
+  `SIRIUSSCOPE_ENABLE_DETAILED_SIGNAL_PARAMETER_TIMING=1`.
+- The default pulse amplitude threshold is the minimum valid domain amplitude, so valid
+  input samples keep the existing PRI/PW semantics unless a test or future data-plane
+  config explicitly raises the threshold.
+
 ## 9. Scan Architecture
 
 `ScanController` is a control-plane component. It coordinates:

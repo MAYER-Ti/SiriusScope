@@ -33,6 +33,16 @@ void PipelineMetrics::reset()
     m_missingBeam1Candidates = 0;
     m_producedSignalParameterSnapshots = 0;
     m_signalParameterTrustedFixedBandFastPathBlocks = 0;
+    m_signalParameterInputSamples = 0;
+    m_signalParameterAcceptedSamples = 0;
+    m_signalParameterRejectedSamples = 0;
+    m_signalParameterTouchedBands = 0;
+    m_signalParameterPulseTransitions = 0;
+    m_signalParameterActivePulseUpdates = 0;
+    m_signalParameterCompletedPulses = 0;
+    m_signalParameterOutOfOrderSamples = 0;
+    m_signalParameterBlockLocalFastPathBlocks = 0;
+    m_signalParameterBelowThresholdFastSkips = 0;
     m_parallelFanOutBlocks = 0;
     m_parallelFanOutFallbackBlocks = 0;
     m_parallelFanOutRejectedBlocks = 0;
@@ -71,6 +81,10 @@ void PipelineMetrics::reset()
     m_bearingEstimateCalculationLatency = {};
     m_signalParameterAggregationLatency = {};
     m_signalParameterIngestLatency = {};
+    m_signalParameterSampleLoopLatency = {};
+    m_signalParameterBandLookupLatency = {};
+    m_signalParameterPulseStateUpdateLatency = {};
+    m_signalParameterSpanUpdateLatency = {};
     m_signalParameterSnapshotDecisionLatency = {};
     m_signalParameterFinalizeLatency = {};
     m_signalParameterSnapshotBuildLatency = {};
@@ -259,6 +273,34 @@ void PipelineMetrics::recordSignalParameterIngestLatency(
     recordLatency(m_signalParameterIngestLatency, millisecondsFor(elapsed));
 }
 
+void PipelineMetrics::recordSignalParameterSampleLoopLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterSampleLoopLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterBandLookupLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterBandLookupLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterPulseStateUpdateLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterPulseStateUpdateLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSignalParameterSpanUpdateLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_signalParameterSpanUpdateLatency, millisecondsFor(elapsed));
+}
+
 void PipelineMetrics::recordSignalParameterSnapshotDecisionLatency(
     std::chrono::steady_clock::duration elapsed)
 {
@@ -374,6 +416,31 @@ void PipelineMetrics::recordSignalParameterTrustedFixedBandFastPathBlock()
 {
     std::lock_guard lock(m_mutex);
     ++m_signalParameterTrustedFixedBandFastPathBlocks;
+}
+
+void PipelineMetrics::recordSignalParameterCriticalCounters(
+    std::uint64_t inputSamples,
+    std::uint64_t acceptedSamples,
+    std::uint64_t rejectedSamples,
+    std::uint64_t touchedBands,
+    std::uint64_t pulseTransitions,
+    std::uint64_t activePulseUpdates,
+    std::uint64_t completedPulses,
+    std::uint64_t outOfOrderSamples,
+    std::uint64_t blockLocalFastPathBlocks,
+    std::uint64_t belowThresholdFastSkips)
+{
+    std::lock_guard lock(m_mutex);
+    m_signalParameterInputSamples += inputSamples;
+    m_signalParameterAcceptedSamples += acceptedSamples;
+    m_signalParameterRejectedSamples += rejectedSamples;
+    m_signalParameterTouchedBands += touchedBands;
+    m_signalParameterPulseTransitions += pulseTransitions;
+    m_signalParameterActivePulseUpdates += activePulseUpdates;
+    m_signalParameterCompletedPulses += completedPulses;
+    m_signalParameterOutOfOrderSamples += outOfOrderSamples;
+    m_signalParameterBlockLocalFastPathBlocks += blockLocalFastPathBlocks;
+    m_signalParameterBelowThresholdFastSkips += belowThresholdFastSkips;
 }
 
 void PipelineMetrics::recordParallelFanOutBlock()
@@ -608,6 +675,11 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.bearingEstimateCalculationLatency = m_bearingEstimateCalculationLatency;
     snapshot.signalParameterAggregationLatency = m_signalParameterAggregationLatency;
     snapshot.signalParameterIngestLatency = m_signalParameterIngestLatency;
+    snapshot.signalParameterSampleLoopLatency = m_signalParameterSampleLoopLatency;
+    snapshot.signalParameterBandLookupLatency = m_signalParameterBandLookupLatency;
+    snapshot.signalParameterPulseStateUpdateLatency =
+        m_signalParameterPulseStateUpdateLatency;
+    snapshot.signalParameterSpanUpdateLatency = m_signalParameterSpanUpdateLatency;
     snapshot.signalParameterSnapshotDecisionLatency =
         m_signalParameterSnapshotDecisionLatency;
     snapshot.signalParameterFinalizeLatency = m_signalParameterFinalizeLatency;
@@ -667,6 +739,18 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.producedSignalParameterSnapshots = m_producedSignalParameterSnapshots;
     snapshot.signalParameterTrustedFixedBandFastPathBlocks =
         m_signalParameterTrustedFixedBandFastPathBlocks;
+    snapshot.signalParameterInputSamples = m_signalParameterInputSamples;
+    snapshot.signalParameterAcceptedSamples = m_signalParameterAcceptedSamples;
+    snapshot.signalParameterRejectedSamples = m_signalParameterRejectedSamples;
+    snapshot.signalParameterTouchedBands = m_signalParameterTouchedBands;
+    snapshot.signalParameterPulseTransitions = m_signalParameterPulseTransitions;
+    snapshot.signalParameterActivePulseUpdates = m_signalParameterActivePulseUpdates;
+    snapshot.signalParameterCompletedPulses = m_signalParameterCompletedPulses;
+    snapshot.signalParameterOutOfOrderSamples = m_signalParameterOutOfOrderSamples;
+    snapshot.signalParameterBlockLocalFastPathBlocks =
+        m_signalParameterBlockLocalFastPathBlocks;
+    snapshot.signalParameterBelowThresholdFastSkips =
+        m_signalParameterBelowThresholdFastSkips;
     snapshot.parallelFanOutBlocks = m_parallelFanOutBlocks;
     snapshot.parallelFanOutFallbackBlocks = m_parallelFanOutFallbackBlocks;
     snapshot.parallelFanOutRejectedBlocks = m_parallelFanOutRejectedBlocks;

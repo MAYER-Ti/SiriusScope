@@ -64,6 +64,7 @@ struct SignalParameterEstimatorConfig
     std::uint64_t maxIntraPulseGapSamples = 1;
     std::size_t minSamplesPerPulse = 1;
     bool uniqueFrequencies = true;
+    int pulseAmplitudeThreshold = core::DomainConstraints::minAmplitude;
     PulseGroupingMode groupingMode = PulseGroupingMode::AdaptiveGap;
     SignalParameterIngestMode ingestMode = SignalParameterIngestMode::SortByBandAndSample;
     SignalParameterValidationMode validationMode =

@@ -123,6 +123,8 @@ SignalParameterAggregationResult SignalParameterAggregator::consume(
     std::span<const core::SignalSample> samples)
 {
     SignalParameterAggregationResult result;
+    result.detailedTimingEnabled = m_config.enableDetailedTiming;
+    result.inputSampleDelta = static_cast<std::uint64_t>(samples.size());
     const auto totalStartedAt = Clock::now();
     if (samples.empty()) {
         result.timing.total = Clock::now() - totalStartedAt;
@@ -140,9 +142,24 @@ SignalParameterAggregationResult SignalParameterAggregator::consume(
             samples,
             m_fastFirstSampleIndexByBand,
             m_fastLastSampleIndexByBand,
-            m_fastBandUsedFlags);
+            m_fastBandUsedFlags,
+            m_fastTouchedBandIndexes,
+            m_config.enableDetailedTiming);
         result.usedTrustedFixedBandFastPath = true;
-        mergeFastSpanUpdates();
+        result.usedBlockLocalFastPath = true;
+        result.trustedFixedBandFastPathBlocks = 1;
+        result.blockLocalFastPathBlocks = 1;
+        result.touchedBands = summary.touchedBands;
+        result.pulseTransitions = summary.pulseTransitions;
+        result.activePulseUpdates = summary.activePulseUpdates;
+        result.completedPulses = summary.completedPulses;
+        result.outOfOrderSamples = summary.outOfOrderSamples;
+        result.belowThresholdFastSkips = summary.belowThresholdFastSkips;
+        result.timing.sampleLoop = summary.timing.sampleLoop;
+        result.timing.bandLookup = summary.timing.bandLookup;
+        result.timing.pulseStateUpdate = summary.timing.pulseStateUpdate;
+        result.timing.spanUpdate = summary.timing.spanUpdate;
+        mergeFastSpanUpdates(static_cast<std::size_t>(summary.touchedBands));
         if (summary.latestAcceptedSampleIndex) {
             updateLatestAcceptedSampleIndex(*summary.latestAcceptedSampleIndex);
         }
@@ -300,6 +317,7 @@ void SignalParameterAggregator::resetFastSpanBuffers()
         m_fastFirstSampleIndexByBand.clear();
         m_fastLastSampleIndexByBand.clear();
         m_fastBandUsedFlags.clear();
+        m_fastTouchedBandIndexes.clear();
         return;
     }
 
@@ -312,15 +330,23 @@ void SignalParameterAggregator::resetFastSpanBuffers()
     if (m_fastBandUsedFlags.size() != capacity) {
         m_fastBandUsedFlags.resize(capacity);
     }
+    if (m_fastTouchedBandIndexes.size() != capacity) {
+        m_fastTouchedBandIndexes.resize(capacity);
+    }
     std::fill(m_fastBandUsedFlags.begin(), m_fastBandUsedFlags.end(), std::uint8_t{0});
 }
 
-void SignalParameterAggregator::mergeFastSpanUpdates()
+void SignalParameterAggregator::mergeFastSpanUpdates(std::size_t touchedBandCount)
 {
     const auto count = std::min(m_fastBandUsedFlags.size(),
                                 std::min(m_fastFirstSampleIndexByBand.size(),
                                          m_fastLastSampleIndexByBand.size()));
-    for (std::size_t index = 0; index < count; ++index) {
+    const auto touchedCount = std::min(touchedBandCount, m_fastTouchedBandIndexes.size());
+    for (std::size_t touchedIndex = 0; touchedIndex < touchedCount; ++touchedIndex) {
+        const auto index = m_fastTouchedBandIndexes[touchedIndex];
+        if (index >= count) {
+            continue;
+        }
         if (m_fastBandUsedFlags[index] == 0) {
             continue;
         }
@@ -442,6 +468,7 @@ void SignalParameterAggregator::prepareBandSpanVectorStorage()
         m_fastFirstSampleIndexByBand.clear();
         m_fastLastSampleIndexByBand.clear();
         m_fastBandUsedFlags.clear();
+        m_fastTouchedBandIndexes.clear();
         return;
     }
 
@@ -451,6 +478,7 @@ void SignalParameterAggregator::prepareBandSpanVectorStorage()
     m_fastFirstSampleIndexByBand.resize(m_config.estimatorConfig.bandStateCapacity);
     m_fastLastSampleIndexByBand.resize(m_config.estimatorConfig.bandStateCapacity);
     m_fastBandUsedFlags.resize(m_config.estimatorConfig.bandStateCapacity);
+    m_fastTouchedBandIndexes.resize(m_config.estimatorConfig.bandStateCapacity);
 }
 
 void SignalParameterAggregator::resetBandSpanStorage()

@@ -402,6 +402,12 @@ void testTrustedFixedBandFastBatchMatchesTrustedStreaming(TestRunner& test)
                  "fast batch rejects no trusted monotonic samples");
     test.require(summary.closedPulses == 2,
                  "fast batch counts pulses closed by sample gaps");
+    test.require(summary.touchedBands == 2,
+                 "fast batch counts touched bands once per block");
+    test.require(summary.pulseTransitions > 0,
+                 "fast batch counts pulse state transitions");
+    test.require(summary.activePulseUpdates > 0,
+                 "fast batch counts active pulse updates");
     test.require(summary.latestAcceptedSampleIndex && *summary.latestAcceptedSampleIndex == 31,
                  "fast batch reports latest accepted sample index");
     test.require(fast.acceptedSampleCount() == streaming.acceptedSampleCount(),
@@ -466,8 +472,57 @@ void testTrustedFixedBandFastBatchRejectsOutOfOrderPerBand(TestRunner& test)
                  "fast batch accepted counter tracks out-of-order test");
     test.require(accumulator.rejectedSampleCount() == 1,
                  "fast batch rejected counter tracks out-of-order test");
+    test.require(summary.outOfOrderSamples == 1,
+                 "fast batch counts out-of-order rejected sample");
     test.require(usedByBand[0] != 0 && firstByBand[0] == 10 && lastByBand[0] == 12,
                  "fast batch spans ignore rejected out-of-order sample");
+}
+
+void testBelowThresholdFastSkipPreservesPulseClose(TestRunner& test)
+{
+    auto config = trustedStreamingVectorMicrosecondSampleConfig(2);
+    config.pulseAmplitudeThreshold = 50;
+    SignalParameterAccumulator accumulator(config);
+    std::vector<std::uint64_t> firstByBand(config.bandStateCapacity);
+    std::vector<std::uint64_t> lastByBand(config.bandStateCapacity);
+    std::vector<std::uint8_t> usedByBand(config.bandStateCapacity);
+    std::vector<std::size_t> touchedIndexes(config.bandStateCapacity);
+
+    const std::vector<SignalSample> samples{
+        makeSample(10, 0, 1'000'000'000LL, 10),
+        makeSample(11, 0, 1'000'000'000LL, 10),
+        makeSample(12, 0, 1'000'000'000LL, 80),
+        makeSample(13, 0, 1'000'000'000LL, 90),
+        makeSample(14, 0, 1'000'000'000LL, 10),
+        makeSample(15, 0, 1'000'000'000LL, 10),
+    };
+
+    const auto summary = accumulator.ingestTrustedFixedBandSamples(samples,
+                                                                   firstByBand,
+                                                                   lastByBand,
+                                                                   usedByBand,
+                                                                   touchedIndexes);
+    const auto result = accumulator.finalize();
+    const auto* band0 = findParameters(result, 0);
+
+    test.require(summary.acceptedSamples == samples.size(),
+                 "below-threshold fast skip accepts valid samples");
+    test.require(summary.belowThresholdFastSkips == 3,
+                 "below-threshold fast skip counts only samples outside active pulse");
+    test.require(summary.closedPulses == 1 && summary.completedPulses == 1,
+                 "below-threshold fast skip closes active pulse once");
+    test.require(band0 != nullptr,
+                 "below-threshold fast skip keeps above-threshold pulse");
+    if (!band0) {
+        return;
+    }
+
+    test.require(band0->pulseCount == 1,
+                 "below-threshold fast skip produces one completed pulse");
+    test.require(nearly(band0->pulseWidthUs, 2.0),
+                 "below-threshold fast skip preserves pulse width");
+    test.require(firstByBand[0] == 10 && lastByBand[0] == 15,
+                 "below-threshold fast skip keeps accepted span metadata");
 }
 
 void testTrustedFixedBandFastBatchUpdatesSpanBuffers(TestRunner& test)
@@ -654,6 +709,7 @@ int main()
     testTrustedFixedBandFastBatchMatchesTrustedStreaming(test);
     testTrustedFixedBandFastBatchRejectsInvalidBands(test);
     testTrustedFixedBandFastBatchRejectsOutOfOrderPerBand(test);
+    testBelowThresholdFastSkipPreservesPulseClose(test);
     testTrustedFixedBandFastBatchUpdatesSpanBuffers(test);
     testTrustedStreamingVectorHandlesLargeMonotonicBlock(test);
     testSortedAcceptsOutOfOrderInput(test);

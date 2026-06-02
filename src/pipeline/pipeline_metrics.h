@@ -103,6 +103,10 @@ struct PipelineMetricsSnapshot
     LatencyStats bearingEstimateCalculationLatency;
     LatencyStats signalParameterAggregationLatency;
     LatencyStats signalParameterIngestLatency;
+    LatencyStats signalParameterSampleLoopLatency;
+    LatencyStats signalParameterBandLookupLatency;
+    LatencyStats signalParameterPulseStateUpdateLatency;
+    LatencyStats signalParameterSpanUpdateLatency;
     LatencyStats signalParameterSnapshotDecisionLatency;
     LatencyStats signalParameterFinalizeLatency;
     LatencyStats signalParameterSnapshotBuildLatency;
@@ -151,6 +155,16 @@ struct PipelineMetricsSnapshot
     std::uint64_t bearingBlockLocalAccumulationBlocks = 0;
     std::uint64_t producedSignalParameterSnapshots = 0;
     std::uint64_t signalParameterTrustedFixedBandFastPathBlocks = 0;
+    std::uint64_t signalParameterInputSamples = 0;
+    std::uint64_t signalParameterAcceptedSamples = 0;
+    std::uint64_t signalParameterRejectedSamples = 0;
+    std::uint64_t signalParameterTouchedBands = 0;
+    std::uint64_t signalParameterPulseTransitions = 0;
+    std::uint64_t signalParameterActivePulseUpdates = 0;
+    std::uint64_t signalParameterCompletedPulses = 0;
+    std::uint64_t signalParameterOutOfOrderSamples = 0;
+    std::uint64_t signalParameterBlockLocalFastPathBlocks = 0;
+    std::uint64_t signalParameterBelowThresholdFastSkips = 0;
     std::uint64_t parallelFanOutBlocks = 0;
     std::uint64_t parallelFanOutFallbackBlocks = 0;
     std::uint64_t parallelFanOutRejectedBlocks = 0;
@@ -228,6 +242,11 @@ public:
     void recordBearingEstimateCalculationLatency(std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterIngestLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterSampleLoopLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterBandLookupLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterPulseStateUpdateLatency(
+        std::chrono::steady_clock::duration elapsed);
+    void recordSignalParameterSpanUpdateLatency(std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterSnapshotDecisionLatency(
         std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterFinalizeLatency(std::chrono::steady_clock::duration elapsed);
@@ -258,6 +277,16 @@ public:
                                   std::chrono::milliseconds aggregationLatency);
     void recordSignalParameterSnapshotProduced(std::uint64_t producedSnapshots);
     void recordSignalParameterTrustedFixedBandFastPathBlock();
+    void recordSignalParameterCriticalCounters(std::uint64_t inputSamples,
+                                               std::uint64_t acceptedSamples,
+                                               std::uint64_t rejectedSamples,
+                                               std::uint64_t touchedBands,
+                                               std::uint64_t pulseTransitions,
+                                               std::uint64_t activePulseUpdates,
+                                               std::uint64_t completedPulses,
+                                               std::uint64_t outOfOrderSamples,
+                                               std::uint64_t blockLocalFastPathBlocks,
+                                               std::uint64_t belowThresholdFastSkips);
     void recordParallelFanOutBlock();
     void recordParallelFanOutFallbackBlock();
     void recordParallelFanOutRejectedBlock();
@@ -332,6 +361,16 @@ private:
     std::uint64_t m_missingBeam1Candidates = 0;
     std::uint64_t m_producedSignalParameterSnapshots = 0;
     std::uint64_t m_signalParameterTrustedFixedBandFastPathBlocks = 0;
+    std::uint64_t m_signalParameterInputSamples = 0;
+    std::uint64_t m_signalParameterAcceptedSamples = 0;
+    std::uint64_t m_signalParameterRejectedSamples = 0;
+    std::uint64_t m_signalParameterTouchedBands = 0;
+    std::uint64_t m_signalParameterPulseTransitions = 0;
+    std::uint64_t m_signalParameterActivePulseUpdates = 0;
+    std::uint64_t m_signalParameterCompletedPulses = 0;
+    std::uint64_t m_signalParameterOutOfOrderSamples = 0;
+    std::uint64_t m_signalParameterBlockLocalFastPathBlocks = 0;
+    std::uint64_t m_signalParameterBelowThresholdFastSkips = 0;
     std::chrono::milliseconds m_rxLatencyMax{0};
     std::chrono::milliseconds m_processingLatencyMax{0};
     std::chrono::milliseconds m_aggregationLatencyMax{0};
@@ -358,6 +397,10 @@ private:
     LatencyStats m_bearingEstimateCalculationLatency;
     LatencyStats m_signalParameterAggregationLatency;
     LatencyStats m_signalParameterIngestLatency;
+    LatencyStats m_signalParameterSampleLoopLatency;
+    LatencyStats m_signalParameterBandLookupLatency;
+    LatencyStats m_signalParameterPulseStateUpdateLatency;
+    LatencyStats m_signalParameterSpanUpdateLatency;
     LatencyStats m_signalParameterSnapshotDecisionLatency;
     LatencyStats m_signalParameterFinalizeLatency;
     LatencyStats m_signalParameterSnapshotBuildLatency;

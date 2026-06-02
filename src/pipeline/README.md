@@ -48,6 +48,17 @@ on every processed block. The default high-load signal parameter path uses a tru
 fixed-band batch ingest loop, so accumulator updates and per-band sample span tracking
 share one tight pass over accepted samples while validated, sorted, and map-backed safe
 modes remain available for untrusted inputs.
+P1.21 adds critical-stage diagnostics for this path: input/accepted/rejected samples,
+touched bands, pulse transitions, active pulse updates, completed pulses, out-of-order
+samples, below-threshold fast skips, and trusted/block-local fast-path block counts are
+reported through pipeline metrics and perf audit output. `SignalParameter` remains a
+lossless critical stage and is not degraded by visual overload policy. Detailed
+SignalParameter hot-loop timing is disabled by default to keep `Clock::now()` calls out
+of the per-sample path; perf tests can enable it with:
+
+```powershell
+$env:SIRIUSSCOPE_ENABLE_DETAILED_SIGNAL_PARAMETER_TIMING = "1"
+```
 
 `ProcessingEngine` supports an experimental `ParallelFanOut` mode for high-load audits.
 In this mode a popped `SignalBlock` is fanned out to separate Waterfall, Spectrum,

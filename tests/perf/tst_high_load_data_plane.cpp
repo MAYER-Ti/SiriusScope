@@ -804,6 +804,11 @@ bool detailedBearingTimingEnabled()
     return envFlagEnabled("SIRIUSSCOPE_ENABLE_DETAILED_BEARING_TIMING");
 }
 
+bool detailedSignalParameterTimingEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_ENABLE_DETAILED_SIGNAL_PARAMETER_TIMING");
+}
+
 bool parallelProcessingEngineEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE");
@@ -1120,6 +1125,10 @@ std::vector<LatencyStage> signalParameterInternalLatencies(
 {
     return {
         {"ingest", metrics.signalParameterIngestLatency},
+        {"sampleLoop", metrics.signalParameterSampleLoopLatency},
+        {"bandLookup", metrics.signalParameterBandLookupLatency},
+        {"pulseStateUpdate", metrics.signalParameterPulseStateUpdateLatency},
+        {"spanUpdate", metrics.signalParameterSpanUpdateLatency},
         {"snapshotDecision", metrics.signalParameterSnapshotDecisionLatency},
         {"finalize", metrics.signalParameterFinalizeLatency},
         {"snapshotBuild", metrics.signalParameterSnapshotBuildLatency},
@@ -1225,6 +1234,13 @@ void printBearingInternalBottleneck(
 void printSignalParameterInternalBottleneck(
     const pipeline::PipelineMetricsSnapshot& metrics)
 {
+    if (!detailedSignalParameterTimingEnabled()) {
+        std::cout << "SignalParameterAggregator detailed timing: disabled\n"
+                  << "SignalParameterAggregator internal bottleneck by avg: n/a\n"
+                  << "SignalParameterAggregator internal bottleneck by max: n/a\n";
+        return;
+    }
+
     const auto stages = signalParameterInternalLatencies(metrics);
     const auto hasRecordedLatency =
         std::any_of(stages.begin(), stages.end(), [](const LatencyStage& stage) {
@@ -1518,6 +1534,7 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     config.bearing.enableDetailedTiming = detailedBearingTimingEnabled();
 
     config.signalParameters.estimatorConfig.samplePeriodNs = timeBase.samplePeriodNs;
+    config.signalParameters.enableDetailedTiming = detailedSignalParameterTimingEnabled();
     if (parallelProcessingEngineEnabled()) {
         config.processing.processingMode = pipeline::ProcessingMode::ParallelFanOut;
         const bool useCapacityProfile =
@@ -2076,10 +2093,54 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.bearingFastCandidateStorageBlocks << '\n'
               << "  bearingBlockLocalAccumulationBlocks = "
               << result.pipeline.bearingBlockLocalAccumulationBlocks << '\n'
+              << "SignalParameter critical diagnostics:\n"
+              << "  detailedTiming = "
+              << (detailedSignalParameterTimingEnabled() ? "enabled" : "disabled")
+              << '\n'
+              << "  trustedFixedBandFastPathBlocks = "
+              << result.pipeline.signalParameterTrustedFixedBandFastPathBlocks << '\n'
+              << "  blockLocalFastPathBlocks = "
+              << result.pipeline.signalParameterBlockLocalFastPathBlocks << '\n'
+              << "  inputSamples = "
+              << result.pipeline.signalParameterInputSamples << '\n'
+              << "  acceptedSamples = "
+              << result.pipeline.signalParameterAcceptedSamples << '\n'
+              << "  rejectedSamples = "
+              << result.pipeline.signalParameterRejectedSamples << '\n'
+              << "  touchedBandsTotal = "
+              << result.pipeline.signalParameterTouchedBands << '\n'
+              << "  belowThresholdFastSkips = "
+              << result.pipeline.signalParameterBelowThresholdFastSkips << '\n'
+              << "  pulseTransitions = "
+              << result.pipeline.signalParameterPulseTransitions << '\n'
+              << "  activePulseUpdates = "
+              << result.pipeline.signalParameterActivePulseUpdates << '\n'
+              << "  completedPulses = "
+              << result.pipeline.signalParameterCompletedPulses << '\n'
+              << "  outOfOrderSamples = "
+              << result.pipeline.signalParameterOutOfOrderSamples << '\n'
               << "Signal parameter micro-breakdown:\n"
               << "  ingest avg/max = "
               << result.pipeline.signalParameterIngestLatency.averageMs() << "/"
               << result.pipeline.signalParameterIngestLatency.maxMs << '\n'
+              << "  SignalParameter detailed timing: "
+              << (detailedSignalParameterTimingEnabled() ? "enabled" : "disabled")
+              << '\n'
+              << "  sampleLoop avg/max = "
+              << result.pipeline.signalParameterSampleLoopLatency.averageMs() << "/"
+              << result.pipeline.signalParameterSampleLoopLatency.maxMs << '\n'
+              << "  bandLookup avg/max = "
+              << result.pipeline.signalParameterBandLookupLatency.averageMs() << "/"
+              << result.pipeline.signalParameterBandLookupLatency.maxMs << '\n'
+              << "  pulseStateUpdate avg/max = "
+              << result.pipeline.signalParameterPulseStateUpdateLatency.averageMs() << "/"
+              << result.pipeline.signalParameterPulseStateUpdateLatency.maxMs << '\n'
+              << "  spanUpdate avg/max = "
+              << result.pipeline.signalParameterSpanUpdateLatency.averageMs() << "/"
+              << result.pipeline.signalParameterSpanUpdateLatency.maxMs << '\n'
+              << (detailedSignalParameterTimingEnabled()
+                      ? ""
+                      : "  detailed sub-stage timings disabled\n")
               << "  snapshotDecision avg/max = "
               << result.pipeline.signalParameterSnapshotDecisionLatency.averageMs() << "/"
               << result.pipeline.signalParameterSnapshotDecisionLatency.maxMs << '\n'
