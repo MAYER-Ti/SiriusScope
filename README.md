@@ -136,10 +136,16 @@ ctest --test-dir build/win-mingw-debug --output-on-failure
 The regular test suite keeps `TargetRawThroughput90MBps` capped as a source-accounting
 smoke. To run the uncapped full pipeline audit from PowerShell:
 
-The audit also prints per-aggregator latency breakdown, a bearing micro-breakdown for
-sample loop, window/bin calculation, candidate update, close window, snapshot build, and
-estimate calculation, and a signal-parameter micro-breakdown for ingest, snapshot
-decision, finalize, and snapshot build time.
+The audit also prints per-aggregator latency breakdown, a spectrum micro-breakdown for
+sample loop, window/bin calculation, bin update, band-summary update, close window, and
+snapshot build, a bearing micro-breakdown for sample loop, window/bin calculation,
+candidate update, close window, snapshot build, and estimate calculation, and a
+signal-parameter micro-breakdown for ingest, snapshot decision, finalize, and snapshot
+build time.
+
+Spectrum aggregation uses fast window/bin calculations and fixed band-summary storage in
+the high-load data plane. Exact fallback calculations and legacy vector summary storage
+remain available for compatibility tests.
 
 Signal parameter estimation uses trusted streaming mode with fixed band-state storage
 for internally generated high-load samples. The validated sorted mode remains available

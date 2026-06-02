@@ -134,6 +134,72 @@ void testSignalParameterFastPathCounter(TestRunner& test)
                  "signal parameter trusted fixed-band fast-path blocks are counted");
 }
 
+void testSpectrumMicroBreakdownLatencyStats(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordSpectrumSampleLoopLatency(std::chrono::milliseconds{2});
+    metrics.recordSpectrumSampleLoopLatency(std::chrono::milliseconds{4});
+    metrics.recordSpectrumWindowCalculationLatency(std::chrono::milliseconds{1});
+    metrics.recordSpectrumBinCalculationLatency(std::chrono::milliseconds{3});
+    metrics.recordSpectrumBinUpdateLatency(std::chrono::milliseconds{5});
+    metrics.recordSpectrumBandSummaryUpdateLatency(std::chrono::milliseconds{7});
+    metrics.recordSpectrumCloseWindowLatency(std::chrono::milliseconds{9});
+    metrics.recordSpectrumSnapshotBuildLatency(std::chrono::milliseconds{11});
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.spectrumSampleLoopLatency.count == 2,
+                 "spectrum sample loop latency count records");
+    test.requireNear(snapshot.spectrumSampleLoopLatency.averageMs(),
+                     3.0,
+                     0.0001,
+                     "spectrum sample loop latency average is calculated");
+    test.requireNear(snapshot.spectrumSampleLoopLatency.maxMs,
+                     4.0,
+                     0.0001,
+                     "spectrum sample loop latency max is tracked");
+    test.requireNear(snapshot.spectrumWindowCalculationLatency.averageMs(),
+                     1.0,
+                     0.0001,
+                     "spectrum window calculation latency average is calculated");
+    test.requireNear(snapshot.spectrumBinCalculationLatency.maxMs,
+                     3.0,
+                     0.0001,
+                     "spectrum bin calculation latency max is tracked");
+    test.requireNear(snapshot.spectrumBinUpdateLatency.averageMs(),
+                     5.0,
+                     0.0001,
+                     "spectrum bin update latency average is calculated");
+    test.requireNear(snapshot.spectrumBandSummaryUpdateLatency.maxMs,
+                     7.0,
+                     0.0001,
+                     "spectrum band summary update latency max is tracked");
+    test.requireNear(snapshot.spectrumCloseWindowLatency.averageMs(),
+                     9.0,
+                     0.0001,
+                     "spectrum close window latency average is calculated");
+    test.requireNear(snapshot.spectrumSnapshotBuildLatency.maxMs,
+                     11.0,
+                     0.0001,
+                     "spectrum snapshot build latency max is tracked");
+}
+
+void testSpectrumFastPathCounter(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordSpectrumFastPathUsage(true, true, true);
+    metrics.recordSpectrumFastPathUsage(true, false, true);
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.spectrumFastWindowBlocks == 2,
+                 "spectrum fast window blocks are counted");
+    test.require(snapshot.spectrumFastBinBlocks == 1,
+                 "spectrum fast bin blocks are counted");
+    test.require(snapshot.spectrumFastBandSummaryBlocks == 2,
+                 "spectrum fast band summary blocks are counted");
+}
+
 void testBearingMicroBreakdownLatencyStats(TestRunner& test)
 {
     pipeline::PipelineMetrics metrics;
@@ -205,6 +271,9 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordSpectrumSnapshotPublishLatency(std::chrono::milliseconds{3});
     metrics.recordSignalParameterFinalizeLatency(std::chrono::milliseconds{4});
     metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
+    metrics.recordSpectrumSampleLoopLatency(std::chrono::milliseconds{6});
+    metrics.recordSpectrumBandSummaryUpdateLatency(std::chrono::milliseconds{8});
+    metrics.recordSpectrumFastPathUsage(true, true, true);
     metrics.recordBearingSampleLoopLatency(std::chrono::milliseconds{2});
     metrics.recordBearingCandidateUpdateLatency(std::chrono::milliseconds{3});
     metrics.recordBearingFastCandidateStorageBlock();
@@ -225,6 +294,16 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears signal parameter finalize latency count");
     test.require(snapshot.signalParameterTrustedFixedBandFastPathBlocks == 0,
                  "reset clears signal parameter fast-path block counter");
+    test.require(snapshot.spectrumSampleLoopLatency.count == 0,
+                 "reset clears spectrum sample loop latency count");
+    test.require(snapshot.spectrumBandSummaryUpdateLatency.count == 0,
+                 "reset clears spectrum band summary latency count");
+    test.require(snapshot.spectrumFastWindowBlocks == 0,
+                 "reset clears spectrum fast window counter");
+    test.require(snapshot.spectrumFastBinBlocks == 0,
+                 "reset clears spectrum fast bin counter");
+    test.require(snapshot.spectrumFastBandSummaryBlocks == 0,
+                 "reset clears spectrum fast band summary counter");
     test.require(snapshot.bearingSampleLoopLatency.count == 0,
                  "reset clears bearing sample loop latency count");
     test.require(snapshot.bearingCandidateUpdateLatency.count == 0,
@@ -243,6 +322,8 @@ int main()
     testAverageSamplesPerProcessedBlock(test);
     testSignalParameterMicroBreakdownLatencyStats(test);
     testSignalParameterFastPathCounter(test);
+    testSpectrumMicroBreakdownLatencyStats(test);
+    testSpectrumFastPathCounter(test);
     testBearingMicroBreakdownLatencyStats(test);
     testBearingFastCandidateStorageCounter(test);
     testResetClearsLatencyStats(test);

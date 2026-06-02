@@ -1,7 +1,9 @@
 #include "pipeline/spectrum_aggregator.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -66,6 +68,92 @@ std::shared_ptr<const pipeline::SpectrumSnapshot> consumeAndFlush(
     aggregator.consume(samples);
     const auto flushed = aggregator.flush();
     return flushed.snapshots.empty() ? nullptr : flushed.snapshots.front();
+}
+
+std::vector<std::shared_ptr<const pipeline::SpectrumSnapshot>> consumeAndFlushAll(
+    pipeline::SpectrumAggregator& aggregator,
+    const std::vector<core::SignalSample>& samples)
+{
+    auto consumed = aggregator.consume(samples);
+    auto flushed = aggregator.flush();
+    consumed.snapshots.insert(consumed.snapshots.end(),
+                              flushed.snapshots.begin(),
+                              flushed.snapshots.end());
+    return consumed.snapshots;
+}
+
+pipeline::SpectrumAggregatorConfig legacyConfig()
+{
+    auto config = testConfig();
+    config.useFastWindowIndex = false;
+    config.useFastBinIndex = false;
+    config.useFixedBandSummaryStorage = false;
+    return config;
+}
+
+pipeline::SpectrumAggregatorConfig fastConfig(std::size_t bandCapacity = 4)
+{
+    auto config = testConfig();
+    config.useFastWindowIndex = true;
+    config.useFastBinIndex = true;
+    config.useFixedBandSummaryStorage = true;
+    config.bandCapacity = bandCapacity;
+    return config;
+}
+
+const pipeline::SpectrumBandSummary* summaryFor(
+    const std::vector<pipeline::SpectrumBandSummary>& summaries,
+    int bandIndex)
+{
+    const auto found = std::find_if(summaries.begin(),
+                                    summaries.end(),
+                                    [bandIndex](const auto& summary) {
+                                        return summary.bandIndex == bandIndex;
+                                    });
+    return found == summaries.end() ? nullptr : &*found;
+}
+
+void requireSameBins(TestRunner& test,
+                     const pipeline::SpectrumSnapshot& left,
+                     const pipeline::SpectrumSnapshot& right,
+                     const std::string& message)
+{
+    test.require(left.bins.size() == right.bins.size(),
+                 message + ": bin count matches");
+    const auto count = std::min(left.bins.size(), right.bins.size());
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& leftBin = left.bins[index];
+        const auto& rightBin = right.bins[index];
+        test.require(leftBin.totalPeak == rightBin.totalPeak
+                         && leftBin.beam0Peak == rightBin.beam0Peak
+                         && leftBin.beam1Peak == rightBin.beam1Peak
+                         && leftBin.hitCount == rightBin.hitCount,
+                     message + ": bin " + std::to_string(index) + " matches");
+    }
+}
+
+void requireSameBandSummaries(TestRunner& test,
+                              const pipeline::SpectrumSnapshot& left,
+                              const pipeline::SpectrumSnapshot& right,
+                              const std::string& message)
+{
+    test.require(left.bandSummaries.size() == right.bandSummaries.size(),
+                 message + ": band summary count matches");
+    for (const auto& leftSummary : left.bandSummaries) {
+        const auto* rightSummary = summaryFor(right.bandSummaries,
+                                              leftSummary.bandIndex);
+        test.require(rightSummary != nullptr,
+                     message + ": matching band summary exists");
+        if (!rightSummary) {
+            continue;
+        }
+        test.require(leftSummary.sampleCount == rightSummary->sampleCount
+                         && leftSummary.totalPeak == rightSummary->totalPeak
+                         && leftSummary.beam0Peak == rightSummary->beam0Peak
+                         && leftSummary.beam1Peak == rightSummary->beam1Peak,
+                     message + ": band " + std::to_string(leftSummary.bandIndex)
+                         + " summary matches");
+    }
 }
 
 void testFrequencyMapsToExpectedBin(TestRunner& test)
@@ -195,6 +283,116 @@ void testSequenceIncreasesAcrossWindows(TestRunner& test)
                   "Spectrum snapshots are exposed as immutable shared_ptr<const T>");
 }
 
+void testFastAndLegacyModesProduceEquivalentSnapshot(TestRunner& test)
+{
+    pipeline::SpectrumAggregator legacyAggregator(legacyConfig());
+    pipeline::SpectrumAggregator fastAggregator(fastConfig());
+    const std::vector<core::SignalSample> samples{
+        makeSample(0, 100, 20, 0, 1),
+        makeSample(1, 110, 40, 1, 0),
+        makeSample(2, 150, 90, 0, 1),
+        makeSample(3, 199, 70, 1, 0),
+        makeSample(4, 150, 60, 0, 1),
+    };
+
+    const auto legacySnapshot = consumeAndFlush(legacyAggregator, samples);
+    const auto fastSnapshot = consumeAndFlush(fastAggregator, samples);
+
+    test.require(legacySnapshot && fastSnapshot,
+                 "fast and legacy spectrum modes both publish snapshots");
+    if (!legacySnapshot || !fastSnapshot) {
+        return;
+    }
+
+    requireSameBins(test, *legacySnapshot, *fastSnapshot, "fast/legacy equivalence");
+    requireSameBandSummaries(test,
+                             *legacySnapshot,
+                             *fastSnapshot,
+                             "fast/legacy equivalence");
+}
+
+void testFixedBandSummaryRejectsOutOfCapacityBand(TestRunner& test)
+{
+    pipeline::SpectrumAggregator aggregator(fastConfig(1));
+
+    const auto consumed = aggregator.consume(std::vector<core::SignalSample>{
+        makeSample(0, 150, 80, 0, 2),
+    });
+    const auto flushed = aggregator.flush();
+
+    test.require(consumed.snapshots.empty() && flushed.snapshots.empty(),
+                 "fixed band summary storage rejects out-of-capacity sample");
+    test.require(aggregator.counters().invalidSamples == 1,
+                 "fixed band summary storage counts out-of-capacity band as invalid");
+}
+
+void testFastWindowBoundariesMatchLegacy(TestRunner& test)
+{
+    pipeline::SpectrumAggregator legacyAggregator(legacyConfig());
+    pipeline::SpectrumAggregator fastAggregator(fastConfig());
+    const std::vector<core::SignalSample> samples{
+        makeSample(0, 150, 40, 0, 0),
+        makeSample(19, 150, 50, 1, 0),
+        makeSample(20, 150, 60, 0, 0),
+    };
+
+    const auto legacySnapshots = consumeAndFlushAll(legacyAggregator, samples);
+    const auto fastSnapshots = consumeAndFlushAll(fastAggregator, samples);
+
+    test.require(legacySnapshots.size() == 2 && fastSnapshots.size() == 2,
+                 "fast and legacy window modes split at same boundary");
+    if (legacySnapshots.size() != 2 || fastSnapshots.size() != 2) {
+        return;
+    }
+
+    for (std::size_t index = 0; index < legacySnapshots.size(); ++index) {
+        test.require(legacySnapshots[index]->firstSampleIndex
+                             == fastSnapshots[index]->firstSampleIndex
+                         && legacySnapshots[index]->lastSampleIndex
+                             == fastSnapshots[index]->lastSampleIndex,
+                     "fast and legacy window sample ranges match");
+        requireSameBins(test,
+                        *legacySnapshots[index],
+                        *fastSnapshots[index],
+                        "fast/legacy window boundary");
+        requireSameBandSummaries(test,
+                                 *legacySnapshots[index],
+                                 *fastSnapshots[index],
+                                 "fast/legacy window boundary");
+    }
+}
+
+void testFastBinBoundariesMatchLegacy(TestRunner& test)
+{
+    pipeline::SpectrumAggregator legacyAggregator(legacyConfig());
+    pipeline::SpectrumAggregator fastAggregator(fastConfig());
+    const std::vector<core::SignalSample> samples{
+        makeSample(0, 99, 80, 0, 0),
+        makeSample(1, 100, 30, 0, 0),
+        makeSample(2, 150, 50, 1, 1),
+        makeSample(3, 200, 70, 0, 1),
+        makeSample(4, 201, 80, 1, 0),
+    };
+
+    const auto legacySnapshot = consumeAndFlush(legacyAggregator, samples);
+    const auto fastSnapshot = consumeAndFlush(fastAggregator, samples);
+
+    test.require(legacySnapshot && fastSnapshot,
+                 "fast and legacy bin modes both publish snapshots");
+    if (!legacySnapshot || !fastSnapshot) {
+        return;
+    }
+
+    requireSameBins(test, *legacySnapshot, *fastSnapshot, "fast/legacy bin boundary");
+    requireSameBandSummaries(test,
+                             *legacySnapshot,
+                             *fastSnapshot,
+                             "fast/legacy bin boundary");
+    test.require(legacySnapshot->counters.outOfRangeSamples == 2
+                     && fastSnapshot->counters.outOfRangeSamples == 2,
+                 "fast and legacy bin modes count out-of-range samples equally");
+}
+
 } // namespace
 
 int main()
@@ -207,6 +405,10 @@ int main()
     testInvalidAndOutOfRangeSamplesAreCounted(test);
     testSnapshotPeriodPreventsPerBlockSpam(test);
     testSequenceIncreasesAcrossWindows(test);
+    testFastAndLegacyModesProduceEquivalentSnapshot(test);
+    testFixedBandSummaryRejectsOutOfCapacityBand(test);
+    testFastWindowBoundariesMatchLegacy(test);
+    testFastBinBoundariesMatchLegacy(test);
 
     return test.result();
 }

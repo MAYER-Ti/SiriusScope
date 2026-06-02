@@ -4,6 +4,8 @@
 #include "pipeline/signal_block.h"
 #include "pipeline/spectrum_snapshot.h"
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -21,6 +23,11 @@ struct SpectrumAggregatorConfig
     int amplitudeFloor = 0;
     bool separateBeams = true;
     core::TimeBase timeBase{};
+    bool trustedSamples = true;
+    bool useFastWindowIndex = true;
+    bool useFastBinIndex = true;
+    bool useFixedBandSummaryStorage = true;
+    std::size_t bandCapacity = 0;
 };
 
 struct SpectrumAggregatorCounters
@@ -32,10 +39,26 @@ struct SpectrumAggregatorCounters
     std::uint64_t outOfRangeSamples = 0;
 };
 
+struct SpectrumAggregatorTiming
+{
+    std::chrono::steady_clock::duration total{};
+    std::chrono::steady_clock::duration sampleLoop{};
+    std::chrono::steady_clock::duration windowCalculation{};
+    std::chrono::steady_clock::duration binCalculation{};
+    std::chrono::steady_clock::duration binUpdate{};
+    std::chrono::steady_clock::duration bandSummaryUpdate{};
+    std::chrono::steady_clock::duration closeWindow{};
+    std::chrono::steady_clock::duration snapshotBuild{};
+};
+
 struct SpectrumAggregationResult
 {
     std::vector<std::shared_ptr<const SpectrumSnapshot>> snapshots;
     SpectrumAggregatorCounters deltaCounters;
+    SpectrumAggregatorTiming timing;
+    bool usedFastWindowIndex = false;
+    bool usedFastBinIndex = false;
+    bool usedFastBandSummaryStorage = false;
 };
 
 class SpectrumAggregator
@@ -61,23 +84,39 @@ private:
         std::uint64_t lastSampleIndex = 0;
         std::vector<SpectrumBin> bins;
         std::vector<SpectrumBandSummary> bandSummaries;
+        std::vector<SpectrumBandSummary> bandSummaryVector;
+        std::vector<std::uint8_t> bandSummaryUsed;
+        std::size_t usedBandSummaryCount = 0;
         bool hasSamples = false;
     };
 
+    void prepareDerivedConfig();
+    bool usesFixedBandSummaryStorage() const noexcept;
+    bool hasValidUntrustedSample(const core::SignalSample& sample) const;
+    bool hasFixedBandSummarySlot(int bandIndex) const noexcept;
     std::optional<std::uint64_t> windowForSample(std::uint64_t sampleIndex) const;
     int binForFrequency(std::int64_t frequencyHz) const noexcept;
     static std::uint16_t clampAmplitude(int amplitude) noexcept;
     static void incrementHitCount(SpectrumBin& bin) noexcept;
 
     void openWindow(std::uint64_t windowIndex, std::uint64_t sampleIndex);
-    std::shared_ptr<const SpectrumSnapshot> closeOpenWindow();
-    void addSampleToOpenWindow(const core::SignalSample& sample, int binIndex);
-    SpectrumBandSummary& bandSummaryFor(int bandIndex);
+    std::shared_ptr<const SpectrumSnapshot> closeOpenWindow(
+        SpectrumAggregatorTiming* timing = nullptr);
+    void updateOpenWindowBounds(const core::SignalSample& sample);
+    void updateBinForSample(const core::SignalSample& sample, int binIndex);
+    void updateBandSummaryForSample(const core::SignalSample& sample,
+                                    SpectrumAggregatorCounters& deltaCounters);
+    SpectrumBandSummary* bandSummaryForSample(int bandIndex);
 
     SpectrumAggregatorConfig m_config;
     SpectrumAggregatorCounters m_counters;
     std::optional<OpenWindow> m_openWindow;
     std::uint64_t m_nextSnapshotSequenceId = 1;
+    std::uint64_t m_samplesPerWindow = 0;
+    bool m_canUseFastWindowIndex = false;
+    bool m_canUseFastBinIndex = false;
+    std::int64_t m_fastBinRangeHz = 0;
+    std::int64_t m_fastBinMultiplier = 0;
 };
 
 } // namespace siriusscope::pipeline

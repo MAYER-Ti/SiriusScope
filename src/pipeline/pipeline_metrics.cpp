@@ -34,6 +34,9 @@ void PipelineMetrics::reset()
     m_producedSignalParameterSnapshots = 0;
     m_signalParameterTrustedFixedBandFastPathBlocks = 0;
     m_bearingFastCandidateStorageBlocks = 0;
+    m_spectrumFastWindowBlocks = 0;
+    m_spectrumFastBinBlocks = 0;
+    m_spectrumFastBandSummaryBlocks = 0;
     m_rxLatencyMax = std::chrono::milliseconds{0};
     m_processingLatencyMax = std::chrono::milliseconds{0};
     m_aggregationLatencyMax = std::chrono::milliseconds{0};
@@ -43,6 +46,13 @@ void PipelineMetrics::reset()
     m_processBlockLatency = {};
     m_waterfallAggregationLatency = {};
     m_spectrumAggregationLatency = {};
+    m_spectrumSampleLoopLatency = {};
+    m_spectrumWindowCalculationLatency = {};
+    m_spectrumBinCalculationLatency = {};
+    m_spectrumBinUpdateLatency = {};
+    m_spectrumBandSummaryUpdateLatency = {};
+    m_spectrumCloseWindowLatency = {};
+    m_spectrumSnapshotBuildLatency = {};
     m_bearingAggregationLatency = {};
     m_bearingSampleLoopLatency = {};
     m_bearingWindowCalculationLatency = {};
@@ -119,6 +129,55 @@ void PipelineMetrics::recordSpectrumAggregationLatency(
 {
     std::lock_guard lock(m_mutex);
     recordLatency(m_spectrumAggregationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumSampleLoopLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumSampleLoopLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumWindowCalculationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumWindowCalculationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumBinCalculationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumBinCalculationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumBinUpdateLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumBinUpdateLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumBandSummaryUpdateLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumBandSummaryUpdateLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumCloseWindowLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumCloseWindowLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordSpectrumSnapshotBuildLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_spectrumSnapshotBuildLatency, millisecondsFor(elapsed));
 }
 
 void PipelineMetrics::recordBearingAggregationLatency(
@@ -314,6 +373,22 @@ void PipelineMetrics::recordBearingFastCandidateStorageBlock()
     ++m_bearingFastCandidateStorageBlocks;
 }
 
+void PipelineMetrics::recordSpectrumFastPathUsage(bool fastWindow,
+                                                  bool fastBin,
+                                                  bool fastBandSummary)
+{
+    std::lock_guard lock(m_mutex);
+    if (fastWindow) {
+        ++m_spectrumFastWindowBlocks;
+    }
+    if (fastBin) {
+        ++m_spectrumFastBinBlocks;
+    }
+    if (fastBandSummary) {
+        ++m_spectrumFastBandSummaryBlocks;
+    }
+}
+
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters,
@@ -341,6 +416,13 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.processBlockLatency = m_processBlockLatency;
     snapshot.waterfallAggregationLatency = m_waterfallAggregationLatency;
     snapshot.spectrumAggregationLatency = m_spectrumAggregationLatency;
+    snapshot.spectrumSampleLoopLatency = m_spectrumSampleLoopLatency;
+    snapshot.spectrumWindowCalculationLatency = m_spectrumWindowCalculationLatency;
+    snapshot.spectrumBinCalculationLatency = m_spectrumBinCalculationLatency;
+    snapshot.spectrumBinUpdateLatency = m_spectrumBinUpdateLatency;
+    snapshot.spectrumBandSummaryUpdateLatency = m_spectrumBandSummaryUpdateLatency;
+    snapshot.spectrumCloseWindowLatency = m_spectrumCloseWindowLatency;
+    snapshot.spectrumSnapshotBuildLatency = m_spectrumSnapshotBuildLatency;
     snapshot.bearingAggregationLatency = m_bearingAggregationLatency;
     snapshot.bearingSampleLoopLatency = m_bearingSampleLoopLatency;
     snapshot.bearingWindowCalculationLatency = m_bearingWindowCalculationLatency;
@@ -387,6 +469,9 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.spectrumOutOfRangeSamples = m_spectrumOutOfRangeSamples;
     snapshot.spectrumAggregationLatencyMaxMs =
         static_cast<double>(m_spectrumAggregationLatencyMax.count());
+    snapshot.spectrumFastWindowBlocks = m_spectrumFastWindowBlocks;
+    snapshot.spectrumFastBinBlocks = m_spectrumFastBinBlocks;
+    snapshot.spectrumFastBandSummaryBlocks = m_spectrumFastBandSummaryBlocks;
     snapshot.producedBearingSnapshots = m_producedBearingSnapshots;
     snapshot.producedBearingEstimates = m_producedBearingEstimates;
     snapshot.completeBearingCandidates = m_completeBearingCandidates;

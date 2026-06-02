@@ -281,6 +281,21 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             spectrumAggregationElapsed);
     if (m_metrics) {
         m_metrics->recordSpectrumAggregationLatency(spectrumAggregationElapsed);
+        m_metrics->recordSpectrumSampleLoopLatency(spectrumResult.timing.sampleLoop);
+        m_metrics->recordSpectrumWindowCalculationLatency(
+            spectrumResult.timing.windowCalculation);
+        m_metrics->recordSpectrumBinCalculationLatency(
+            spectrumResult.timing.binCalculation);
+        m_metrics->recordSpectrumBinUpdateLatency(spectrumResult.timing.binUpdate);
+        m_metrics->recordSpectrumBandSummaryUpdateLatency(
+            spectrumResult.timing.bandSummaryUpdate);
+        m_metrics->recordSpectrumCloseWindowLatency(spectrumResult.timing.closeWindow);
+        m_metrics->recordSpectrumSnapshotBuildLatency(
+            spectrumResult.timing.snapshotBuild);
+        m_metrics->recordSpectrumFastPathUsage(
+            spectrumResult.usedFastWindowIndex,
+            spectrumResult.usedFastBinIndex,
+            spectrumResult.usedFastBandSummaryStorage);
     }
 
     BearingAggregationResult bearingResult;

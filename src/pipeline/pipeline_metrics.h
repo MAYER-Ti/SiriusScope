@@ -41,6 +41,13 @@ struct PipelineMetricsSnapshot
     LatencyStats processBlockLatency;
     LatencyStats waterfallAggregationLatency;
     LatencyStats spectrumAggregationLatency;
+    LatencyStats spectrumSampleLoopLatency;
+    LatencyStats spectrumWindowCalculationLatency;
+    LatencyStats spectrumBinCalculationLatency;
+    LatencyStats spectrumBinUpdateLatency;
+    LatencyStats spectrumBandSummaryUpdateLatency;
+    LatencyStats spectrumCloseWindowLatency;
+    LatencyStats spectrumSnapshotBuildLatency;
     LatencyStats bearingAggregationLatency;
     LatencyStats bearingSampleLoopLatency;
     LatencyStats bearingWindowCalculationLatency;
@@ -81,6 +88,9 @@ struct PipelineMetricsSnapshot
     std::uint64_t spectrumInvalidSamples = 0;
     std::uint64_t spectrumOutOfRangeSamples = 0;
     double spectrumAggregationLatencyMaxMs = 0.0;
+    std::uint64_t spectrumFastWindowBlocks = 0;
+    std::uint64_t spectrumFastBinBlocks = 0;
+    std::uint64_t spectrumFastBandSummaryBlocks = 0;
     std::uint64_t producedBearingSnapshots = 0;
     std::uint64_t producedBearingEstimates = 0;
     std::uint64_t completeBearingCandidates = 0;
@@ -119,6 +129,15 @@ public:
                                    std::size_t sampleCount);
     void recordWaterfallAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordSpectrumAggregationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumSampleLoopLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumWindowCalculationLatency(
+        std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumBinCalculationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumBinUpdateLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumBandSummaryUpdateLatency(
+        std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumCloseWindowLatency(std::chrono::steady_clock::duration elapsed);
+    void recordSpectrumSnapshotBuildLatency(std::chrono::steady_clock::duration elapsed);
     void recordBearingAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordBearingSampleLoopLatency(std::chrono::steady_clock::duration elapsed);
     void recordBearingWindowCalculationLatency(std::chrono::steady_clock::duration elapsed);
@@ -160,6 +179,9 @@ public:
     void recordSignalParameterSnapshotProduced(std::uint64_t producedSnapshots);
     void recordSignalParameterTrustedFixedBandFastPathBlock();
     void recordBearingFastCandidateStorageBlock();
+    void recordSpectrumFastPathUsage(bool fastWindow,
+                                     bool fastBin,
+                                     bool fastBandSummary);
 
     PipelineMetricsSnapshot snapshot(
         const BoundedBlockQueueMetrics& queueMetrics,
@@ -205,6 +227,13 @@ private:
     LatencyStats m_processBlockLatency;
     LatencyStats m_waterfallAggregationLatency;
     LatencyStats m_spectrumAggregationLatency;
+    LatencyStats m_spectrumSampleLoopLatency;
+    LatencyStats m_spectrumWindowCalculationLatency;
+    LatencyStats m_spectrumBinCalculationLatency;
+    LatencyStats m_spectrumBinUpdateLatency;
+    LatencyStats m_spectrumBandSummaryUpdateLatency;
+    LatencyStats m_spectrumCloseWindowLatency;
+    LatencyStats m_spectrumSnapshotBuildLatency;
     LatencyStats m_bearingAggregationLatency;
     LatencyStats m_bearingSampleLoopLatency;
     LatencyStats m_bearingWindowCalculationLatency;
@@ -224,6 +253,9 @@ private:
     LatencyStats m_signalParameterSnapshotPublishLatency;
     std::uint64_t m_processedBlockSamplesTotal = 0;
     std::uint64_t m_bearingFastCandidateStorageBlocks = 0;
+    std::uint64_t m_spectrumFastWindowBlocks = 0;
+    std::uint64_t m_spectrumFastBinBlocks = 0;
+    std::uint64_t m_spectrumFastBandSummaryBlocks = 0;
 };
 
 } // namespace siriusscope::pipeline
