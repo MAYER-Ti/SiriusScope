@@ -160,6 +160,16 @@ Current experimental mode:
   failing, and fails only if no candidate passes no-drop or the selected candidate
   violates a hard latency/backlog budget. The selected multiplier is engineering audit
   guidance only and does not change the normal GUI runtime default.
+- `SIRIUSSCOPE_90MBPS_CAPACITY_PROFILE=current|balanced1024|balanced2048` selects an
+  audit-only capacity profile for target-raw sustain runs. Capacity profiles only apply
+  to `TargetRawThroughput90MBps + FullTargetRawSustain + ParallelFanOut`; they do not
+  change GUI runtime defaults.
+- `SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP=1` fixes `m=8` and compares capacity profiles.
+  The sweep runs `current` and `balanced1024` by default. `balanced2048` is included only
+  with `SIRIUSSCOPE_INCLUDE_2048_CAPACITY_PROFILE=1` because `SignalBlockPool`
+  preallocates block storage. If larger capacity only delays saturation and backlog
+  continues growing, the next work is service-latency optimization or latency-aware
+  policy, not silently making the larger buffer a production default.
 
 Strict profile selection:
 
@@ -177,6 +187,18 @@ Soak profile selection:
 $env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
 $env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
 $env:SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+Capacity sweep:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP = "1"
 $env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
 $env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
 $env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"

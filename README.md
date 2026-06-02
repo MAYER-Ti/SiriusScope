@@ -243,5 +243,46 @@ Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
 list with supported multipliers. The selected multiplier is audit guidance only and does
 not change the ordinary runtime GUI default.
 
+Capacity profile selection keeps `m=8` fixed and compares bounded queue and pool sizes
+for `TargetRawThroughput90MBps + ParallelFanOut`. A single capacity profile can be
+selected for the target-raw audit:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+$env:SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER = "8"
+$env:SIRIUSSCOPE_90MBPS_CAPACITY_PROFILE = "balanced1024"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
+Remove-Item Env:\SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER
+Remove-Item Env:\SIRIUSSCOPE_90MBPS_CAPACITY_PROFILE
+```
+
+The capacity sweep compares `current` and `balanced1024` by default:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST
+Remove-Item Env:\SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP
+Remove-Item Env:\SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST
+Remove-Item Env:\SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC
+Remove-Item Env:\SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS
+```
+
+`SIRIUSSCOPE_INCLUDE_2048_CAPACITY_PROFILE=1` adds `balanced2048` to the sweep. Capacity
+profiles are audit-only and do not change GUI runtime defaults. If a larger profile only
+delays saturation and backlog still grows, continue service-latency optimization or add
+a latency-aware policy instead of treating the larger buffer as a production fix.
+
 For performance-sensitive work, also follow the high-load acceptance criteria in
 `docs/development/build-and-test.md`.

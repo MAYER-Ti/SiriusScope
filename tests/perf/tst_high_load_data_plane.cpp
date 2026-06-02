@@ -19,6 +19,8 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <new>
 #include <optional>
 #include <string>
 #include <thread>
@@ -81,6 +83,31 @@ enum class AuditMode
     TargetRawSoak,
 };
 
+enum class CapacityProfile
+{
+    Current,
+    Balanced1024,
+    Balanced2048,
+};
+
+struct CapacityProfileConfig
+{
+    CapacityProfile profile = CapacityProfile::Current;
+    const char* name = "current";
+    std::size_t bridgeQueueCapacity = 64;
+    std::size_t pipelineQueueCapacity = 512;
+    std::size_t blockPoolCapacity = 512;
+    std::size_t stageQueueCapacity = 512;
+};
+
+enum class BacklogTrend
+{
+    Stable,
+    Growing,
+    Saturating,
+    Unknown,
+};
+
 struct LatencyBudget
 {
     bool enabled = false;
@@ -108,6 +135,18 @@ struct AuditResult
     pipeline::ProcessingMode processingMode = pipeline::ProcessingMode::Sequential;
     LatencyBudget latencyBudget;
     std::size_t batchSizeMultiplier = 1;
+    CapacityProfile capacityProfile = CapacityProfile::Current;
+    std::string capacityProfileName = "current";
+    bool capacityProfileApplied = false;
+    std::size_t bridgeQueueCapacity = 0;
+    std::size_t pipelineQueueCapacity = 0;
+    std::size_t blockPoolCapacity = 0;
+    std::size_t stageQueueCapacity = 0;
+    std::size_t samplesPerBlock = 0;
+    std::size_t estimatedBlockBytes = 0;
+    std::size_t estimatedPoolBytes = 0;
+    bool profileSetupSucceeded = true;
+    std::string profileSetupError;
     hardware::BcoSourceMetrics source;
     pipeline::SourceToPipelineBridgeMetrics bridge;
     pipeline::PipelineMetricsSnapshot pipeline;
@@ -214,6 +253,41 @@ struct BatchProfileSelection
     std::string reason;
 };
 
+struct CapacityBacklogTrend
+{
+    BacklogTrend waterfall = BacklogTrend::Unknown;
+    BacklogTrend spectrum = BacklogTrend::Unknown;
+    BacklogTrend bearing = BacklogTrend::Unknown;
+    BacklogTrend signalParameter = BacklogTrend::Unknown;
+    BacklogTrend overall = BacklogTrend::Unknown;
+};
+
+struct CapacityProfileScore
+{
+    CapacityProfile profile = CapacityProfile::Current;
+    std::string profileName;
+    bool noDropPass = false;
+    bool latencyBudgetPass = false;
+    bool queueDepthBudgetPass = false;
+    double rawMBps = 0.0;
+    double fanOutMaxMs = 0.0;
+    double maxQueueDepthRatio = 0.0;
+    std::uint64_t rejectedBlocks = 0;
+    std::uint64_t blockPoolExhausted = 0;
+    std::uint64_t inputSamples = 0;
+    std::uint64_t processedSamples = 0;
+    std::uint64_t droppedBlocks = 0;
+    std::uint64_t droppedSamples = 0;
+    std::uint64_t queueDroppedBlocks = 0;
+    CapacityBacklogTrend backlogTrend;
+};
+
+struct CapacityProfileSelection
+{
+    std::optional<CapacityProfileScore> selected;
+    std::string reason;
+};
+
 std::int64_t nowUtcNs()
 {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -273,11 +347,91 @@ std::size_t scaledCapacity(std::size_t base,
     return std::max<std::size_t>(minimum, base / safeMultiplier);
 }
 
+const char* capacityProfileName(CapacityProfile profile)
+{
+    switch (profile) {
+    case CapacityProfile::Current:
+        return "current";
+    case CapacityProfile::Balanced1024:
+        return "balanced1024";
+    case CapacityProfile::Balanced2048:
+        return "balanced2048";
+    }
+
+    return "current";
+}
+
+int capacityProfileRank(CapacityProfile profile)
+{
+    switch (profile) {
+    case CapacityProfile::Current:
+        return 0;
+    case CapacityProfile::Balanced1024:
+        return 1;
+    case CapacityProfile::Balanced2048:
+        return 2;
+    }
+
+    return 0;
+}
+
+CapacityProfileConfig capacityProfileConfig(CapacityProfile profile,
+                                            std::size_t batchSizeMultiplier)
+{
+    switch (profile) {
+    case CapacityProfile::Balanced1024:
+        return CapacityProfileConfig{
+            profile,
+            "balanced1024",
+            128,
+            1024,
+            1024,
+            1024,
+        };
+    case CapacityProfile::Balanced2048:
+        return CapacityProfileConfig{
+            profile,
+            "balanced2048",
+            256,
+            2048,
+            2048,
+            2048,
+        };
+    case CapacityProfile::Current:
+        break;
+    }
+
+    return CapacityProfileConfig{
+        CapacityProfile::Current,
+        "current",
+        scaledCapacity(64, batchSizeMultiplier, 8),
+        scaledCapacity(512, batchSizeMultiplier, 64),
+        scaledCapacity(512, batchSizeMultiplier, 64),
+        scaledCapacity(512, batchSizeMultiplier, 64),
+    };
+}
+
 std::size_t targetRawSamplesPerBatch(std::size_t batchSizeMultiplier)
 {
     return saturatedMultiplySize(
         hardware::samplesPerBatchForTarget(targetRaw90Mbps()),
         normalizeBatchMultiplier(batchSizeMultiplier));
+}
+
+std::size_t targetRawMaxSamplesPerBlock(std::size_t batchSizeMultiplier)
+{
+    return std::max<std::size_t>(80'000,
+                                 targetRawSamplesPerBatch(batchSizeMultiplier));
+}
+
+std::size_t estimatedBlockBytes(std::size_t samplesPerBlock)
+{
+    return saturatedMultiplySize(sizeof(core::SignalSample), samplesPerBlock);
+}
+
+std::size_t estimatedPoolBytes(std::size_t blockCount, std::size_t samplesPerBlock)
+{
+    return saturatedMultiplySize(blockCount, estimatedBlockBytes(samplesPerBlock));
 }
 
 double producedBatchesPerSecond(const AuditResult& result)
@@ -415,6 +569,16 @@ bool targetRawProfileSelectionEnabled()
     return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_PROFILE_SELECTION");
 }
 
+bool targetRawCapacitySweepEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP");
+}
+
+bool includeBalanced2048CapacityProfile()
+{
+    return envFlagEnabled("SIRIUSSCOPE_INCLUDE_2048_CAPACITY_PROFILE");
+}
+
 std::vector<std::size_t> batchSweepMultipliers()
 {
     return {1, 2, 4, 8};
@@ -440,6 +604,59 @@ std::string trimAsciiWhitespace(const std::string& text)
     }
 
     return text.substr(begin, end - begin);
+}
+
+std::optional<CapacityProfile> parseCapacityProfile(const char* text)
+{
+    if (!text || *text == '\0') {
+        return std::nullopt;
+    }
+
+    const auto value = trimAsciiWhitespace(text);
+    if (value == "current") {
+        return CapacityProfile::Current;
+    }
+    if (value == "balanced1024") {
+        return CapacityProfile::Balanced1024;
+    }
+    if (value == "balanced2048") {
+        return CapacityProfile::Balanced2048;
+    }
+    return std::nullopt;
+}
+
+CapacityProfile capacityProfileOrCurrent(const char* text)
+{
+    return parseCapacityProfile(text).value_or(CapacityProfile::Current);
+}
+
+CapacityProfile envCapacityProfileOrDefault()
+{
+    const char* value = std::getenv("SIRIUSSCOPE_90MBPS_CAPACITY_PROFILE");
+    if (!value) {
+        return CapacityProfile::Current;
+    }
+
+    const auto parsed = parseCapacityProfile(value);
+    if (parsed) {
+        return *parsed;
+    }
+
+    std::cout << "WARNING: invalid SIRIUSSCOPE_90MBPS_CAPACITY_PROFILE='"
+              << value << "', using current\n";
+    return CapacityProfile::Current;
+}
+
+std::vector<CapacityProfile> capacitySweepProfiles()
+{
+    std::vector<CapacityProfile> profiles{
+        CapacityProfile::Current,
+        CapacityProfile::Balanced1024,
+    };
+    if (includeBalanced2048CapacityProfile()) {
+        profiles.push_back(CapacityProfile::Balanced2048);
+    }
+    return profiles;
 }
 
 std::optional<std::vector<std::size_t>> parseBatchMultiplierList(const char* text)
@@ -748,6 +965,9 @@ void printQueueStability(const AuditResult& result)
     }
 }
 
+const char* backlogTrendName(BacklogTrend trend);
+CapacityBacklogTrend makeCapacityBacklogTrend(const AuditResult& result);
+
 void printBacklogTrend(const AuditResult& result)
 {
     std::cout << "Backlog samples:\n";
@@ -804,6 +1024,14 @@ void printBacklogTrend(const AuditResult& result)
               << first.blockPoolInUse << "/" << last.blockPoolInUse << "/"
               << blockPoolInUseMax << "/" << result.pipeline.blockPoolInUse
               << '\n';
+    const auto trend = makeCapacityBacklogTrend(result);
+    std::cout << "Backlog classification:\n"
+              << "  waterfall = " << backlogTrendName(trend.waterfall) << '\n'
+              << "  spectrum = " << backlogTrendName(trend.spectrum) << '\n'
+              << "  bearing = " << backlogTrendName(trend.bearing) << '\n'
+              << "  signalParameter = "
+              << backlogTrendName(trend.signalParameter) << '\n'
+              << "  overall = " << backlogTrendName(trend.overall) << '\n';
 }
 
 std::vector<LatencyStage> signalParameterInternalLatencies(
@@ -1133,20 +1361,25 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     const core::TimeBase& timeBase,
     hardware::SimulatorLoadProfile profile,
     AuditPipelineSizing sizing = AuditPipelineSizing::Default,
-    std::size_t batchSizeMultiplier = 1)
+    std::size_t batchSizeMultiplier = 1,
+    CapacityProfile capacityProfile = CapacityProfile::Current)
 {
     pipeline::DataIngestPipelineConfig config;
     config.blockPool = pipeline::SignalBlockPoolConfig{256, 20'000};
     config.queueCapacity = 256;
     if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
-        const auto maxSamplesPerBlock =
-            std::max<std::size_t>(80'000, targetRawSamplesPerBatch(batchSizeMultiplier));
+        const auto maxSamplesPerBlock = targetRawMaxSamplesPerBlock(batchSizeMultiplier);
         if (sizing == AuditPipelineSizing::FullTargetRawSustain) {
+            const bool useCapacityProfile = parallelProcessingEngineEnabled();
+            const auto capacity =
+                capacityProfileConfig(useCapacityProfile ? capacityProfile
+                                                         : CapacityProfile::Current,
+                                      batchSizeMultiplier);
             config.blockPool = pipeline::SignalBlockPoolConfig{
-                scaledCapacity(512, batchSizeMultiplier, 64),
+                capacity.blockPoolCapacity,
                 maxSamplesPerBlock,
             };
-            config.queueCapacity = scaledCapacity(512, batchSizeMultiplier, 64);
+            config.queueCapacity = capacity.pipelineQueueCapacity;
         } else {
             config.blockPool = pipeline::SignalBlockPoolConfig{4, maxSamplesPerBlock};
             config.queueCapacity = 2;
@@ -1183,9 +1416,16 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     config.signalParameters.estimatorConfig.samplePeriodNs = timeBase.samplePeriodNs;
     if (parallelProcessingEngineEnabled()) {
         config.processing.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+        const bool useCapacityProfile =
+            profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps
+            && sizing == AuditPipelineSizing::FullTargetRawSustain;
+        const auto capacity =
+            capacityProfileConfig(useCapacityProfile ? capacityProfile
+                                                     : CapacityProfile::Current,
+                                  batchSizeMultiplier);
         config.processing.stageQueueCapacity =
-            sizing == AuditPipelineSizing::FullTargetRawSustain
-            ? scaledCapacity(512, batchSizeMultiplier, 64)
+            useCapacityProfile
+            ? capacity.stageQueueCapacity
             : 64;
     }
     return config;
@@ -1194,14 +1434,22 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
 pipeline::SourceToPipelineBridgeConfig makeBridgeConfig(
     hardware::SimulatorLoadProfile profile,
     AuditPipelineSizing sizing = AuditPipelineSizing::Default,
-    std::size_t batchSizeMultiplier = 1)
+    std::size_t batchSizeMultiplier = 1,
+    CapacityProfile capacityProfile = CapacityProfile::Current)
 {
     pipeline::SourceToPipelineBridgeConfig config;
     if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
-        config.queueCapacity =
-            sizing == AuditPipelineSizing::FullTargetRawSustain
-            ? scaledCapacity(64, batchSizeMultiplier, 8)
-            : 2;
+        if (sizing == AuditPipelineSizing::FullTargetRawSustain
+            && parallelProcessingEngineEnabled()) {
+            config.queueCapacity =
+                capacityProfileConfig(capacityProfile, batchSizeMultiplier)
+                    .bridgeQueueCapacity;
+        } else {
+            config.queueCapacity =
+                sizing == AuditPipelineSizing::FullTargetRawSustain
+                ? scaledCapacity(64, batchSizeMultiplier, 8)
+                : 2;
+        }
     } else {
         config.queueCapacity = 128;
     }
@@ -1232,7 +1480,8 @@ AuditResult runAudit(std::chrono::seconds duration,
                      AuditPipelineSizing sizing = AuditPipelineSizing::Default,
                      AuditMode auditMode = AuditMode::Smoke,
                      LatencyBudget latencyBudget = {},
-                     std::size_t batchSizeMultiplier = 1)
+                     std::size_t batchSizeMultiplier = 1,
+                     CapacityProfile capacityProfile = CapacityProfile::Current)
 {
     AuditResult result;
     result.auditMode = auditMode;
@@ -1240,14 +1489,47 @@ AuditResult runAudit(std::chrono::seconds duration,
     result.duration = duration;
     result.latencyBudget = latencyBudget;
     result.batchSizeMultiplier = normalizeBatchMultiplier(batchSizeMultiplier);
+    result.capacityProfile = capacityProfile;
+    result.capacityProfileName = capacityProfileName(capacityProfile);
+    result.capacityProfileApplied =
+        profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps
+        && sizing == AuditPipelineSizing::FullTargetRawSustain
+        && parallelProcessingEngineEnabled();
 
     const auto streamConfig = makeStreamConfig(profile);
     auto pipelineConfig = makePipelineConfig(streamConfig.timeBase,
                                              profile,
                                              sizing,
-                                             result.batchSizeMultiplier);
+                                             result.batchSizeMultiplier,
+                                             capacityProfile);
+    auto bridgeConfig = makeBridgeConfig(profile,
+                                         sizing,
+                                         result.batchSizeMultiplier,
+                                         capacityProfile);
+    result.bridgeQueueCapacity = bridgeConfig.queueCapacity;
+    result.pipelineQueueCapacity = pipelineConfig.queueCapacity;
+    result.blockPoolCapacity = pipelineConfig.blockPool.blockCount;
+    result.stageQueueCapacity = pipelineConfig.processing.stageQueueCapacity;
+    result.samplesPerBlock = pipelineConfig.blockPool.maxSamplesPerBlock;
+    result.estimatedBlockBytes = estimatedBlockBytes(result.samplesPerBlock);
+    result.estimatedPoolBytes =
+        estimatedPoolBytes(result.blockPoolCapacity, result.samplesPerBlock);
     result.processingMode = pipelineConfig.processing.processingMode;
-    pipeline::DataIngestPipeline dataPipeline(std::move(pipelineConfig));
+    std::unique_ptr<pipeline::DataIngestPipeline> dataPipeline;
+    try {
+        dataPipeline = std::make_unique<pipeline::DataIngestPipeline>(
+            std::move(pipelineConfig));
+    } catch (const std::bad_alloc& exception) {
+        result.profileSetupSucceeded = false;
+        result.profileSetupError =
+            std::string{"capacity profile setup failed: "} + exception.what();
+        return result;
+    } catch (const std::exception& exception) {
+        result.profileSetupSucceeded = false;
+        result.profileSetupError =
+            std::string{"capacity profile setup failed: "} + exception.what();
+        return result;
+    }
     FixedAntennaAzimuthProvider antenna(45.0);
     hardware::HighLoadSimulatorBcoStreamSource source(
         makeLoadConfig(profile, result.batchSizeMultiplier),
@@ -1260,20 +1542,17 @@ AuditResult runAudit(std::chrono::seconds duration,
         return result;
     }
 
-    const auto pipelineStarted = dataPipeline.start();
+    const auto pipelineStarted = dataPipeline->start();
     result.pipelineStarted = pipelineStarted.success;
     if (!pipelineStarted) {
         return result;
     }
 
-    pipeline::SourceToPipelineBridge bridge(&dataPipeline,
-                                            makeBridgeConfig(profile,
-                                                             sizing,
-                                                             result.batchSizeMultiplier));
+    pipeline::SourceToPipelineBridge bridge(dataPipeline.get(), std::move(bridgeConfig));
     const auto bridgeStarted = bridge.start();
     result.bridgeStarted = bridgeStarted.success;
     if (!bridgeStarted) {
-        dataPipeline.stop();
+        dataPipeline->stop();
         return result;
     }
 
@@ -1310,7 +1589,7 @@ AuditResult runAudit(std::chrono::seconds duration,
                 const auto elapsedSec =
                     std::chrono::duration<double>(now - startedAt).count();
                 result.backlogSamples.push_back(
-                    makeBacklogSample(elapsedSec, dataPipeline.metricsSnapshot()));
+                    makeBacklogSample(elapsedSec, dataPipeline->metricsSnapshot()));
                 nextSampleAt += std::chrono::seconds{1};
                 continue;
             }
@@ -1331,7 +1610,7 @@ AuditResult runAudit(std::chrono::seconds duration,
             std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt)
                 .count();
         result.backlogSamples.push_back(
-            makeBacklogSample(elapsedSec, dataPipeline.metricsSnapshot()));
+            makeBacklogSample(elapsedSec, dataPipeline->metricsSnapshot()));
     }
 
     const auto sourceStopped = source.stop();
@@ -1341,26 +1620,26 @@ AuditResult runAudit(std::chrono::seconds duration,
     result.bridgeFlushed = bridgeFlushed.success;
     bridge.stop();
 
-    const auto flushed = dataPipeline.flushProcessing(flushTimeout);
+    const auto flushed = dataPipeline->flushProcessing(flushTimeout);
     result.flushed = flushed.success;
 
-    const auto drainedRows = dataPipeline.drainWaterfallRows(1'000'000);
+    const auto drainedRows = dataPipeline->drainWaterfallRows(1'000'000);
     result.drainedWaterfallRows = drainedRows.size();
     result.source = source.metrics();
     result.bridge = bridge.metrics();
-    result.pipeline = dataPipeline.metricsSnapshot();
-    result.waterfallRows = dataPipeline.waterfallRowQueueMetrics();
+    result.pipeline = dataPipeline->metricsSnapshot();
+    result.waterfallRows = dataPipeline->waterfallRowQueueMetrics();
     result.rejectedBlocks = result.bridge.rejectedBlocks;
     result.rejectedSamples = result.bridge.rejectedSamples;
-    result.hasSpectrumSnapshot = dataPipeline.latestSpectrumSnapshot() != nullptr;
-    result.hasBearingSnapshot = dataPipeline.latestBearingSnapshot() != nullptr;
+    result.hasSpectrumSnapshot = dataPipeline->latestSpectrumSnapshot() != nullptr;
+    result.hasBearingSnapshot = dataPipeline->latestBearingSnapshot() != nullptr;
     result.hasSignalParameterSnapshot =
-        dataPipeline.latestSignalParameterSnapshot() != nullptr;
+        dataPipeline->latestSignalParameterSnapshot() != nullptr;
 
     if (!result.flushed) {
-        dataPipeline.clearQueuedBlocks();
+        dataPipeline->clearQueuedBlocks();
     }
-    dataPipeline.stop();
+    dataPipeline->stop();
     return result;
 }
 
@@ -1392,6 +1671,22 @@ void printAuditSummary(const AuditResult& result)
               << "  processingMode = " << processingModeName(result.processingMode)
               << '\n'
               << "  batchSizeMultiplier = " << result.batchSizeMultiplier << '\n'
+              << "  capacityProfile = " << result.capacityProfileName << '\n'
+              << "  capacityProfileApplied = "
+              << (result.capacityProfileApplied ? "true" : "false") << '\n'
+              << "  profileSetupSucceeded = "
+              << (result.profileSetupSucceeded ? "true" : "false") << '\n';
+    if (!result.profileSetupError.empty()) {
+        std::cout << "  profileSetupError = " << result.profileSetupError << '\n';
+    }
+    std::cout << "  bridgeQueueCapacity = " << result.bridgeQueueCapacity << '\n'
+              << "  pipelineQueueCapacity = " << result.pipelineQueueCapacity << '\n'
+              << "  blockPoolCapacityConfigured = "
+              << result.blockPoolCapacity << '\n'
+              << "  stageQueueCapacity = " << result.stageQueueCapacity << '\n'
+              << "  samplesPerBlock = " << result.samplesPerBlock << '\n'
+              << "  estimatedBlockBytes = " << result.estimatedBlockBytes << '\n'
+              << "  estimatedPoolBytes = " << result.estimatedPoolBytes << '\n'
               << "  source producedSamples = " << result.source.producedSamples << '\n'
               << "  source producedBatches = " << result.source.producedBatches << '\n'
               << "  source producedSamplesPerBatchAvg = "
@@ -1979,9 +2274,130 @@ BudgetStatus combinedLatencyBacklogStatus(const LatencyBudgetEvaluation& evaluat
     return status;
 }
 
+const char* backlogTrendName(BacklogTrend trend)
+{
+    switch (trend) {
+    case BacklogTrend::Stable:
+        return "Stable";
+    case BacklogTrend::Growing:
+        return "Growing";
+    case BacklogTrend::Saturating:
+        return "Saturating";
+    case BacklogTrend::Unknown:
+        return "Unknown";
+    }
+
+    return "Unknown";
+}
+
+int backlogTrendRank(BacklogTrend trend)
+{
+    switch (trend) {
+    case BacklogTrend::Stable:
+        return 0;
+    case BacklogTrend::Growing:
+        return 1;
+    case BacklogTrend::Saturating:
+        return 2;
+    case BacklogTrend::Unknown:
+        return 3;
+    }
+
+    return 3;
+}
+
+BacklogTrend worstBacklogTrend(BacklogTrend current, BacklogTrend next)
+{
+    return backlogTrendRank(next) > backlogTrendRank(current) ? next : current;
+}
+
+BacklogTrend classifyBacklogTrend(std::size_t firstDepth,
+                                  std::size_t lastDepth,
+                                  std::size_t capacity,
+                                  double maxQueueRatio,
+                                  std::size_t sampleCount)
+{
+    if (sampleCount < 2 || capacity == 0) {
+        return BacklogTrend::Unknown;
+    }
+    if (maxQueueRatio >= 0.95) {
+        return BacklogTrend::Saturating;
+    }
+
+    const auto growthThreshold = std::max<std::size_t>(2, capacity / 10);
+    if (lastDepth > firstDepth + growthThreshold
+        && static_cast<double>(lastDepth) > static_cast<double>(capacity) * 0.75) {
+        return BacklogTrend::Growing;
+    }
+
+    return BacklogTrend::Stable;
+}
+
+CapacityBacklogTrend makeCapacityBacklogTrend(const AuditResult& result)
+{
+    CapacityBacklogTrend trend;
+    if (result.backlogSamples.empty()) {
+        return trend;
+    }
+
+    const auto& first = result.backlogSamples.front();
+    const auto& last = result.backlogSamples.back();
+    const auto sampleCount = result.backlogSamples.size();
+    trend.waterfall = classifyBacklogTrend(first.waterfallDepth,
+                                           last.waterfallDepth,
+                                           result.pipeline.waterfallStage.queueCapacity,
+                                           queueDepthRatio(result.pipeline.waterfallStage),
+                                           sampleCount);
+    trend.spectrum = classifyBacklogTrend(first.spectrumDepth,
+                                          last.spectrumDepth,
+                                          result.pipeline.spectrumStage.queueCapacity,
+                                          queueDepthRatio(result.pipeline.spectrumStage),
+                                          sampleCount);
+    trend.bearing = classifyBacklogTrend(first.bearingDepth,
+                                         last.bearingDepth,
+                                         result.pipeline.bearingStage.queueCapacity,
+                                         queueDepthRatio(result.pipeline.bearingStage),
+                                         sampleCount);
+    trend.signalParameter =
+        classifyBacklogTrend(first.signalParameterDepth,
+                             last.signalParameterDepth,
+                             result.pipeline.signalParameterStage.queueCapacity,
+                             queueDepthRatio(result.pipeline.signalParameterStage),
+                             sampleCount);
+    trend.overall = worstBacklogTrend(
+        worstBacklogTrend(trend.waterfall, trend.spectrum),
+        worstBacklogTrend(trend.bearing, trend.signalParameter));
+    return trend;
+}
+
 bool batchProfileBudgetPasses(const BatchProfileScore& score)
 {
     return score.latencyBudgetPass && score.queueDepthBudgetPass;
+}
+
+bool auditInfrastructureSucceeded(const AuditResult& result);
+
+bool noDropPasses(const AuditResult& result)
+{
+    return auditInfrastructureSucceeded(result)
+        && result.profileSetupSucceeded
+        && result.flushed
+        && result.pipeline.inputSamples > 0
+        && result.pipeline.processedSamples > 0
+        && result.bridge.droppedBlocks == 0
+        && result.bridge.droppedSamples == 0
+        && result.bridge.rejectedBlocks == 0
+        && result.bridge.rejectedSamples == 0
+        && result.pipeline.droppedBlocks == 0
+        && result.pipeline.droppedSamples == 0
+        && result.pipeline.queueDroppedBlocks == 0
+        && result.pipeline.blockPoolExhausted == 0
+        && result.pipeline.processedSamples == result.pipeline.inputSamples
+        && result.pipeline.parallelFanOutFallbackBlocks == 0
+        && result.pipeline.parallelFanOutRejectedBlocks == 0
+        && result.pipeline.parallelFanOutInFlightBlocks == 0
+        && result.pipeline.blockPoolInUse == 0
+        && result.source.simulatorBackpressureEvents == 0;
 }
 
 std::uint64_t profileDroppedBlocks(const AuditResult& result)
@@ -2046,25 +2462,7 @@ BatchProfileScore makeBatchProfileScore(const AuditResult& result)
     score.droppedBlocks = profileDroppedBlocks(result);
     score.droppedSamples = profileDroppedSamples(result);
     score.queueDroppedBlocks = result.pipeline.queueDroppedBlocks;
-    score.noDropPass =
-        auditInfrastructureSucceeded(result)
-        && result.flushed
-        && result.pipeline.inputSamples > 0
-        && result.pipeline.processedSamples > 0
-        && result.bridge.droppedBlocks == 0
-        && result.bridge.droppedSamples == 0
-        && result.bridge.rejectedBlocks == 0
-        && result.bridge.rejectedSamples == 0
-        && result.pipeline.droppedBlocks == 0
-        && result.pipeline.droppedSamples == 0
-        && result.pipeline.queueDroppedBlocks == 0
-        && result.pipeline.blockPoolExhausted == 0
-        && result.pipeline.processedSamples == result.pipeline.inputSamples
-        && result.pipeline.parallelFanOutFallbackBlocks == 0
-        && result.pipeline.parallelFanOutRejectedBlocks == 0
-        && result.pipeline.parallelFanOutInFlightBlocks == 0
-        && result.pipeline.blockPoolInUse == 0
-        && result.source.simulatorBackpressureEvents == 0;
+    score.noDropPass = noDropPasses(result);
     return score;
 }
 
@@ -2121,6 +2519,97 @@ BatchProfileSelection selectRecommendedBatchProfile(
         ? "selected no-drop profile that passes latency/backlog budget"
         : "selected no-drop profile with lowest fanOutEndToEnd max; "
           "latency/backlog budget is not fully passing";
+    return selection;
+}
+
+bool capacityProfileBudgetPasses(const CapacityProfileScore& score)
+{
+    return score.latencyBudgetPass && score.queueDepthBudgetPass;
+}
+
+CapacityProfileScore makeCapacityProfileScore(const AuditResult& result)
+{
+    const auto evaluation = evaluateLatencyBudget(result);
+    CapacityProfileScore score;
+    score.profile = result.capacityProfile;
+    score.profileName = result.capacityProfileName;
+    score.noDropPass = noDropPasses(result);
+    score.latencyBudgetPass = latencyBudgetPasses(evaluation);
+    score.queueDepthBudgetPass = queueDepthBudgetPasses(evaluation);
+    score.rawMBps = rawMegabytesPerSecond(result);
+    score.fanOutMaxMs = result.pipeline.parallelFanOutEndToEndLatency.maxMs;
+    score.maxQueueDepthRatio = maxStageQueueDepthRatio(result);
+    score.rejectedBlocks = result.rejectedBlocks;
+    score.blockPoolExhausted = result.pipeline.blockPoolExhausted;
+    score.inputSamples = result.pipeline.inputSamples;
+    score.processedSamples = result.pipeline.processedSamples;
+    score.droppedBlocks = profileDroppedBlocks(result);
+    score.droppedSamples = profileDroppedSamples(result);
+    score.queueDroppedBlocks = result.pipeline.queueDroppedBlocks;
+    score.backlogTrend = makeCapacityBacklogTrend(result);
+    return score;
+}
+
+std::vector<CapacityProfileScore> makeCapacityProfileScores(
+    const std::vector<AuditResult>& results)
+{
+    std::vector<CapacityProfileScore> scores;
+    scores.reserve(results.size());
+    for (const auto& result : results) {
+        scores.push_back(makeCapacityProfileScore(result));
+    }
+    return scores;
+}
+
+bool shouldPreferCapacityProfile(const CapacityProfileScore& candidate,
+                                 const CapacityProfileScore& current)
+{
+    const bool candidateBudgetPasses = capacityProfileBudgetPasses(candidate);
+    const bool currentBudgetPasses = capacityProfileBudgetPasses(current);
+    if (candidateBudgetPasses != currentBudgetPasses) {
+        return candidateBudgetPasses;
+    }
+
+    const bool candidateLowQueue = candidate.maxQueueDepthRatio < 0.80;
+    const bool currentLowQueue = current.maxQueueDepthRatio < 0.80;
+    if (candidateLowQueue != currentLowQueue) {
+        return candidateLowQueue;
+    }
+
+    const auto candidateTrendRank = backlogTrendRank(candidate.backlogTrend.overall);
+    const auto currentTrendRank = backlogTrendRank(current.backlogTrend.overall);
+    if (candidateTrendRank != currentTrendRank) {
+        return candidateTrendRank < currentTrendRank;
+    }
+
+    return capacityProfileRank(candidate.profile) < capacityProfileRank(current.profile);
+}
+
+CapacityProfileSelection selectRecommendedCapacityProfile(
+    const std::vector<CapacityProfileScore>& scores)
+{
+    CapacityProfileSelection selection;
+    for (const auto& score : scores) {
+        if (!score.noDropPass) {
+            continue;
+        }
+        if (!selection.selected
+            || shouldPreferCapacityProfile(score, *selection.selected)) {
+            selection.selected = score;
+        }
+    }
+
+    if (!selection.selected) {
+        selection.reason =
+            "No capacity profile selected; continue service-latency optimization or latency policy.";
+        return selection;
+    }
+
+    selection.reason = "selected smallest no-drop capacity profile after budget, queue ratio, and backlog trend checks";
+    if (selection.selected->backlogTrend.overall != BacklogTrend::Stable) {
+        selection.reason +=
+            "; selected only as short-duration guidance because backlog trend is not stable";
+    }
     return selection;
 }
 
@@ -2279,6 +2768,102 @@ void printBatchProfileSelectionSummary(
     std::cout << "  reason = " << selection.reason << '\n';
 }
 
+void printCapacityProfileSweepSummary(
+    const std::vector<AuditResult>& results,
+    const std::vector<CapacityProfileScore>& scores,
+    const CapacityProfileSelection& selection)
+{
+    if (results.empty() || scores.empty()) {
+        return;
+    }
+
+    const auto& first = results.front();
+    std::cout << "Capacity profile sweep summary, m=8:\n"
+              << "  strictMode = "
+              << (strictTargetRawPipelineSustainRequired() ? "true" : "false")
+              << '\n'
+              << "  soakMode = "
+              << (first.auditMode == AuditMode::TargetRawSoak ? "true" : "false")
+              << '\n'
+              << "  durationSec = " << first.duration.count() << '\n'
+              << "  profile  rawMBps  noDrop  budget  rejected  poolExh  dropped  "
+                 "input/processed  fanoutMax  maxQueueRatio  trend\n";
+
+    for (std::size_t index = 0; index < results.size() && index < scores.size();
+         ++index) {
+        const auto& result = results[index];
+        const auto& score = scores[index];
+        const auto budgetStatus =
+            combinedLatencyBacklogStatus(evaluateLatencyBudget(result));
+        std::cout << "  " << score.profileName << "  "
+                  << score.rawMBps << "  "
+                  << passFailName(score.noDropPass) << "  "
+                  << budgetStatusName(budgetStatus) << "  "
+                  << score.rejectedBlocks << "  "
+                  << score.blockPoolExhausted << "  "
+                  << score.droppedBlocks << "  "
+                  << score.inputSamples << "/" << score.processedSamples << "  "
+                  << score.fanOutMaxMs << "  "
+                  << score.maxQueueDepthRatio << "  "
+                  << backlogTrendName(score.backlogTrend.overall) << '\n';
+    }
+
+    std::cout << "Capacities:\n"
+              << "  profile  bridgeQueue  pipelineQueue  blockPool  stageQueue  "
+                 "samplesPerBlock  estimatedBlockBytes  estimatedPoolBytes\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.capacityProfileName << "  "
+                  << result.bridgeQueueCapacity << "  "
+                  << result.pipelineQueueCapacity << "  "
+                  << result.blockPoolCapacity << "  "
+                  << result.stageQueueCapacity << "  "
+                  << result.samplesPerBlock << "  "
+                  << result.estimatedBlockBytes << "  "
+                  << result.estimatedPoolBytes << '\n';
+    }
+
+    std::cout << "Queues:\n"
+              << "  profile  waterfallMax  spectrumMax  bearingMax  signalMax\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.capacityProfileName << "  "
+                  << result.pipeline.waterfallStage.queueMaxDepth << "  "
+                  << result.pipeline.spectrumStage.queueMaxDepth << "  "
+                  << result.pipeline.bearingStage.queueMaxDepth << "  "
+                  << result.pipeline.signalParameterStage.queueMaxDepth << '\n';
+    }
+
+    std::cout << "Queue ratios:\n"
+              << "  profile  waterfallRatio  spectrumRatio  bearingRatio  "
+                 "signalRatio\n";
+    for (const auto& result : results) {
+        std::cout << "  " << result.capacityProfileName << "  "
+                  << queueDepthRatio(result.pipeline.waterfallStage) << "  "
+                  << queueDepthRatio(result.pipeline.spectrumStage) << "  "
+                  << queueDepthRatio(result.pipeline.bearingStage) << "  "
+                  << queueDepthRatio(result.pipeline.signalParameterStage) << '\n';
+    }
+
+    std::cout << "Backlog trend:\n"
+              << "  profile  waterfall  spectrum  bearing  signalParameter  overall\n";
+    for (const auto& score : scores) {
+        std::cout << "  " << score.profileName << "  "
+                  << backlogTrendName(score.backlogTrend.waterfall) << "  "
+                  << backlogTrendName(score.backlogTrend.spectrum) << "  "
+                  << backlogTrendName(score.backlogTrend.bearing) << "  "
+                  << backlogTrendName(score.backlogTrend.signalParameter) << "  "
+                  << backlogTrendName(score.backlogTrend.overall) << '\n';
+    }
+
+    std::cout << "Recommendation:\n";
+    if (selection.selected) {
+        std::cout << "  selectedCapacityProfile = "
+                  << selection.selected->profileName << '\n';
+    } else {
+        std::cout << "  selectedCapacityProfile = none\n";
+    }
+    std::cout << "  reason = " << selection.reason << '\n';
+}
+
 bool stressTestsEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_RUN_STRESS_TESTS");
@@ -2308,6 +2893,51 @@ void testAuditHelperParsingAndBudget(TestRunner& test)
                  "batch multiplier rejects negative values");
     test.require(!parseBatchMultiplier("abc"),
                  "batch multiplier rejects non-numeric values");
+    test.require(parseCapacityProfile("current").value_or(CapacityProfile::Balanced2048)
+                     == CapacityProfile::Current,
+                 "capacity profile accepts current");
+    test.require(parseCapacityProfile("balanced1024")
+                     .value_or(CapacityProfile::Current)
+                     == CapacityProfile::Balanced1024,
+                 "capacity profile accepts balanced1024");
+    test.require(parseCapacityProfile("balanced2048")
+                     .value_or(CapacityProfile::Current)
+                     == CapacityProfile::Balanced2048,
+                 "capacity profile accepts balanced2048");
+    test.require(!parseCapacityProfile("oversized"),
+                 "capacity profile rejects unsupported values");
+    test.require(capacityProfileOrCurrent("oversized") == CapacityProfile::Current,
+                 "invalid capacity profile falls back to current");
+    const auto currentCapacity = capacityProfileConfig(CapacityProfile::Current, 8);
+    test.require(currentCapacity.bridgeQueueCapacity == 8
+                     && currentCapacity.pipelineQueueCapacity == 64
+                     && currentCapacity.blockPoolCapacity == 64
+                     && currentCapacity.stageQueueCapacity == 64,
+                 "current capacity profile preserves m=8 computed sizing");
+    const auto balanced1024 = capacityProfileConfig(CapacityProfile::Balanced1024, 8);
+    test.require(balanced1024.bridgeQueueCapacity == 128
+                     && balanced1024.pipelineQueueCapacity == 1024
+                     && balanced1024.blockPoolCapacity == 1024
+                     && balanced1024.stageQueueCapacity == 1024,
+                 "balanced1024 capacity profile returns configured values");
+    const auto balanced2048 = capacityProfileConfig(CapacityProfile::Balanced2048, 8);
+    test.require(balanced2048.bridgeQueueCapacity == 256
+                     && balanced2048.pipelineQueueCapacity == 2048
+                     && balanced2048.blockPoolCapacity == 2048
+                     && balanced2048.stageQueueCapacity == 2048,
+                 "balanced2048 capacity profile returns configured values");
+    test.require(classifyBacklogTrend(0, 0, 100, 0.0, 1)
+                     == BacklogTrend::Unknown,
+                 "backlog trend is unknown with insufficient samples");
+    test.require(classifyBacklogTrend(0, 1, 100, 0.95, 2)
+                     == BacklogTrend::Saturating,
+                 "backlog trend saturates at 95 percent max ratio");
+    test.require(classifyBacklogTrend(0, 80, 100, 0.80, 2)
+                     == BacklogTrend::Growing,
+                 "backlog trend detects growing high final depth");
+    test.require(classifyBacklogTrend(5, 6, 100, 0.10, 2)
+                     == BacklogTrend::Stable,
+                 "backlog trend detects stable low queue");
     const auto sweepMultipliers = batchSweepMultipliers();
     test.require(sweepMultipliers == std::vector<std::size_t>({1, 2, 4, 8}),
                  "batch sweep values are 1, 2, 4, 8");
@@ -2429,6 +3059,62 @@ void testAuditHelperParsingAndBudget(TestRunner& test)
     });
     test.require(!selection.selected,
                  "profile selection returns none when no candidate passes no-drop");
+
+    const auto makeCapacityScore = [](CapacityProfile profile,
+                                      bool noDropPass,
+                                      bool latencyPass,
+                                      bool queueDepthPass,
+                                      double maxQueueRatio,
+                                      BacklogTrend trend) {
+        CapacityProfileScore profileScore;
+        profileScore.profile = profile;
+        profileScore.profileName = capacityProfileName(profile);
+        profileScore.noDropPass = noDropPass;
+        profileScore.latencyBudgetPass = latencyPass;
+        profileScore.queueDepthBudgetPass = queueDepthPass;
+        profileScore.maxQueueDepthRatio = maxQueueRatio;
+        profileScore.backlogTrend.overall = trend;
+        return profileScore;
+    };
+
+    auto capacitySelection = selectRecommendedCapacityProfile({
+        makeCapacityScore(CapacityProfile::Current, true, true, true, 0.70, BacklogTrend::Stable),
+        makeCapacityScore(CapacityProfile::Balanced1024, true, true, true, 0.70, BacklogTrend::Stable),
+    });
+    test.require(capacitySelection.selected
+                     && capacitySelection.selected->profile == CapacityProfile::Current,
+                 "capacity selection chooses smallest qualifying profile");
+
+    capacitySelection = selectRecommendedCapacityProfile({
+        makeCapacityScore(CapacityProfile::Current, true, false, true, 0.70, BacklogTrend::Stable),
+        makeCapacityScore(CapacityProfile::Balanced1024, true, true, true, 0.70, BacklogTrend::Stable),
+    });
+    test.require(capacitySelection.selected
+                     && capacitySelection.selected->profile == CapacityProfile::Balanced1024,
+                 "capacity selection prefers budget-pass profile");
+
+    capacitySelection = selectRecommendedCapacityProfile({
+        makeCapacityScore(CapacityProfile::Current, true, true, true, 0.90, BacklogTrend::Stable),
+        makeCapacityScore(CapacityProfile::Balanced1024, true, true, true, 0.70, BacklogTrend::Stable),
+    });
+    test.require(capacitySelection.selected
+                     && capacitySelection.selected->profile == CapacityProfile::Balanced1024,
+                 "capacity selection prefers max queue ratio below 0.80");
+
+    capacitySelection = selectRecommendedCapacityProfile({
+        makeCapacityScore(CapacityProfile::Current, true, true, true, 0.70, BacklogTrend::Growing),
+        makeCapacityScore(CapacityProfile::Balanced1024, true, true, true, 0.70, BacklogTrend::Stable),
+    });
+    test.require(capacitySelection.selected
+                     && capacitySelection.selected->profile == CapacityProfile::Balanced1024,
+                 "capacity selection prefers stable backlog trend");
+
+    capacitySelection = selectRecommendedCapacityProfile({
+        makeCapacityScore(CapacityProfile::Current, false, true, true, 0.70, BacklogTrend::Stable),
+        makeCapacityScore(CapacityProfile::Balanced1024, false, true, true, 0.70, BacklogTrend::Stable),
+    });
+    test.require(!capacitySelection.selected,
+                 "capacity selection returns none when all profiles fail no-drop");
 }
 
 void highLoadDataPlaneSmoke(TestRunner& test)
@@ -2505,11 +3191,12 @@ void targetRaw90mbpsAccountingSmoke(TestRunner& test)
 void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
 {
     if (!targetRawPipelineTestEnabled() || targetRawBatchSweepEnabled()
-        || targetRawProfileSelectionEnabled()) {
+        || targetRawProfileSelectionEnabled() || targetRawCapacitySweepEnabled()) {
         return;
     }
 
     const auto batchSizeMultiplier = envBatchMultiplierOrDefault();
+    const auto capacityProfile = envCapacityProfileOrDefault();
     const auto auditMode = strictTargetRawPipelineSustainRequired()
         ? AuditMode::TargetRawStrict
         : AuditMode::TargetRawShort;
@@ -2521,7 +3208,8 @@ void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
                                  AuditPipelineSizing::FullTargetRawSustain,
                                  auditMode,
                                  targetRawLatencyBudget(),
-                                 batchSizeMultiplier);
+                                 batchSizeMultiplier,
+                                 capacityProfile);
     printAuditSummary(result);
     printSustainWarnings(result);
     assertTargetRawPipelineSustain(test, result);
@@ -2529,7 +3217,8 @@ void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
 
 void targetRaw90mbpsProfileSelectionAudit(TestRunner& test)
 {
-    if (!targetRawPipelineTestEnabled() || !targetRawProfileSelectionEnabled()) {
+    if (!targetRawPipelineTestEnabled() || !targetRawProfileSelectionEnabled()
+        || targetRawCapacitySweepEnabled()) {
         return;
     }
 
@@ -2550,6 +3239,7 @@ void targetRaw90mbpsProfileSelectionAudit(TestRunner& test)
 
     std::vector<AuditResult> results;
     const auto multipliers = profileSelectionMultipliers();
+    const auto capacityProfile = envCapacityProfileOrDefault();
     results.reserve(multipliers.size());
     for (const auto multiplier : multipliers) {
         auto result = runAudit(duration,
@@ -2560,7 +3250,8 @@ void targetRaw90mbpsProfileSelectionAudit(TestRunner& test)
                                AuditPipelineSizing::FullTargetRawSustain,
                                auditMode,
                                targetRawLatencyBudget(),
-                               multiplier);
+                               multiplier,
+                               capacityProfile);
         printAuditSummary(result);
         printSustainWarnings(result);
         results.push_back(std::move(result));
@@ -2582,9 +3273,67 @@ void targetRaw90mbpsProfileSelectionAudit(TestRunner& test)
     }
 }
 
+void targetRaw90mbpsCapacitySweepAudit(TestRunner& test)
+{
+    if (!targetRawPipelineTestEnabled() || !targetRawCapacitySweepEnabled()) {
+        return;
+    }
+
+    if (!parallelProcessingEngineEnabled()) {
+        test.require(false,
+                     "target raw capacity sweep requires ParallelFanOut mode");
+        return;
+    }
+
+    constexpr std::size_t kCapacitySweepBatchMultiplier = 8;
+    const auto auditMode = targetRawSoakTestEnabled()
+        ? AuditMode::TargetRawSoak
+        : (strictTargetRawPipelineSustainRequired()
+               ? AuditMode::TargetRawStrict
+               : AuditMode::TargetRawShort);
+    const auto duration = targetRawSoakTestEnabled()
+        ? targetRawSoakDuration()
+        : targetRawAuditDuration();
+
+    std::vector<AuditResult> results;
+    const auto profiles = capacitySweepProfiles();
+    results.reserve(profiles.size());
+    for (const auto profile : profiles) {
+        auto result = runAudit(duration,
+                               hardware::SimulatorLoadProfile::
+                                   TargetRawThroughput90MBps,
+                               std::chrono::seconds{10},
+                               std::nullopt,
+                               AuditPipelineSizing::FullTargetRawSustain,
+                               auditMode,
+                               targetRawLatencyBudget(),
+                               kCapacitySweepBatchMultiplier,
+                               profile);
+        printAuditSummary(result);
+        printSustainWarnings(result);
+        results.push_back(std::move(result));
+    }
+
+    const auto scores = makeCapacityProfileScores(results);
+    const auto selection = selectRecommendedCapacityProfile(scores);
+    printCapacityProfileSweepSummary(results, scores, selection);
+
+    test.require(!results.empty(),
+                 "capacity sweep has at least one candidate profile");
+    if (strictTargetRawPipelineSustainRequired()) {
+        test.require(selection.selected.has_value(),
+                     "strict capacity sweep finds a no-drop profile");
+    }
+    if (selection.selected && latencyBudgetIsHard(results.front())) {
+        test.require(capacityProfileBudgetPasses(*selection.selected),
+                     "strict/soak capacity sweep selected profile satisfies latency/backlog budget");
+    }
+}
+
 void targetRaw90mbpsBatchSweepAudit(TestRunner& test)
 {
-    if (!targetRawBatchSweepEnabled() || targetRawProfileSelectionEnabled()) {
+    if (!targetRawBatchSweepEnabled() || targetRawProfileSelectionEnabled()
+        || targetRawCapacitySweepEnabled()) {
         return;
     }
 
@@ -2598,7 +3347,8 @@ void targetRaw90mbpsBatchSweepAudit(TestRunner& test)
                                AuditPipelineSizing::FullTargetRawSustain,
                                AuditMode::TargetRawShort,
                                targetRawLatencyBudget(),
-                               multiplier);
+                               multiplier,
+                               envCapacityProfileOrDefault());
         printAuditSummary(result);
         printSustainWarnings(result);
         assertBatchSweepRunUsable(test, result);
@@ -2612,11 +3362,12 @@ void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
 {
     if (!targetRawPipelineTestEnabled() || !parallelProcessingEngineEnabled()
         || !targetRawSoakTestEnabled() || targetRawBatchSweepEnabled()
-        || targetRawProfileSelectionEnabled()) {
+        || targetRawProfileSelectionEnabled() || targetRawCapacitySweepEnabled()) {
         return;
     }
 
     const auto batchSizeMultiplier = envBatchMultiplierOrDefault();
+    const auto capacityProfile = envCapacityProfileOrDefault();
     const auto result = runAudit(targetRawSoakDuration(),
                                  hardware::SimulatorLoadProfile::
                                      TargetRawThroughput90MBps,
@@ -2625,7 +3376,8 @@ void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
                                  AuditPipelineSizing::FullTargetRawSustain,
                                  AuditMode::TargetRawSoak,
                                  targetRawLatencyBudget(),
-                                 batchSizeMultiplier);
+                                 batchSizeMultiplier,
+                                 capacityProfile);
     printAuditSummary(result);
     printSustainWarnings(result);
     assertTargetRawPipelineSustain(test, result);
@@ -2642,6 +3394,7 @@ int main()
     targetRaw90mbpsAccountingSmoke(test);
     targetRaw90mbpsPipelineSustainAudit(test);
     targetRaw90mbpsProfileSelectionAudit(test);
+    targetRaw90mbpsCapacitySweepAudit(test);
     targetRaw90mbpsBatchSweepAudit(test);
     targetRaw90mbpsParallelSoakAudit(test);
     highLoadDataPlaneStress(test);

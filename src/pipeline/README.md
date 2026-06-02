@@ -156,6 +156,38 @@ ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-f
 list with supported multipliers. The selected multiplier is audit guidance only; it does
 not change the ordinary runtime GUI default.
 
+Capacity profiles are a separate audit-only sizing control for
+`TargetRawThroughput90MBps + m=8 + ParallelFanOut`. A single target-raw audit can select
+one profile with:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+$env:SIRIUSSCOPE_90MBPS_BATCH_MULTIPLIER = "8"
+$env:SIRIUSSCOPE_90MBPS_CAPACITY_PROFILE = "balanced1024"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+The capacity sweep fixes `m=8`, compares `current` and `balanced1024` by default, prints
+capacity values, estimated pool memory, queue ratios, backlog trend classification, and
+a selected capacity profile or `none`:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST = "1"
+$env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP = "1"
+$env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+`SIRIUSSCOPE_INCLUDE_2048_CAPACITY_PROFILE=1` adds `balanced2048`. This is opt-in because
+`SignalBlockPool` preallocates block storage. Larger capacity does not become a GUI
+runtime default and is not considered a production fix if the backlog trend remains
+growing or saturating.
+
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable
 `BcoSampleBlock` pointers into a bounded RX queue; a dedicated bridge worker performs the
