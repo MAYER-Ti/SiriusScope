@@ -143,9 +143,12 @@ candidate update, close window, snapshot build, and estimate calculation, and a
 signal-parameter micro-breakdown for ingest, snapshot decision, finalize, and snapshot
 build time.
 
-Spectrum aggregation uses fast window/bin calculations and fixed band-summary storage in
-the high-load data plane. Exact fallback calculations and legacy vector summary storage
-remain available for compatibility tests.
+Spectrum aggregation uses fast window/bin calculations, fixed band-summary storage, and
+block-local accumulation in the high-load data plane: bins and band summaries are
+accumulated locally per block/window and merged by touched bin/band lists. Detailed
+per-sample spectrum timing is disabled by default and can be enabled for diagnostics
+with `SIRIUSSCOPE_ENABLE_DETAILED_SPECTRUM_TIMING=1`. Exact fallback calculations and
+legacy vector summary storage remain available for compatibility tests.
 
 Signal parameter estimation uses trusted streaming mode with fixed band-state storage
 for internally generated high-load samples. The validated sorted mode remains available

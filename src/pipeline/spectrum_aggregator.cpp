@@ -74,6 +74,7 @@ void SpectrumAggregator::reset()
     m_nextSnapshotSequenceId = 1;
     resetIncrementalWindowState();
     m_incrementalWindowFallbacks = 0;
+    resetLocalAccumulationTouched();
 }
 
 void SpectrumAggregator::setConfig(SpectrumAggregatorConfig config)
@@ -124,6 +125,12 @@ bool SpectrumAggregator::usesFixedBandSummaryStorage() const noexcept
     return m_config.useFixedBandSummaryStorage;
 }
 
+bool SpectrumAggregator::usesBlockLocalFastPath() const noexcept
+{
+    return m_config.trustedSamples && usesFixedBandSummaryStorage()
+        && m_config.renderBinCount > 0 && m_config.bandCapacity > 0;
+}
+
 bool SpectrumAggregator::hasValidUntrustedSample(
     const core::SignalSample& sample) const
 {
@@ -158,12 +165,18 @@ SpectrumAggregationResult SpectrumAggregator::consume(
 {
     SpectrumAggregationResult result;
     const auto totalStartedAt = Clock::now();
+    const bool detailedTiming = m_config.enableDetailedTiming;
+    const bool blockLocalFastPath = usesBlockLocalFastPath();
     const auto incrementalFallbacksBefore = m_incrementalWindowFallbacks;
     result.usedFastWindowIndex = m_canUseFastWindowIndex;
     result.usedIncrementalWindowIndex = m_canUseIncrementalWindowIndex;
     result.usedFastBinIndex = m_canUseFastBinIndex;
     result.usedFastBandSummaryStorage = usesFixedBandSummaryStorage();
+    result.usedBlockLocalAccumulation = blockLocalFastPath && !samples.empty();
     result.snapshots.reserve(2);
+    if (blockLocalFastPath) {
+        prepareLocalAccumulationBuffers();
+    }
 
     Clock::duration sampledWindowCalculation{};
     Clock::duration sampledBinCalculation{};
@@ -189,8 +202,8 @@ SpectrumAggregationResult SpectrumAggregator::consume(
             continue;
         }
 
-        const bool measureWindowCalculation =
-            shouldMeasureSampledTiming(windowCalculationCount++);
+        const bool measureWindowCalculation = detailedTiming
+            && shouldMeasureSampledTiming(windowCalculationCount++);
         const auto windowCalculationStartedAt = measureWindowCalculation
             ? Clock::now()
             : Clock::time_point{};
@@ -205,8 +218,8 @@ SpectrumAggregationResult SpectrumAggregator::consume(
             continue;
         }
 
-        const bool measureBinCalculation =
-            shouldMeasureSampledTiming(binCalculationCount++);
+        const bool measureBinCalculation = detailedTiming
+            && shouldMeasureSampledTiming(binCalculationCount++);
         const auto binCalculationStartedAt = measureBinCalculation
             ? Clock::now()
             : Clock::time_point{};
@@ -240,64 +253,104 @@ SpectrumAggregationResult SpectrumAggregator::consume(
         if (!m_openWindow) {
             openWindow(*windowIndex, sample.sampleIndex);
         } else if (m_openWindow->windowIndex != *windowIndex) {
-            const auto closeStartedAt = Clock::now();
-            if (auto snapshot = closeOpenWindow(&result.timing)) {
+            if (blockLocalFastPath) {
+                mergeLocalAccumulationIntoOpenWindow();
+            }
+            const auto closeStartedAt = detailedTiming
+                ? Clock::now()
+                : Clock::time_point{};
+            if (auto snapshot = closeOpenWindow(detailedTiming ? &result.timing
+                                                               : nullptr)) {
                 result.snapshots.push_back(std::move(snapshot));
                 ++result.deltaCounters.producedSnapshots;
             }
-            result.timing.closeWindow += Clock::now() - closeStartedAt;
+            if (detailedTiming) {
+                result.timing.closeWindow += Clock::now() - closeStartedAt;
+            }
             openWindow(*windowIndex, sample.sampleIndex);
         }
 
-        updateOpenWindowBounds(sample);
+        if (blockLocalFastPath) {
+            updateLocalWindowBounds(sample);
 
-        const bool measureBinUpdate =
-            shouldMeasureSampledTiming(binUpdateCount++);
-        const auto binUpdateStartedAt = measureBinUpdate
-            ? Clock::now()
-            : Clock::time_point{};
-        updateBinForSample(sample, binIndex);
-        if (measureBinUpdate) {
-            sampledBinUpdate += Clock::now() - binUpdateStartedAt;
-            ++sampledBinUpdateCount;
-        }
+            const bool measureBinUpdate = detailedTiming
+                && shouldMeasureSampledTiming(binUpdateCount++);
+            const auto binUpdateStartedAt = measureBinUpdate
+                ? Clock::now()
+                : Clock::time_point{};
+            updateLocalBinForSample(sample, binIndex);
+            if (measureBinUpdate) {
+                sampledBinUpdate += Clock::now() - binUpdateStartedAt;
+                ++sampledBinUpdateCount;
+            }
 
-        const bool measureBandSummaryUpdate =
-            shouldMeasureSampledTiming(bandSummaryUpdateCount++);
-        const auto bandSummaryUpdateStartedAt = measureBandSummaryUpdate
-            ? Clock::now()
-            : Clock::time_point{};
-        updateBandSummaryForSample(sample, result.deltaCounters);
-        if (measureBandSummaryUpdate) {
-            sampledBandSummaryUpdate +=
-                Clock::now() - bandSummaryUpdateStartedAt;
-            ++sampledBandSummaryUpdateCount;
+            const bool measureBandSummaryUpdate = detailedTiming
+                && shouldMeasureSampledTiming(bandSummaryUpdateCount++);
+            const auto bandSummaryUpdateStartedAt = measureBandSummaryUpdate
+                ? Clock::now()
+                : Clock::time_point{};
+            updateLocalBandSummaryForSample(sample);
+            if (measureBandSummaryUpdate) {
+                sampledBandSummaryUpdate +=
+                    Clock::now() - bandSummaryUpdateStartedAt;
+                ++sampledBandSummaryUpdateCount;
+            }
+        } else {
+            updateOpenWindowBounds(sample);
+
+            const bool measureBinUpdate = detailedTiming
+                && shouldMeasureSampledTiming(binUpdateCount++);
+            const auto binUpdateStartedAt = measureBinUpdate
+                ? Clock::now()
+                : Clock::time_point{};
+            updateBinForSample(sample, binIndex);
+            if (measureBinUpdate) {
+                sampledBinUpdate += Clock::now() - binUpdateStartedAt;
+                ++sampledBinUpdateCount;
+            }
+
+            const bool measureBandSummaryUpdate = detailedTiming
+                && shouldMeasureSampledTiming(bandSummaryUpdateCount++);
+            const auto bandSummaryUpdateStartedAt = measureBandSummaryUpdate
+                ? Clock::now()
+                : Clock::time_point{};
+            updateBandSummaryForSample(sample, result.deltaCounters);
+            if (measureBandSummaryUpdate) {
+                sampledBandSummaryUpdate +=
+                    Clock::now() - bandSummaryUpdateStartedAt;
+                ++sampledBandSummaryUpdateCount;
+            }
         }
     }
+    if (blockLocalFastPath) {
+        mergeLocalAccumulationIntoOpenWindow();
+    }
     result.timing.sampleLoop = Clock::now() - sampleLoopStartedAt;
-    result.timing.windowCalculation =
-        scaleSampledDuration(sampledWindowCalculation,
-                             sampledWindowCalculationCount,
-                             windowCalculationCount);
-    result.timing.binCalculation =
-        scaleSampledDuration(sampledBinCalculation,
-                             sampledBinCalculationCount,
-                             binCalculationCount);
-    result.timing.binUpdate = scaleSampledDuration(sampledBinUpdate,
-                                                   sampledBinUpdateCount,
-                                                   binUpdateCount);
-    result.timing.bandSummaryUpdate =
-        scaleSampledDuration(sampledBandSummaryUpdate,
-                             sampledBandSummaryUpdateCount,
-                             bandSummaryUpdateCount);
-    result.timing.windowCalculation =
-        std::min(result.timing.windowCalculation, result.timing.sampleLoop);
-    result.timing.binCalculation =
-        std::min(result.timing.binCalculation, result.timing.sampleLoop);
-    result.timing.binUpdate =
-        std::min(result.timing.binUpdate, result.timing.sampleLoop);
-    result.timing.bandSummaryUpdate =
-        std::min(result.timing.bandSummaryUpdate, result.timing.sampleLoop);
+    if (detailedTiming) {
+        result.timing.windowCalculation =
+            scaleSampledDuration(sampledWindowCalculation,
+                                 sampledWindowCalculationCount,
+                                 windowCalculationCount);
+        result.timing.binCalculation =
+            scaleSampledDuration(sampledBinCalculation,
+                                 sampledBinCalculationCount,
+                                 binCalculationCount);
+        result.timing.binUpdate = scaleSampledDuration(sampledBinUpdate,
+                                                       sampledBinUpdateCount,
+                                                       binUpdateCount);
+        result.timing.bandSummaryUpdate =
+            scaleSampledDuration(sampledBandSummaryUpdate,
+                                 sampledBandSummaryUpdateCount,
+                                 bandSummaryUpdateCount);
+        result.timing.windowCalculation =
+            std::min(result.timing.windowCalculation, result.timing.sampleLoop);
+        result.timing.binCalculation =
+            std::min(result.timing.binCalculation, result.timing.sampleLoop);
+        result.timing.binUpdate =
+            std::min(result.timing.binUpdate, result.timing.sampleLoop);
+        result.timing.bandSummaryUpdate =
+            std::min(result.timing.bandSummaryUpdate, result.timing.sampleLoop);
+    }
     result.timing.total = Clock::now() - totalStartedAt;
     result.incrementalWindowFallbacks =
         m_incrementalWindowFallbacks - incrementalFallbacksBefore;
@@ -309,16 +362,22 @@ SpectrumAggregationResult SpectrumAggregator::flush()
 {
     SpectrumAggregationResult result;
     const auto totalStartedAt = Clock::now();
+    const bool detailedTiming = m_config.enableDetailedTiming;
     result.usedFastWindowIndex = m_canUseFastWindowIndex;
     result.usedIncrementalWindowIndex = m_canUseIncrementalWindowIndex;
     result.usedFastBinIndex = m_canUseFastBinIndex;
     result.usedFastBandSummaryStorage = usesFixedBandSummaryStorage();
-    const auto closeStartedAt = Clock::now();
-    if (auto snapshot = closeOpenWindow(&result.timing)) {
+    if (usesBlockLocalFastPath()) {
+        mergeLocalAccumulationIntoOpenWindow();
+    }
+    const auto closeStartedAt = detailedTiming ? Clock::now() : Clock::time_point{};
+    if (auto snapshot = closeOpenWindow(detailedTiming ? &result.timing : nullptr)) {
         result.snapshots.push_back(std::move(snapshot));
         ++result.deltaCounters.producedSnapshots;
     }
-    result.timing.closeWindow = Clock::now() - closeStartedAt;
+    if (detailedTiming) {
+        result.timing.closeWindow = Clock::now() - closeStartedAt;
+    }
     result.timing.total = Clock::now() - totalStartedAt;
     return result;
 }
@@ -525,6 +584,17 @@ void SpectrumAggregator::incrementHitCount(SpectrumBin& bin) noexcept
     }
 }
 
+std::uint16_t SpectrumAggregator::saturatedAddHitCount(
+    std::uint16_t left,
+    std::uint16_t right) noexcept
+{
+    const auto max = std::numeric_limits<std::uint16_t>::max();
+    if (left > max - right) {
+        return max;
+    }
+    return static_cast<std::uint16_t>(left + right);
+}
+
 void SpectrumAggregator::openWindow(std::uint64_t windowIndex,
                                     std::uint64_t sampleIndex)
 {
@@ -682,6 +752,188 @@ SpectrumBandSummary* SpectrumAggregator::bandSummaryForSample(int bandIndex)
     auto& summary = m_openWindow->bandSummaries.back();
     summary.bandIndex = bandIndex;
     return &summary;
+}
+
+void SpectrumAggregator::prepareLocalAccumulationBuffers()
+{
+    const auto binCount = static_cast<std::size_t>(m_config.renderBinCount);
+    if (m_localBins.size() != binCount) {
+        m_localBins.assign(binCount, LocalBinAccumulator{});
+    }
+    if (m_touchedBins.capacity() < binCount) {
+        m_touchedBins.reserve(binCount);
+    }
+
+    if (m_localBands.size() != m_config.bandCapacity) {
+        m_localBands.assign(m_config.bandCapacity, LocalBandAccumulator{});
+    }
+    if (m_touchedBands.capacity() < m_config.bandCapacity) {
+        m_touchedBands.reserve(m_config.bandCapacity);
+    }
+
+    resetLocalAccumulationTouched();
+}
+
+void SpectrumAggregator::resetLocalAccumulationTouched()
+{
+    for (const auto binIndex : m_touchedBins) {
+        const auto index = static_cast<std::size_t>(binIndex);
+        if (index < m_localBins.size()) {
+            m_localBins[index] = LocalBinAccumulator{};
+        }
+    }
+    m_touchedBins.clear();
+
+    for (const auto bandIndex : m_touchedBands) {
+        const auto index = static_cast<std::size_t>(bandIndex);
+        if (index < m_localBands.size()) {
+            m_localBands[index] = LocalBandAccumulator{};
+        }
+    }
+    m_touchedBands.clear();
+
+    m_localHasSamples = false;
+    m_localFirstSampleIndex = 0;
+    m_localLastSampleIndex = 0;
+}
+
+void SpectrumAggregator::updateLocalWindowBounds(
+    const core::SignalSample& sample)
+{
+    if (!m_localHasSamples) {
+        m_localFirstSampleIndex = sample.sampleIndex;
+        m_localLastSampleIndex = sample.sampleIndex;
+        m_localHasSamples = true;
+        return;
+    }
+
+    m_localFirstSampleIndex =
+        std::min(m_localFirstSampleIndex, sample.sampleIndex);
+    m_localLastSampleIndex =
+        std::max(m_localLastSampleIndex, sample.sampleIndex);
+}
+
+void SpectrumAggregator::updateLocalBinForSample(
+    const core::SignalSample& sample,
+    int binIndex)
+{
+    if (binIndex < 0) {
+        return;
+    }
+    const auto index = static_cast<std::size_t>(binIndex);
+    if (index >= m_localBins.size()) {
+        return;
+    }
+
+    auto& bin = m_localBins[index];
+    if (bin.used == 0) {
+        bin.used = 1;
+        m_touchedBins.push_back(static_cast<std::uint32_t>(index));
+    }
+
+    const auto amplitude = clampAmplitude(sample.amplitude);
+    bin.totalPeak = std::max(bin.totalPeak, amplitude);
+    if (m_config.separateBeams && sample.beamIndex == 0) {
+        bin.beam0Peak = std::max(bin.beam0Peak, amplitude);
+    } else if (m_config.separateBeams && sample.beamIndex == 1) {
+        bin.beam1Peak = std::max(bin.beam1Peak, amplitude);
+    }
+    if (bin.hitCount < std::numeric_limits<std::uint16_t>::max()) {
+        ++bin.hitCount;
+    }
+}
+
+void SpectrumAggregator::updateLocalBandSummaryForSample(
+    const core::SignalSample& sample)
+{
+    if (!hasFixedBandSummarySlot(sample.bandIndex)) {
+        return;
+    }
+
+    const auto index = static_cast<std::size_t>(sample.bandIndex);
+    if (index >= m_localBands.size()) {
+        return;
+    }
+
+    auto& band = m_localBands[index];
+    if (band.used == 0) {
+        band.used = 1;
+        band.bandIndex = sample.bandIndex;
+        m_touchedBands.push_back(static_cast<std::uint32_t>(index));
+    }
+
+    const auto amplitude = clampAmplitude(sample.amplitude);
+    ++band.sampleCount;
+    band.totalPeak = std::max(band.totalPeak, amplitude);
+    if (m_config.separateBeams && sample.beamIndex == 0) {
+        band.beam0Peak = std::max(band.beam0Peak, amplitude);
+    } else if (m_config.separateBeams && sample.beamIndex == 1) {
+        band.beam1Peak = std::max(band.beam1Peak, amplitude);
+    }
+}
+
+void SpectrumAggregator::mergeLocalAccumulationIntoOpenWindow()
+{
+    if (!m_openWindow) {
+        resetLocalAccumulationTouched();
+        return;
+    }
+
+    for (const auto binIndex : m_touchedBins) {
+        const auto index = static_cast<std::size_t>(binIndex);
+        if (index >= m_localBins.size() || index >= m_openWindow->bins.size()) {
+            continue;
+        }
+
+        const auto& local = m_localBins[index];
+        if (local.used == 0) {
+            continue;
+        }
+
+        auto& dst = m_openWindow->bins[index];
+        dst.totalPeak = std::max(dst.totalPeak, local.totalPeak);
+        dst.beam0Peak = std::max(dst.beam0Peak, local.beam0Peak);
+        dst.beam1Peak = std::max(dst.beam1Peak, local.beam1Peak);
+        dst.hitCount = saturatedAddHitCount(dst.hitCount, local.hitCount);
+    }
+
+    for (const auto bandIndex : m_touchedBands) {
+        const auto index = static_cast<std::size_t>(bandIndex);
+        if (index >= m_localBands.size()
+            || index >= m_openWindow->bandSummaryVector.size()
+            || index >= m_openWindow->bandSummaryUsed.size()) {
+            continue;
+        }
+
+        const auto& local = m_localBands[index];
+        if (local.used == 0) {
+            continue;
+        }
+
+        if (m_openWindow->bandSummaryUsed[index] == 0) {
+            m_openWindow->bandSummaryUsed[index] = 1;
+            ++m_openWindow->usedBandSummaryCount;
+            auto& summary = m_openWindow->bandSummaryVector[index];
+            summary = SpectrumBandSummary{};
+            summary.bandIndex = local.bandIndex;
+        }
+
+        auto& dst = m_openWindow->bandSummaryVector[index];
+        dst.sampleCount += local.sampleCount;
+        dst.totalPeak = std::max(dst.totalPeak, local.totalPeak);
+        dst.beam0Peak = std::max(dst.beam0Peak, local.beam0Peak);
+        dst.beam1Peak = std::max(dst.beam1Peak, local.beam1Peak);
+    }
+
+    if (m_localHasSamples) {
+        m_openWindow->firstSampleIndex =
+            std::min(m_openWindow->firstSampleIndex, m_localFirstSampleIndex);
+        m_openWindow->lastSampleIndex =
+            std::max(m_openWindow->lastSampleIndex, m_localLastSampleIndex);
+        m_openWindow->hasSamples = true;
+    }
+
+    resetLocalAccumulationTouched();
 }
 
 } // namespace siriusscope::pipeline

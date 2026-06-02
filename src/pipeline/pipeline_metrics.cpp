@@ -39,6 +39,7 @@ void PipelineMetrics::reset()
     m_spectrumFastBandSummaryBlocks = 0;
     m_spectrumIncrementalWindowBlocks = 0;
     m_spectrumIncrementalWindowFallbacks = 0;
+    m_spectrumBlockLocalAccumulationBlocks = 0;
     m_rxLatencyMax = std::chrono::milliseconds{0};
     m_processingLatencyMax = std::chrono::milliseconds{0};
     m_aggregationLatencyMax = std::chrono::milliseconds{0};
@@ -402,6 +403,12 @@ void PipelineMetrics::recordSpectrumIncrementalWindowUsage(
     m_spectrumIncrementalWindowFallbacks += fallbackCount;
 }
 
+void PipelineMetrics::recordSpectrumBlockLocalAccumulationBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_spectrumBlockLocalAccumulationBlocks;
+}
+
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters,
@@ -488,6 +495,8 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.spectrumIncrementalWindowBlocks = m_spectrumIncrementalWindowBlocks;
     snapshot.spectrumIncrementalWindowFallbacks =
         m_spectrumIncrementalWindowFallbacks;
+    snapshot.spectrumBlockLocalAccumulationBlocks =
+        m_spectrumBlockLocalAccumulationBlocks;
     snapshot.producedBearingSnapshots = m_producedBearingSnapshots;
     snapshot.producedBearingEstimates = m_producedBearingEstimates;
     snapshot.completeBearingCandidates = m_completeBearingCandidates;

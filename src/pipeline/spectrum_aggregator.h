@@ -36,6 +36,7 @@ struct SpectrumAggregatorConfig
     bool useFastWindowIndex = true;
     bool useFastBinIndex = true;
     bool useFixedBandSummaryStorage = true;
+    bool enableDetailedTiming = false;
     std::size_t bandCapacity = 0;
 };
 
@@ -69,6 +70,7 @@ struct SpectrumAggregationResult
     bool usedFastBinIndex = false;
     bool usedFastBandSummaryStorage = false;
     bool usedIncrementalWindowIndex = false;
+    bool usedBlockLocalAccumulation = false;
     std::uint64_t incrementalWindowFallbacks = 0;
 };
 
@@ -101,8 +103,28 @@ private:
         bool hasSamples = false;
     };
 
+    struct LocalBinAccumulator
+    {
+        std::uint16_t totalPeak = 0;
+        std::uint16_t beam0Peak = 0;
+        std::uint16_t beam1Peak = 0;
+        std::uint16_t hitCount = 0;
+        std::uint8_t used = 0;
+    };
+
+    struct LocalBandAccumulator
+    {
+        int bandIndex = 0;
+        std::uint64_t sampleCount = 0;
+        std::uint16_t totalPeak = 0;
+        std::uint16_t beam0Peak = 0;
+        std::uint16_t beam1Peak = 0;
+        std::uint8_t used = 0;
+    };
+
     void prepareDerivedConfig();
     bool usesFixedBandSummaryStorage() const noexcept;
+    bool usesBlockLocalFastPath() const noexcept;
     bool hasValidUntrustedSample(const core::SignalSample& sample) const;
     bool hasFixedBandSummarySlot(int bandIndex) const noexcept;
     std::optional<std::uint64_t> exactWindowForSample(
@@ -119,6 +141,8 @@ private:
     int binForFrequency(std::int64_t frequencyHz) const noexcept;
     static std::uint16_t clampAmplitude(int amplitude) noexcept;
     static void incrementHitCount(SpectrumBin& bin) noexcept;
+    static std::uint16_t saturatedAddHitCount(std::uint16_t left,
+                                              std::uint16_t right) noexcept;
 
     void openWindow(std::uint64_t windowIndex, std::uint64_t sampleIndex);
     std::shared_ptr<const SpectrumSnapshot> closeOpenWindow(
@@ -128,6 +152,12 @@ private:
     void updateBandSummaryForSample(const core::SignalSample& sample,
                                     SpectrumAggregatorCounters& deltaCounters);
     SpectrumBandSummary* bandSummaryForSample(int bandIndex);
+    void prepareLocalAccumulationBuffers();
+    void resetLocalAccumulationTouched();
+    void updateLocalWindowBounds(const core::SignalSample& sample);
+    void updateLocalBinForSample(const core::SignalSample& sample, int binIndex);
+    void updateLocalBandSummaryForSample(const core::SignalSample& sample);
+    void mergeLocalAccumulationIntoOpenWindow();
 
     SpectrumAggregatorConfig m_config;
     SpectrumAggregatorCounters m_counters;
@@ -143,6 +173,13 @@ private:
     bool m_canUseFastBinIndex = false;
     std::int64_t m_fastBinRangeHz = 0;
     std::int64_t m_fastBinMultiplier = 0;
+    std::vector<LocalBinAccumulator> m_localBins;
+    std::vector<std::uint32_t> m_touchedBins;
+    std::vector<LocalBandAccumulator> m_localBands;
+    std::vector<std::uint32_t> m_touchedBands;
+    bool m_localHasSamples = false;
+    std::uint64_t m_localFirstSampleIndex = 0;
+    std::uint64_t m_localLastSampleIndex = 0;
 };
 
 } // namespace siriusscope::pipeline

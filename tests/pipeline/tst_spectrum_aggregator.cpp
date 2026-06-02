@@ -362,11 +362,21 @@ void testFastAndLegacyModesProduceEquivalentSnapshot(TestRunner& test)
         makeSample(4, 150, 60, 0, 1),
     };
 
-    const auto legacySnapshot = consumeAndFlush(legacyAggregator, samples);
-    const auto fastSnapshot = consumeAndFlush(fastAggregator, samples);
+    const auto legacyConsumed = legacyAggregator.consume(samples);
+    const auto fastConsumed = fastAggregator.consume(samples);
+    const auto legacyFlushed = legacyAggregator.flush();
+    const auto fastFlushed = fastAggregator.flush();
+    const auto legacySnapshot =
+        legacyFlushed.snapshots.empty() ? nullptr : legacyFlushed.snapshots.front();
+    const auto fastSnapshot =
+        fastFlushed.snapshots.empty() ? nullptr : fastFlushed.snapshots.front();
 
     test.require(legacySnapshot && fastSnapshot,
                  "fast and legacy spectrum modes both publish snapshots");
+    test.require(!legacyConsumed.usedBlockLocalAccumulation,
+                 "legacy spectrum mode does not use block-local accumulation");
+    test.require(fastConsumed.usedBlockLocalAccumulation,
+                 "fast spectrum mode uses block-local accumulation");
     if (!legacySnapshot || !fastSnapshot) {
         return;
     }
@@ -389,6 +399,8 @@ void testFixedBandSummaryRejectsOutOfCapacityBand(TestRunner& test)
 
     test.require(consumed.snapshots.empty() && flushed.snapshots.empty(),
                  "fixed band summary storage rejects out-of-capacity sample");
+    test.require(consumed.usedBlockLocalAccumulation,
+                 "out-of-capacity fast path reports block-local eligibility");
     test.require(aggregator.counters().invalidSamples == 1,
                  "fixed band summary storage counts out-of-capacity band as invalid");
 }
@@ -415,6 +427,8 @@ void testFastWindowBoundariesMatchLegacy(TestRunner& test)
                  "fast and legacy window modes split at same boundary");
     test.require(fastConsumed.usedFastWindowIndex,
                  "divisible window mode reports old fast window usage");
+    test.require(fastConsumed.usedBlockLocalAccumulation,
+                 "divisible window mode uses block-local accumulation");
     if (legacySnapshots.size() != 2 || fastSnapshots.size() != 2) {
         return;
     }
@@ -556,6 +570,95 @@ void testFastBinBoundariesMatchLegacy(TestRunner& test)
                  "fast and legacy bin modes count out-of-range samples equally");
 }
 
+void testBlockLocalFastPathMatchesLegacyAcrossWindowBoundary(TestRunner& test)
+{
+    auto exactConfig = fastConfig();
+    exactConfig.windowIndexMode = pipeline::SpectrumWindowIndexMode::ExactInt128;
+    exactConfig.useFastWindowIndex = false;
+    exactConfig.useFastBinIndex = false;
+    exactConfig.useFixedBandSummaryStorage = false;
+    pipeline::SpectrumAggregator legacyAggregator(exactConfig);
+    pipeline::SpectrumAggregator fastAggregator(fastConfig());
+    const std::vector<core::SignalSample> samples{
+        makeSample(0, 100, 20, 0, 0),
+        makeSample(1, 110, 40, 1, 1),
+        makeSample(19, 150, 90, 0, 2),
+        makeSample(20, 150, 50, 1, 2),
+        makeSample(21, 160, 70, 0, 1),
+        makeSample(39, 199, 80, 1, 0),
+    };
+
+    const auto legacySnapshots = consumeAndFlushAll(legacyAggregator, samples);
+    auto fastConsumed = fastAggregator.consume(samples);
+    auto fastFlushed = fastAggregator.flush();
+    fastConsumed.snapshots.insert(fastConsumed.snapshots.end(),
+                                  fastFlushed.snapshots.begin(),
+                                  fastFlushed.snapshots.end());
+
+    test.require(fastConsumed.usedBlockLocalAccumulation,
+                 "block-local fast path reports usage across window boundary");
+    requireSameSnapshots(test,
+                         legacySnapshots,
+                         fastConsumed.snapshots,
+                         "block-local/legacy window boundary equivalence");
+}
+
+void testDetailedTimingDisabledByDefault(TestRunner& test)
+{
+    pipeline::SpectrumAggregator aggregator(fastConfig());
+    std::vector<core::SignalSample> samples;
+    samples.reserve(4096);
+    for (std::uint64_t index = 0; index < 4096; ++index) {
+        samples.push_back(makeSample(index,
+                                     100 + static_cast<std::int64_t>(index % 100),
+                                     10 + static_cast<int>(index % 100),
+                                     static_cast<int>(index % 2),
+                                     static_cast<int>(index % 4)));
+    }
+
+    const auto consumed = aggregator.consume(samples);
+
+    test.require(consumed.timing.sampleLoop > std::chrono::steady_clock::duration{},
+                 "default spectrum timing records coarse sample loop latency");
+    test.require(consumed.timing.windowCalculation
+                         == std::chrono::steady_clock::duration{}
+                     && consumed.timing.binCalculation
+                         == std::chrono::steady_clock::duration{}
+                     && consumed.timing.binUpdate
+                         == std::chrono::steady_clock::duration{}
+                     && consumed.timing.bandSummaryUpdate
+                         == std::chrono::steady_clock::duration{},
+                 "default spectrum timing leaves detailed sub timings disabled");
+}
+
+void testDetailedTimingCanBeEnabled(TestRunner& test)
+{
+    auto config = fastConfig();
+    config.enableDetailedTiming = true;
+    pipeline::SpectrumAggregator aggregator(config);
+    std::vector<core::SignalSample> samples;
+    samples.reserve(4096);
+    for (std::uint64_t index = 0; index < 4096; ++index) {
+        samples.push_back(makeSample(index,
+                                     100 + static_cast<std::int64_t>(index % 100),
+                                     10 + static_cast<int>(index % 100),
+                                     static_cast<int>(index % 2),
+                                     static_cast<int>(index % 4)));
+    }
+
+    const auto consumed = aggregator.consume(samples);
+    const bool hasDetailedTiming =
+        consumed.timing.windowCalculation > std::chrono::steady_clock::duration{}
+        || consumed.timing.binCalculation > std::chrono::steady_clock::duration{}
+        || consumed.timing.binUpdate > std::chrono::steady_clock::duration{}
+        || consumed.timing.bandSummaryUpdate > std::chrono::steady_clock::duration{};
+
+    test.require(consumed.timing.sampleLoop > std::chrono::steady_clock::duration{},
+                 "enabled spectrum timing records sample loop latency");
+    test.require(hasDetailedTiming,
+                 "enabled spectrum timing records at least one detailed sub timing");
+}
+
 } // namespace
 
 int main()
@@ -575,6 +678,9 @@ int main()
     testIncrementalWindowSplitsAtNonDivisibleBoundaries(test);
     testIncrementalWindowFallsBackOnBackwardSampleIndex(test);
     testFastBinBoundariesMatchLegacy(test);
+    testBlockLocalFastPathMatchesLegacyAcrossWindowBoundary(test);
+    testDetailedTimingDisabledByDefault(test);
+    testDetailedTimingCanBeEnabled(test);
 
     return test.result();
 }

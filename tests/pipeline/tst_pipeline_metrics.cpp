@@ -193,6 +193,8 @@ void testSpectrumFastPathCounter(TestRunner& test)
     metrics.recordSpectrumIncrementalWindowUsage(true, 0);
     metrics.recordSpectrumIncrementalWindowUsage(true, 3);
     metrics.recordSpectrumIncrementalWindowUsage(false, 2);
+    metrics.recordSpectrumBlockLocalAccumulationBlock();
+    metrics.recordSpectrumBlockLocalAccumulationBlock();
 
     const auto snapshot = snapshotFor(metrics);
     test.require(snapshot.spectrumFastWindowBlocks == 2,
@@ -205,6 +207,8 @@ void testSpectrumFastPathCounter(TestRunner& test)
                  "spectrum incremental window blocks are counted");
     test.require(snapshot.spectrumIncrementalWindowFallbacks == 5,
                  "spectrum incremental window fallbacks are counted");
+    test.require(snapshot.spectrumBlockLocalAccumulationBlocks == 2,
+                 "spectrum block-local accumulation blocks are counted");
 }
 
 void testBearingMicroBreakdownLatencyStats(TestRunner& test)
@@ -282,6 +286,7 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordSpectrumBandSummaryUpdateLatency(std::chrono::milliseconds{8});
     metrics.recordSpectrumFastPathUsage(true, true, true);
     metrics.recordSpectrumIncrementalWindowUsage(true, 4);
+    metrics.recordSpectrumBlockLocalAccumulationBlock();
     metrics.recordBearingSampleLoopLatency(std::chrono::milliseconds{2});
     metrics.recordBearingCandidateUpdateLatency(std::chrono::milliseconds{3});
     metrics.recordBearingFastCandidateStorageBlock();
@@ -316,6 +321,8 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears spectrum incremental window block counter");
     test.require(snapshot.spectrumIncrementalWindowFallbacks == 0,
                  "reset clears spectrum incremental fallback counter");
+    test.require(snapshot.spectrumBlockLocalAccumulationBlocks == 0,
+                 "reset clears spectrum block-local accumulation counter");
     test.require(snapshot.bearingSampleLoopLatency.count == 0,
                  "reset clears bearing sample loop latency count");
     test.require(snapshot.bearingCandidateUpdateLatency.count == 0,

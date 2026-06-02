@@ -299,6 +299,9 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
         m_metrics->recordSpectrumIncrementalWindowUsage(
             spectrumResult.usedIncrementalWindowIndex,
             spectrumResult.incrementalWindowFallbacks);
+        if (spectrumResult.usedBlockLocalAccumulation) {
+            m_metrics->recordSpectrumBlockLocalAccumulationBlock();
+        }
     }
 
     BearingAggregationResult bearingResult;

@@ -156,6 +156,11 @@ bool strictTargetRawPipelineSustainRequired()
     return envFlagEnabled("SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS");
 }
 
+bool detailedSpectrumTimingEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_ENABLE_DETAILED_SPECTRUM_TIMING");
+}
+
 std::vector<LatencyStage> stageLatencies(const pipeline::PipelineMetricsSnapshot& metrics)
 {
     return {
@@ -211,6 +216,13 @@ std::vector<LatencyStage> bearingInternalLatencies(
 void printSpectrumInternalBottleneck(
     const pipeline::PipelineMetricsSnapshot& metrics)
 {
+    if (!detailedSpectrumTimingEnabled()) {
+        std::cout << "SpectrumAggregator detailed timing: disabled\n"
+                  << "SpectrumAggregator internal bottleneck by avg: n/a\n"
+                  << "SpectrumAggregator internal bottleneck by max: n/a\n";
+        return;
+    }
+
     const auto stages = spectrumInternalLatencies(metrics);
     const auto hasRecordedLatency =
         std::any_of(stages.begin(), stages.end(), [](const LatencyStage& stage) {
@@ -464,6 +476,7 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     config.spectrum.sourceMaxHz = kSourceMaxHz;
     config.spectrum.snapshotPeriodNs = kRowPeriodNs;
     config.spectrum.timeBase = timeBase;
+    config.spectrum.enableDetailedTiming = detailedSpectrumTimingEnabled();
 
     config.bearing.frequencyBinCount = kRenderBinCount;
     config.bearing.sourceMinHz = kSourceMinHz;
@@ -717,6 +730,10 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.signalParameterSnapshotPublishLatency.averageMs() << "/"
               << result.pipeline.signalParameterSnapshotPublishLatency.maxMs << '\n'
               << "Spectrum micro-breakdown:\n"
+              << "  Spectrum detailed timing: "
+              << (detailedSpectrumTimingEnabled() ? "enabled" : "disabled") << '\n'
+              << "  detailedSpectrumTimingEnabled = "
+              << (detailedSpectrumTimingEnabled() ? "true" : "false") << '\n'
               << "  sampleLoop avg/max = "
               << result.pipeline.spectrumSampleLoopLatency.averageMs() << "/"
               << result.pipeline.spectrumSampleLoopLatency.maxMs << '\n'
@@ -762,6 +779,8 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.spectrumIncrementalWindowBlocks << '\n'
               << "  spectrumIncrementalWindowFallbacks = "
               << result.pipeline.spectrumIncrementalWindowFallbacks << '\n'
+              << "  spectrumBlockLocalAccumulationBlocks = "
+              << result.pipeline.spectrumBlockLocalAccumulationBlocks << '\n'
               << "Bearing micro-breakdown:\n"
               << "  sampleLoop avg/max = "
               << result.pipeline.bearingSampleLoopLatency.averageMs() << "/"

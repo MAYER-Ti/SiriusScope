@@ -93,6 +93,7 @@ struct PipelineMetricsSnapshot
     std::uint64_t spectrumFastBandSummaryBlocks = 0;
     std::uint64_t spectrumIncrementalWindowBlocks = 0;
     std::uint64_t spectrumIncrementalWindowFallbacks = 0;
+    std::uint64_t spectrumBlockLocalAccumulationBlocks = 0;
     std::uint64_t producedBearingSnapshots = 0;
     std::uint64_t producedBearingEstimates = 0;
     std::uint64_t completeBearingCandidates = 0;
@@ -186,6 +187,7 @@ public:
                                      bool fastBandSummary);
     void recordSpectrumIncrementalWindowUsage(bool incrementalWindow,
                                              std::uint64_t fallbackCount);
+    void recordSpectrumBlockLocalAccumulationBlock();
 
     PipelineMetricsSnapshot snapshot(
         const BoundedBlockQueueMetrics& queueMetrics,
@@ -262,6 +264,7 @@ private:
     std::uint64_t m_spectrumFastBandSummaryBlocks = 0;
     std::uint64_t m_spectrumIncrementalWindowBlocks = 0;
     std::uint64_t m_spectrumIncrementalWindowFallbacks = 0;
+    std::uint64_t m_spectrumBlockLocalAccumulationBlocks = 0;
 };
 
 } // namespace siriusscope::pipeline
