@@ -134,6 +134,69 @@ void testSignalParameterFastPathCounter(TestRunner& test)
                  "signal parameter trusted fixed-band fast-path blocks are counted");
 }
 
+void testBearingMicroBreakdownLatencyStats(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordBearingSampleLoopLatency(std::chrono::milliseconds{12});
+    metrics.recordBearingSampleLoopLatency(std::chrono::milliseconds{18});
+    metrics.recordBearingWindowCalculationLatency(std::chrono::milliseconds{2});
+    metrics.recordBearingBinCalculationLatency(std::chrono::milliseconds{3});
+    metrics.recordBearingCandidateUpdateLatency(std::chrono::milliseconds{7});
+    metrics.recordBearingCloseWindowLatency(std::chrono::milliseconds{1});
+    metrics.recordBearingSnapshotBuildLatency(std::chrono::milliseconds{4});
+    metrics.recordBearingEstimateCalculationLatency(std::chrono::milliseconds{5});
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.bearingSampleLoopLatency.count == 2,
+                 "bearing sample loop latency count records");
+    test.requireNear(snapshot.bearingSampleLoopLatency.averageMs(),
+                     15.0,
+                     0.0001,
+                     "bearing sample loop latency average is calculated");
+    test.requireNear(snapshot.bearingSampleLoopLatency.maxMs,
+                     18.0,
+                     0.0001,
+                     "bearing sample loop latency max is tracked");
+    test.requireNear(snapshot.bearingWindowCalculationLatency.averageMs(),
+                     2.0,
+                     0.0001,
+                     "bearing window calculation latency average is calculated");
+    test.requireNear(snapshot.bearingBinCalculationLatency.maxMs,
+                     3.0,
+                     0.0001,
+                     "bearing bin calculation latency max is tracked");
+    test.requireNear(snapshot.bearingCandidateUpdateLatency.averageMs(),
+                     7.0,
+                     0.0001,
+                     "bearing candidate update latency average is calculated");
+    test.requireNear(snapshot.bearingCloseWindowLatency.maxMs,
+                     1.0,
+                     0.0001,
+                     "bearing close window latency max is tracked");
+    test.requireNear(snapshot.bearingSnapshotBuildLatency.averageMs(),
+                     4.0,
+                     0.0001,
+                     "bearing snapshot build latency average is calculated");
+    test.requireNear(snapshot.bearingEstimateCalculationLatency.maxMs,
+                     5.0,
+                     0.0001,
+                     "bearing estimate calculation latency max is tracked");
+}
+
+void testBearingFastCandidateStorageCounter(TestRunner& test)
+{
+    pipeline::PipelineMetrics metrics;
+
+    metrics.recordBearingFastCandidateStorageBlock();
+    metrics.recordBearingFastCandidateStorageBlock();
+    metrics.recordBearingFastCandidateStorageBlock();
+
+    const auto snapshot = snapshotFor(metrics);
+    test.require(snapshot.bearingFastCandidateStorageBlocks == 3,
+                 "bearing fast candidate storage blocks are counted");
+}
+
 void testResetClearsLatencyStats(TestRunner& test)
 {
     pipeline::PipelineMetrics metrics;
@@ -142,6 +205,9 @@ void testResetClearsLatencyStats(TestRunner& test)
     metrics.recordSpectrumSnapshotPublishLatency(std::chrono::milliseconds{3});
     metrics.recordSignalParameterFinalizeLatency(std::chrono::milliseconds{4});
     metrics.recordSignalParameterTrustedFixedBandFastPathBlock();
+    metrics.recordBearingSampleLoopLatency(std::chrono::milliseconds{2});
+    metrics.recordBearingCandidateUpdateLatency(std::chrono::milliseconds{3});
+    metrics.recordBearingFastCandidateStorageBlock();
     metrics.reset();
 
     const auto snapshot = snapshotFor(metrics);
@@ -159,6 +225,12 @@ void testResetClearsLatencyStats(TestRunner& test)
                  "reset clears signal parameter finalize latency count");
     test.require(snapshot.signalParameterTrustedFixedBandFastPathBlocks == 0,
                  "reset clears signal parameter fast-path block counter");
+    test.require(snapshot.bearingSampleLoopLatency.count == 0,
+                 "reset clears bearing sample loop latency count");
+    test.require(snapshot.bearingCandidateUpdateLatency.count == 0,
+                 "reset clears bearing candidate update latency count");
+    test.require(snapshot.bearingFastCandidateStorageBlocks == 0,
+                 "reset clears bearing fast candidate storage counter");
 }
 
 } // namespace
@@ -171,6 +243,8 @@ int main()
     testAverageSamplesPerProcessedBlock(test);
     testSignalParameterMicroBreakdownLatencyStats(test);
     testSignalParameterFastPathCounter(test);
+    testBearingMicroBreakdownLatencyStats(test);
+    testBearingFastCandidateStorageCounter(test);
     testResetClearsLatencyStats(test);
 
     return test.result();

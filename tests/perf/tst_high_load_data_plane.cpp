@@ -181,6 +181,48 @@ std::vector<LatencyStage> signalParameterInternalLatencies(
     };
 }
 
+std::vector<LatencyStage> bearingInternalLatencies(
+    const pipeline::PipelineMetricsSnapshot& metrics)
+{
+    return {
+        {"windowCalculation", metrics.bearingWindowCalculationLatency},
+        {"binCalculation", metrics.bearingBinCalculationLatency},
+        {"candidateUpdate", metrics.bearingCandidateUpdateLatency},
+        {"closeWindow", metrics.bearingCloseWindowLatency},
+        {"snapshotBuild", metrics.bearingSnapshotBuildLatency},
+        {"estimateCalculation", metrics.bearingEstimateCalculationLatency},
+    };
+}
+
+void printBearingInternalBottleneck(
+    const pipeline::PipelineMetricsSnapshot& metrics)
+{
+    const auto stages = bearingInternalLatencies(metrics);
+    const auto hasRecordedLatency =
+        std::any_of(stages.begin(), stages.end(), [](const LatencyStage& stage) {
+            return stage.stats.count > 0;
+        });
+    if (!hasRecordedLatency) {
+        std::cout << "BearingAggregator internal bottleneck by avg: n/a\n"
+                  << "BearingAggregator internal bottleneck by max: n/a\n";
+        return;
+    }
+
+    const auto byAverage = std::max_element(
+        stages.begin(), stages.end(), [](const LatencyStage& left, const LatencyStage& right) {
+            return left.stats.averageMs() < right.stats.averageMs();
+        });
+    const auto byMax = std::max_element(
+        stages.begin(), stages.end(), [](const LatencyStage& left, const LatencyStage& right) {
+            return left.stats.maxMs < right.stats.maxMs;
+        });
+
+    std::cout << "BearingAggregator internal bottleneck by avg: "
+              << byAverage->name << " = " << byAverage->stats.averageMs() << " ms\n"
+              << "BearingAggregator internal bottleneck by max: " << byMax->name
+              << " = " << byMax->stats.maxMs << " ms\n";
+}
+
 void printSignalParameterInternalBottleneck(
     const pipeline::PipelineMetricsSnapshot& metrics)
 {
@@ -236,6 +278,10 @@ void printBottleneckHint(const AuditResult& result)
               << " (" << byAverage->stats.averageMs() << " ms)\n"
               << "Likely bottleneck stage by max latency: " << byMax->name
               << " (" << byMax->stats.maxMs << " ms)\n";
+    if (std::string{byAverage->name} == "BearingAggregator"
+        || std::string{byMax->name} == "BearingAggregator") {
+        printBearingInternalBottleneck(result.pipeline);
+    }
     if (std::string{byAverage->name} == "SignalParameterAggregator"
         || std::string{byMax->name} == "SignalParameterAggregator") {
         printSignalParameterInternalBottleneck(result.pipeline);
@@ -619,6 +665,34 @@ void printAuditSummary(const AuditResult& result)
               << "  signalParameterSnapshotPublishMs avg/max = "
               << result.pipeline.signalParameterSnapshotPublishLatency.averageMs() << "/"
               << result.pipeline.signalParameterSnapshotPublishLatency.maxMs << '\n'
+              << "Bearing micro-breakdown:\n"
+              << "  sampleLoop avg/max = "
+              << result.pipeline.bearingSampleLoopLatency.averageMs() << "/"
+              << result.pipeline.bearingSampleLoopLatency.maxMs << '\n'
+              << "  windowCalculation avg/max = "
+              << result.pipeline.bearingWindowCalculationLatency.averageMs() << "/"
+              << result.pipeline.bearingWindowCalculationLatency.maxMs << '\n'
+              << "  binCalculation avg/max = "
+              << result.pipeline.bearingBinCalculationLatency.averageMs() << "/"
+              << result.pipeline.bearingBinCalculationLatency.maxMs << '\n'
+              << "  candidateUpdate avg/max = "
+              << result.pipeline.bearingCandidateUpdateLatency.averageMs() << "/"
+              << result.pipeline.bearingCandidateUpdateLatency.maxMs << '\n'
+              << "  closeWindow avg/max = "
+              << result.pipeline.bearingCloseWindowLatency.averageMs() << "/"
+              << result.pipeline.bearingCloseWindowLatency.maxMs << '\n'
+              << "  snapshotBuild avg/max = "
+              << result.pipeline.bearingSnapshotBuildLatency.averageMs() << "/"
+              << result.pipeline.bearingSnapshotBuildLatency.maxMs << '\n'
+              << "  estimateCalculation avg/max = "
+              << result.pipeline.bearingEstimateCalculationLatency.averageMs() << "/"
+              << result.pipeline.bearingEstimateCalculationLatency.maxMs << '\n'
+              << "  usedFastCandidateStorage = "
+              << (result.pipeline.bearingFastCandidateStorageBlocks > 0 ? "true"
+                                                                        : "false")
+              << '\n'
+              << "  bearingFastCandidateStorageBlocks = "
+              << result.pipeline.bearingFastCandidateStorageBlocks << '\n'
               << "Signal parameter micro-breakdown:\n"
               << "  ingest avg/max = "
               << result.pipeline.signalParameterIngestLatency.averageMs() << "/"

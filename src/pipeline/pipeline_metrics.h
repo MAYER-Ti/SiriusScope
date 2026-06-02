@@ -42,6 +42,13 @@ struct PipelineMetricsSnapshot
     LatencyStats waterfallAggregationLatency;
     LatencyStats spectrumAggregationLatency;
     LatencyStats bearingAggregationLatency;
+    LatencyStats bearingSampleLoopLatency;
+    LatencyStats bearingWindowCalculationLatency;
+    LatencyStats bearingBinCalculationLatency;
+    LatencyStats bearingCandidateUpdateLatency;
+    LatencyStats bearingCloseWindowLatency;
+    LatencyStats bearingSnapshotBuildLatency;
+    LatencyStats bearingEstimateCalculationLatency;
     LatencyStats signalParameterAggregationLatency;
     LatencyStats signalParameterIngestLatency;
     LatencyStats signalParameterSnapshotDecisionLatency;
@@ -81,6 +88,7 @@ struct PipelineMetricsSnapshot
     std::uint64_t missingBeam0Candidates = 0;
     std::uint64_t missingBeam1Candidates = 0;
     double bearingAggregationLatencyMaxMs = 0.0;
+    std::uint64_t bearingFastCandidateStorageBlocks = 0;
     std::uint64_t producedSignalParameterSnapshots = 0;
     std::uint64_t signalParameterTrustedFixedBandFastPathBlocks = 0;
     std::size_t queueDepth = 0;
@@ -112,6 +120,13 @@ public:
     void recordWaterfallAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordSpectrumAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordBearingAggregationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingSampleLoopLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingWindowCalculationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingBinCalculationLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingCandidateUpdateLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingCloseWindowLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingSnapshotBuildLatency(std::chrono::steady_clock::duration elapsed);
+    void recordBearingEstimateCalculationLatency(std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterAggregationLatency(std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterIngestLatency(std::chrono::steady_clock::duration elapsed);
     void recordSignalParameterSnapshotDecisionLatency(
@@ -144,6 +159,7 @@ public:
                                   std::chrono::milliseconds aggregationLatency);
     void recordSignalParameterSnapshotProduced(std::uint64_t producedSnapshots);
     void recordSignalParameterTrustedFixedBandFastPathBlock();
+    void recordBearingFastCandidateStorageBlock();
 
     PipelineMetricsSnapshot snapshot(
         const BoundedBlockQueueMetrics& queueMetrics,
@@ -190,6 +206,13 @@ private:
     LatencyStats m_waterfallAggregationLatency;
     LatencyStats m_spectrumAggregationLatency;
     LatencyStats m_bearingAggregationLatency;
+    LatencyStats m_bearingSampleLoopLatency;
+    LatencyStats m_bearingWindowCalculationLatency;
+    LatencyStats m_bearingBinCalculationLatency;
+    LatencyStats m_bearingCandidateUpdateLatency;
+    LatencyStats m_bearingCloseWindowLatency;
+    LatencyStats m_bearingSnapshotBuildLatency;
+    LatencyStats m_bearingEstimateCalculationLatency;
     LatencyStats m_signalParameterAggregationLatency;
     LatencyStats m_signalParameterIngestLatency;
     LatencyStats m_signalParameterSnapshotDecisionLatency;
@@ -200,6 +223,7 @@ private:
     LatencyStats m_bearingSnapshotPublishLatency;
     LatencyStats m_signalParameterSnapshotPublishLatency;
     std::uint64_t m_processedBlockSamplesTotal = 0;
+    std::uint64_t m_bearingFastCandidateStorageBlocks = 0;
 };
 
 } // namespace siriusscope::pipeline

@@ -295,6 +295,21 @@ void ProcessingEngine::processBlock(const SignalBlock& block)
             bearingAggregationElapsed);
     if (m_metrics) {
         m_metrics->recordBearingAggregationLatency(bearingAggregationElapsed);
+        m_metrics->recordBearingSampleLoopLatency(bearingResult.timing.sampleLoop);
+        m_metrics->recordBearingWindowCalculationLatency(
+            bearingResult.timing.windowCalculation);
+        m_metrics->recordBearingBinCalculationLatency(
+            bearingResult.timing.binCalculation);
+        m_metrics->recordBearingCandidateUpdateLatency(
+            bearingResult.timing.candidateUpdate);
+        m_metrics->recordBearingCloseWindowLatency(bearingResult.timing.closeWindow);
+        m_metrics->recordBearingSnapshotBuildLatency(
+            bearingResult.timing.snapshotBuild);
+        m_metrics->recordBearingEstimateCalculationLatency(
+            bearingResult.timing.estimateCalculation);
+        if (bearingResult.usedFastCandidateStorage) {
+            m_metrics->recordBearingFastCandidateStorageBlock();
+        }
     }
 
     SignalParameterAggregationResult signalParameterResult;

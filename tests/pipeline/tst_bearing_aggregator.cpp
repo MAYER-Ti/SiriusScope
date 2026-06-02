@@ -1,5 +1,6 @@
 #include "pipeline/bearing_aggregator.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -23,6 +24,14 @@ public:
         }
     }
 
+    void requireNear(double actual,
+                     double expected,
+                     double tolerance,
+                     const std::string& message)
+    {
+        require(std::abs(actual - expected) <= tolerance, message);
+    }
+
     int result() const noexcept { return m_failed == 0 ? EXIT_SUCCESS : EXIT_FAILURE; }
 
 private:
@@ -41,6 +50,16 @@ pipeline::BearingAggregatorConfig makeConfig()
     config.minQuality = 0.0;
     config.fallbackAntennaAzimuthDeg = 45.0;
     config.timeBase = core::TimeBase{1'000'000'000, 0, 1'000'000};
+    return config;
+}
+
+pipeline::BearingAggregatorConfig makeStorageConfig(
+    pipeline::BearingCandidateStorageMode storageMode)
+{
+    auto config = makeConfig();
+    config.candidateStorageMode = storageMode;
+    config.bandCapacity = 4;
+    config.frequencyBinCount = 16;
     return config;
 }
 
@@ -192,6 +211,164 @@ void testSequenceIsImmutableAndIncreases(TestRunner& test)
                   "Bearing snapshots are exposed as immutable shared_ptr<const T>");
 }
 
+void testMapAndFlatStorageProduceEquivalentEstimate(TestRunner& test)
+{
+    pipeline::BearingAggregator mapAggregator(
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::MapByBandAndBin));
+    pipeline::BearingAggregator flatAggregator(
+        makeStorageConfig(pipeline::BearingCandidateStorageMode::FlatBandBinVector));
+
+    const std::vector<core::SignalSample> samples{
+        sample(0, 150, 0, 100),
+        sample(1, 150, 1, 80),
+    };
+    const auto mapSnapshot = consumeAndFlush(mapAggregator, samples, 45.0);
+    const auto flatSnapshot = consumeAndFlush(flatAggregator, samples, 45.0);
+
+    test.require(mapSnapshot && flatSnapshot,
+                 "map and flat storage both publish equivalent snapshots");
+    test.require(mapSnapshot && flatSnapshot
+                     && mapSnapshot->estimates.size() == flatSnapshot->estimates.size(),
+                 "map and flat storage estimate counts match");
+    if (!mapSnapshot || !flatSnapshot || mapSnapshot->estimates.empty()
+        || flatSnapshot->estimates.empty()) {
+        return;
+    }
+
+    const auto& mapEstimate = mapSnapshot->estimates.front();
+    const auto& flatEstimate = flatSnapshot->estimates.front();
+    test.require(mapEstimate.bandIndex == flatEstimate.bandIndex,
+                 "map and flat storage keep band index");
+    test.require(mapEstimate.frequencyBin == flatEstimate.frequencyBin,
+                 "map and flat storage keep frequency bin");
+    test.require(mapEstimate.frequencyHz == flatEstimate.frequencyHz,
+                 "map and flat storage keep center frequency");
+    test.requireNear(flatEstimate.bearingAzimuthDeg,
+                     mapEstimate.bearingAzimuthDeg,
+                     0.0001,
+                     "map and flat storage keep bearing");
+    test.requireNear(flatEstimate.quality,
+                     mapEstimate.quality,
+                     0.0001,
+                     "map and flat storage keep quality");
+}
+
+void testFlatStorageRejectsOutOfCapacityBand(TestRunner& test)
+{
+    auto config = makeConfig();
+    config.candidateStorageMode =
+        pipeline::BearingCandidateStorageMode::FlatBandBinVector;
+    config.bandCapacity = 1;
+
+    pipeline::BearingAggregator aggregator(config);
+    const auto consumed = aggregator.consume(std::vector<core::SignalSample>{
+        sample(0, 150, 0, 80, 2),
+        sample(0, 150, 1, 80, 2),
+    });
+    const auto flushed = aggregator.flush();
+
+    test.require(consumed.snapshots.empty() && flushed.snapshots.empty(),
+                 "flat storage rejects out-of-capacity band without candidate");
+    test.require(aggregator.counters().invalidSamples == 2,
+                 "flat storage counts out-of-capacity band as invalid samples");
+}
+
+void testFastWindowSplitsAtDivisibleBoundary(TestRunner& test)
+{
+    pipeline::BearingAggregator aggregator(makeConfig());
+    const auto consumed = aggregator.consume(std::vector<core::SignalSample>{
+        sample(19, 150, 0, 80),
+        sample(19, 150, 1, 80),
+        sample(20, 150, 0, 90),
+        sample(20, 150, 1, 90),
+    });
+    const auto flushed = aggregator.flush();
+
+    test.require(consumed.snapshots.size() == 1 && flushed.snapshots.size() == 1,
+                 "fast divisible window path splits at configured boundary");
+    test.require(consumed.snapshots.front()->estimates.size() == 1
+                     && flushed.snapshots.front()->estimates.size() == 1,
+                 "fast divisible windows keep complete estimates");
+    test.require(consumed.snapshots.front()->estimates.front().sampleIndex
+                         == 19
+                     && flushed.snapshots.front()->estimates.front().sampleIndex
+                         == 20,
+                 "fast divisible window path preserves representative indexes");
+}
+
+void testExactFallbackWindowSplitsAtNonDivisibleBoundary(TestRunner& test)
+{
+    auto config = makeConfig();
+    config.timeBase = core::TimeBase{1'000'000'000, 0, 3};
+    config.windowPeriodNs = 10;
+
+    pipeline::BearingAggregator aggregator(config);
+    const auto consumed = aggregator.consume(std::vector<core::SignalSample>{
+        sample(3, 150, 0, 80),
+        sample(3, 150, 1, 80),
+        sample(4, 150, 0, 90),
+        sample(4, 150, 1, 90),
+    });
+    const auto flushed = aggregator.flush();
+
+    test.require(consumed.snapshots.size() == 1 && flushed.snapshots.size() == 1,
+                 "exact fallback window path splits non-divisible periods");
+    test.require(consumed.snapshots.front()->estimates.front().sampleIndex
+                         == 3
+                     && flushed.snapshots.front()->estimates.front().sampleIndex
+                         == 4,
+                 "exact fallback window path preserves representative indexes");
+}
+
+void testFastBinBoundariesAndOutOfRangeSamples(TestRunner& test)
+{
+    auto config = makeConfig();
+    config.frequencyBinCount = 11;
+    config.candidateStorageMode =
+        pipeline::BearingCandidateStorageMode::FlatBandBinVector;
+
+    pipeline::BearingAggregator aggregator(config);
+    const auto snapshot = consumeAndFlush(aggregator,
+                                          {
+                                              sample(0, 100, 0, 80),
+                                              sample(0, 100, 1, 80),
+                                              sample(1, 150, 0, 80),
+                                              sample(1, 150, 1, 80),
+                                              sample(2, 200, 0, 80),
+                                              sample(2, 200, 1, 80),
+                                          });
+
+    test.require(snapshot && snapshot->estimates.size() == 3,
+                 "fast bin path creates candidates for min/mid/max frequencies");
+    if (!snapshot || snapshot->estimates.size() != 3) {
+        return;
+    }
+
+    std::vector<std::uint32_t> bins;
+    for (const auto& estimate : snapshot->estimates) {
+        bins.push_back(estimate.frequencyBin);
+    }
+    std::sort(bins.begin(), bins.end());
+    test.require(bins == std::vector<std::uint32_t>{0, 5, 10},
+                 "fast bin path maps min/mid/max to expected bins");
+
+    pipeline::BearingAggregator outOfRangeAggregator(config);
+    const auto outOfRangeConsumed =
+        outOfRangeAggregator.consume(std::vector<core::SignalSample>{
+            sample(0, 99, 0, 80),
+            sample(0, 99, 1, 80),
+            sample(1, 201, 0, 80),
+            sample(1, 201, 1, 80),
+        });
+    const auto outOfRangeFlushed = outOfRangeAggregator.flush();
+
+    test.require(outOfRangeConsumed.snapshots.empty()
+                     && outOfRangeFlushed.snapshots.empty(),
+                 "out-of-range frequencies create no bearing candidates");
+    test.require(outOfRangeAggregator.counters().outOfRangeSamples == 4,
+                 "out-of-range frequencies are counted");
+}
+
 } // namespace
 
 int main()
@@ -203,6 +380,11 @@ int main()
     testMissingBeamIsCountedWithoutEstimate(test);
     testManySamplesInOneWindowDoNotCreatePerCandidateSpam(test);
     testSequenceIsImmutableAndIncreases(test);
+    testMapAndFlatStorageProduceEquivalentEstimate(test);
+    testFlatStorageRejectsOutOfCapacityBand(test);
+    testFastWindowSplitsAtDivisibleBoundary(test);
+    testExactFallbackWindowSplitsAtNonDivisibleBoundary(test);
+    testFastBinBoundariesAndOutOfRangeSamples(test);
 
     return test.result();
 }

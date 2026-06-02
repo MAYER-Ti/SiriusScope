@@ -33,6 +33,7 @@ void PipelineMetrics::reset()
     m_missingBeam1Candidates = 0;
     m_producedSignalParameterSnapshots = 0;
     m_signalParameterTrustedFixedBandFastPathBlocks = 0;
+    m_bearingFastCandidateStorageBlocks = 0;
     m_rxLatencyMax = std::chrono::milliseconds{0};
     m_processingLatencyMax = std::chrono::milliseconds{0};
     m_aggregationLatencyMax = std::chrono::milliseconds{0};
@@ -43,6 +44,13 @@ void PipelineMetrics::reset()
     m_waterfallAggregationLatency = {};
     m_spectrumAggregationLatency = {};
     m_bearingAggregationLatency = {};
+    m_bearingSampleLoopLatency = {};
+    m_bearingWindowCalculationLatency = {};
+    m_bearingBinCalculationLatency = {};
+    m_bearingCandidateUpdateLatency = {};
+    m_bearingCloseWindowLatency = {};
+    m_bearingSnapshotBuildLatency = {};
+    m_bearingEstimateCalculationLatency = {};
     m_signalParameterAggregationLatency = {};
     m_signalParameterIngestLatency = {};
     m_signalParameterSnapshotDecisionLatency = {};
@@ -118,6 +126,55 @@ void PipelineMetrics::recordBearingAggregationLatency(
 {
     std::lock_guard lock(m_mutex);
     recordLatency(m_bearingAggregationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingSampleLoopLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingSampleLoopLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingWindowCalculationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingWindowCalculationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingBinCalculationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingBinCalculationLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingCandidateUpdateLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingCandidateUpdateLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingCloseWindowLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingCloseWindowLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingSnapshotBuildLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingSnapshotBuildLatency, millisecondsFor(elapsed));
+}
+
+void PipelineMetrics::recordBearingEstimateCalculationLatency(
+    std::chrono::steady_clock::duration elapsed)
+{
+    std::lock_guard lock(m_mutex);
+    recordLatency(m_bearingEstimateCalculationLatency, millisecondsFor(elapsed));
 }
 
 void PipelineMetrics::recordSignalParameterAggregationLatency(
@@ -251,6 +308,12 @@ void PipelineMetrics::recordSignalParameterTrustedFixedBandFastPathBlock()
     ++m_signalParameterTrustedFixedBandFastPathBlocks;
 }
 
+void PipelineMetrics::recordBearingFastCandidateStorageBlock()
+{
+    std::lock_guard lock(m_mutex);
+    ++m_bearingFastCandidateStorageBlocks;
+}
+
 PipelineMetricsSnapshot PipelineMetrics::snapshot(
     const BoundedBlockQueueMetrics& queueMetrics,
     const SignalBlockPoolCounters& poolCounters,
@@ -279,6 +342,13 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.waterfallAggregationLatency = m_waterfallAggregationLatency;
     snapshot.spectrumAggregationLatency = m_spectrumAggregationLatency;
     snapshot.bearingAggregationLatency = m_bearingAggregationLatency;
+    snapshot.bearingSampleLoopLatency = m_bearingSampleLoopLatency;
+    snapshot.bearingWindowCalculationLatency = m_bearingWindowCalculationLatency;
+    snapshot.bearingBinCalculationLatency = m_bearingBinCalculationLatency;
+    snapshot.bearingCandidateUpdateLatency = m_bearingCandidateUpdateLatency;
+    snapshot.bearingCloseWindowLatency = m_bearingCloseWindowLatency;
+    snapshot.bearingSnapshotBuildLatency = m_bearingSnapshotBuildLatency;
+    snapshot.bearingEstimateCalculationLatency = m_bearingEstimateCalculationLatency;
     snapshot.signalParameterAggregationLatency = m_signalParameterAggregationLatency;
     snapshot.signalParameterIngestLatency = m_signalParameterIngestLatency;
     snapshot.signalParameterSnapshotDecisionLatency =
@@ -325,6 +395,7 @@ PipelineMetricsSnapshot PipelineMetrics::snapshot(
     snapshot.missingBeam1Candidates = m_missingBeam1Candidates;
     snapshot.bearingAggregationLatencyMaxMs =
         static_cast<double>(m_bearingAggregationLatencyMax.count());
+    snapshot.bearingFastCandidateStorageBlocks = m_bearingFastCandidateStorageBlocks;
     snapshot.producedSignalParameterSnapshots = m_producedSignalParameterSnapshots;
     snapshot.signalParameterTrustedFixedBandFastPathBlocks =
         m_signalParameterTrustedFixedBandFastPathBlocks;

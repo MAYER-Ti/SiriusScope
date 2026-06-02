@@ -4,6 +4,8 @@
 #include "pipeline/bearing_snapshot.h"
 #include "pipeline/signal_block.h"
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -12,6 +14,12 @@
 #include <vector>
 
 namespace siriusscope::pipeline {
+
+enum class BearingCandidateStorageMode
+{
+    MapByBandAndBin,
+    FlatBandBinVector,
+};
 
 struct BearingAggregatorConfig
 {
@@ -24,6 +32,10 @@ struct BearingAggregatorConfig
     double minQuality = 0.05;
     double fallbackAntennaAzimuthDeg = 0.0;
     core::TimeBase timeBase{};
+    BearingCandidateStorageMode candidateStorageMode =
+        BearingCandidateStorageMode::FlatBandBinVector;
+    std::size_t bandCapacity = 0;
+    bool trustedSamples = true;
 };
 
 struct BearingCandidateAggregate
@@ -55,10 +67,24 @@ struct BearingAggregatorCounters
     std::uint64_t outOfRangeSamples = 0;
 };
 
+struct BearingAggregatorTiming
+{
+    std::chrono::steady_clock::duration total{};
+    std::chrono::steady_clock::duration sampleLoop{};
+    std::chrono::steady_clock::duration windowCalculation{};
+    std::chrono::steady_clock::duration binCalculation{};
+    std::chrono::steady_clock::duration candidateUpdate{};
+    std::chrono::steady_clock::duration closeWindow{};
+    std::chrono::steady_clock::duration snapshotBuild{};
+    std::chrono::steady_clock::duration estimateCalculation{};
+};
+
 struct BearingAggregationResult
 {
     std::vector<std::shared_ptr<const BearingSnapshot>> snapshots;
     BearingAggregatorCounters deltaCounters;
+    BearingAggregatorTiming timing;
+    bool usedFastCandidateStorage = false;
 };
 
 class BearingAggregator
@@ -91,11 +117,17 @@ private:
         std::uint64_t firstSampleIndex = 0;
         std::uint64_t lastSampleIndex = 0;
         double antennaAzimuthDeg = 0.0;
-        std::map<CandidateKey, BearingCandidateAggregate> candidates;
+        std::map<CandidateKey, BearingCandidateAggregate> candidateMap;
+        std::vector<BearingCandidateAggregate> candidateVector;
+        std::vector<std::uint8_t> candidateUsed;
+        std::size_t usedCandidateCount = 0;
     };
 
     BearingAggregationResult consumeSamples(std::span<const core::SignalSample> samples,
                                             std::optional<double> antennaAzimuthDeg);
+    void prepareDerivedConfig();
+    bool usesFlatCandidateStorage() const noexcept;
+    bool hasValidUntrustedSample(const core::SignalSample& sample) const;
     std::optional<std::uint64_t> windowForSample(std::uint64_t sampleIndex) const;
     std::int64_t utcNsForSample(std::uint64_t sampleIndex) const;
     int binForFrequency(std::int64_t frequencyHz) const noexcept;
@@ -106,9 +138,13 @@ private:
     void openWindow(std::uint64_t windowIndex,
                     std::uint64_t sampleIndex,
                     double antennaAzimuthDeg);
-    void addSampleToOpenWindow(const core::SignalSample& sample, int binIndex);
+    BearingCandidateAggregate* candidateForSample(int bandIndex, int binIndex);
+    void addSampleToOpenWindow(const core::SignalSample& sample,
+                               int binIndex,
+                               BearingAggregatorCounters& deltaCounters);
     std::shared_ptr<const BearingSnapshot> closeOpenWindow(
-        BearingAggregatorCounters& deltaCounters);
+        BearingAggregatorCounters& deltaCounters,
+        BearingAggregatorTiming* timing = nullptr);
     std::optional<BearingEstimate> makeEstimate(
         const BearingCandidateAggregate& candidate) const;
 
@@ -116,6 +152,13 @@ private:
     BearingAggregatorCounters m_counters;
     std::optional<OpenWindow> m_openWindow;
     std::uint64_t m_nextSnapshotSequenceId = 1;
+    BearingCandidateStorageMode m_effectiveCandidateStorageMode =
+        BearingCandidateStorageMode::MapByBandAndBin;
+    std::uint64_t m_samplesPerWindow = 0;
+    bool m_useFastWindowIndex = false;
+    bool m_useFastBinIndex = false;
+    std::int64_t m_fastBinRangeHz = 0;
+    std::int64_t m_fastBinMultiplier = 0;
 };
 
 } // namespace siriusscope::pipeline
