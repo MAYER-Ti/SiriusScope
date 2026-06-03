@@ -232,6 +232,29 @@ ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-f
 runtime default and is not considered a production fix if the backlog trend remains
 growing or saturating.
 
+SignalParameter ablation is an audit-only diagnostic for checking whether
+`SignalParameterAggregator` is the primary 90 MB/s bottleneck. The standalone disable
+flag removes only the SignalParameter stage; Waterfall, Spectrum, and Bearing remain
+active:
+
+```powershell
+$env:SIRIUSSCOPE_DISABLE_SIGNAL_PARAMETER_STAGE = "1"
+```
+
+The comparison mode runs two `TargetRawThroughput90MBps + ParallelFanOut + m=8` audits
+with the same duration: baseline with SignalParameter enabled, then ablation with
+SignalParameter disabled. The duration is controlled by
+`SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC` and defaults to 30 seconds:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_SIGNAL_PARAMETER_ABLATION = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+The output includes `SignalParameter ablation summary` and a one-line `CONCLUSION`.
+
 `SourceToPipelineBridge` decouples `IBcoStreamSource` callbacks from
 `DataIngestPipeline::ingestSamples()`. The source callback only submits immutable
 `BcoSampleBlock` pointers into a bounded RX queue; a dedicated bridge worker performs the

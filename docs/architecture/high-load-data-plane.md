@@ -170,6 +170,15 @@ Current experimental mode:
   preallocates block storage. If larger capacity only delays saturation and backlog
   continues growing, the next work is service-latency optimization or latency-aware
   policy, not silently making the larger buffer a production default.
+- `SIRIUSSCOPE_DISABLE_SIGNAL_PARAMETER_STAGE=1` disables only
+  `SignalParameterAggregator` for perf diagnostics. Waterfall, Spectrum, and Bearing
+  stages remain active, and the absence of `SignalParameterSnapshot` is expected in this
+  mode.
+- `SIRIUSSCOPE_RUN_90MBPS_SIGNAL_PARAMETER_ABLATION=1` runs an audit-only comparison at
+  `TargetRawThroughput90MBps + ParallelFanOut + m=8`: first with SignalParameter enabled,
+  then with SignalParameter disabled. The duration is
+  `SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC`, defaulting to 30 seconds, and the report prints
+  `SignalParameter ablation summary` plus a machine-readable `CONCLUSION`.
 - `SIRIUSSCOPE_ENABLE_VISUAL_BACKPRESSURE_POLICY=1` enables audit-only visual-stage
   degradation for `ParallelFanOut`. Spectrum and Waterfall can use
   `SIRIUSSCOPE_VISUAL_STAGE_POLICY=latest-only|drop-oldest`; Bearing stays lossless
@@ -210,6 +219,15 @@ $env:SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP = "1"
 $env:SIRIUSSCOPE_RUN_90MBPS_SOAK_TEST = "1"
 $env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
 $env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+SignalParameter ablation:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_90MBPS_SIGNAL_PARAMETER_ABLATION = "1"
+$env:SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS = "1"
+$env:SIRIUSSCOPE_90MBPS_SOAK_DURATION_SEC = "30"
 ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
 ```
 
@@ -336,6 +354,8 @@ Current v1 implementation:
 SignalParameter aggregation is a critical data-plane stage. It remains
 `LosslessRequired` even when audit-only visual overload policy is enabled, and
 SignalParameter jobs are not dropped, coalesced, or treated as best-effort UI work.
+The only exception is the explicit audit-only ablation mode, where the whole
+SignalParameter stage is disabled to measure whether it is the 90 MB/s bottleneck.
 
 Current v1 diagnostics:
 

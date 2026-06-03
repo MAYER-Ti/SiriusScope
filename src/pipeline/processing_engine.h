@@ -81,6 +81,7 @@ struct ProcessingEngineConfig
 {
     ProcessingMode processingMode = ProcessingMode::Sequential;
     std::size_t stageQueueCapacity = 64;
+    bool enableSignalParameterStage = true;
     StageOverloadConfig overloadPolicy;
     StageDebugDelayConfig stageDebugDelay;
 };
@@ -161,6 +162,12 @@ private:
 
     static constexpr std::size_t kFanOutStageCount = 4;
 
+    struct FanOutStageList
+    {
+        std::array<FanOutStage, kFanOutStageCount> stages{};
+        std::size_t count = 0;
+    };
+
     void workerLoop();
     void processBlock(SignalBlockHandle block);
     void processBlockSequential(const SignalBlock& block);
@@ -215,6 +222,8 @@ private:
                                     StageSkipReason reason);
     bool fanOutDrained() const;
     bool stageWorkersJoinable() const noexcept;
+    FanOutStageList activeFanOutStages() const noexcept;
+    bool signalParameterStageEnabled() const noexcept;
     StageOverloadPolicy fanOutStagePolicy(FanOutStage stage) const noexcept;
     std::chrono::milliseconds fanOutStageDebugDelay(FanOutStage stage) const noexcept;
     static ProcessingEngineConfig normalizeProcessingConfig(ProcessingEngineConfig config);

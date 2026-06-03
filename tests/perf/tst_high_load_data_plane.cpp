@@ -141,6 +141,7 @@ struct AuditResult
     double visualMaxQueueDepthRatio = 0.50;
     bool visualBearingBestEffort = false;
     bool allowVisualDegradationInStrict = false;
+    bool signalParameterStageEnabled = true;
     std::size_t batchSizeMultiplier = 1;
     CapacityProfile capacityProfile = CapacityProfile::Current;
     std::string capacityProfileName = "current";
@@ -641,6 +642,16 @@ bool targetRawCapacitySweepEnabled()
     return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_CAPACITY_SWEEP");
 }
 
+bool signalParameterStageDisabledByEnv()
+{
+    return envFlagEnabled("SIRIUSSCOPE_DISABLE_SIGNAL_PARAMETER_STAGE");
+}
+
+bool targetRawSignalParameterAblationEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_SIGNAL_PARAMETER_ABLATION");
+}
+
 bool includeBalanced2048CapacityProfile()
 {
     return envFlagEnabled("SIRIUSSCOPE_INCLUDE_2048_CAPACITY_PROFILE");
@@ -915,15 +926,17 @@ std::vector<LatencyStage> stageLatencies(const pipeline::PipelineMetricsSnapshot
     };
 }
 
-std::vector<StageBacklog> parallelStageBacklogs(
-    const pipeline::PipelineMetricsSnapshot& metrics)
+std::vector<StageBacklog> activeParallelStageBacklogs(const AuditResult& result)
 {
-    return {
-        {"waterfall", metrics.waterfallStage},
-        {"spectrum", metrics.spectrumStage},
-        {"bearing", metrics.bearingStage},
-        {"signalParameter", metrics.signalParameterStage},
+    std::vector<StageBacklog> stages{
+        {"waterfall", result.pipeline.waterfallStage},
+        {"spectrum", result.pipeline.spectrumStage},
+        {"bearing", result.pipeline.bearingStage},
     };
+    if (result.signalParameterStageEnabled) {
+        stages.push_back({"signalParameter", result.pipeline.signalParameterStage});
+    }
+    return stages;
 }
 
 double queueDepthRatio(const pipeline::StageMetricsSnapshot& metrics)
@@ -935,7 +948,7 @@ double queueDepthRatio(const pipeline::StageMetricsSnapshot& metrics)
 double maxStageQueueDepthRatio(const AuditResult& result)
 {
     double maxRatio = 0.0;
-    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+    for (const auto& stage : activeParallelStageBacklogs(result)) {
         maxRatio = std::max(maxRatio, queueDepthRatio(stage.metrics));
     }
     return maxRatio;
@@ -974,7 +987,7 @@ LatencyBudgetEvaluation evaluateLatencyBudget(const AuditResult& result)
     evaluation.fanOutEndToEndStatus =
         budgetStatus(result.latencyBudget.enabled, fanOutApplicable, fanOutViolated, hard);
 
-    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+    for (const auto& stage : activeParallelStageBacklogs(result)) {
         const auto& metrics = stage.metrics;
         const bool queueWaitApplicable = active && metrics.queueWaitLatency.count > 0;
         const bool queueWaitViolated =
@@ -1020,7 +1033,7 @@ BacklogSample makeBacklogSample(double elapsedSec,
 void printQueueStability(const AuditResult& result)
 {
     const auto evaluation = evaluateLatencyBudget(result);
-    const auto stages = parallelStageBacklogs(result.pipeline);
+    const auto stages = activeParallelStageBacklogs(result);
 
     std::cout << "Queue stability:\n"
               << "  latencyBudgetEnabled = "
@@ -1073,7 +1086,9 @@ void printBacklogTrend(const AuditResult& result)
         waterfallMax = std::max(waterfallMax, sample.waterfallDepth);
         spectrumMax = std::max(spectrumMax, sample.spectrumDepth);
         bearingMax = std::max(bearingMax, sample.bearingDepth);
-        signalParameterMax = std::max(signalParameterMax, sample.signalParameterDepth);
+        if (result.signalParameterStageEnabled) {
+            signalParameterMax = std::max(signalParameterMax, sample.signalParameterDepth);
+        }
         inFlightMax = std::max(inFlightMax, sample.inFlightFanOutBlocks);
         blockPoolInUseMax = std::max(blockPoolInUseMax, sample.blockPoolInUse);
 
@@ -1081,7 +1096,13 @@ void printBacklogTrend(const AuditResult& result)
                   << "s waterfallDepth=" << sample.waterfallDepth
                   << " spectrumDepth=" << sample.spectrumDepth
                   << " bearingDepth=" << sample.bearingDepth
-                  << " signalParameterDepth=" << sample.signalParameterDepth
+                  << " signalParameterDepth=";
+        if (result.signalParameterStageEnabled) {
+            std::cout << sample.signalParameterDepth;
+        } else {
+            std::cout << "disabled";
+        }
+        std::cout
                   << " inFlightFanOutBlocks=" << sample.inFlightFanOutBlocks
                   << " blockPoolInUse=" << sample.blockPoolInUse << '\n';
     }
@@ -1097,12 +1118,16 @@ void printBacklogTrend(const AuditResult& result)
               << spectrumMax << "/" << result.pipeline.spectrumStageQueueDepth << '\n'
               << "  bearing first/last/max/finalAfterFlush = "
               << first.bearingDepth << "/" << last.bearingDepth << "/"
-              << bearingMax << "/" << result.pipeline.bearingStageQueueDepth << '\n'
-              << "  signalParameter first/last/max/finalAfterFlush = "
-              << first.signalParameterDepth << "/" << last.signalParameterDepth << "/"
-              << signalParameterMax << "/"
-              << result.pipeline.signalParameterStageQueueDepth << '\n'
-              << "  inFlight first/last/max/finalAfterFlush = "
+              << bearingMax << "/" << result.pipeline.bearingStageQueueDepth << '\n';
+    std::cout << "  signalParameter first/last/max/finalAfterFlush = ";
+    if (result.signalParameterStageEnabled) {
+        std::cout << first.signalParameterDepth << "/" << last.signalParameterDepth << "/"
+                  << signalParameterMax << "/"
+                  << result.pipeline.signalParameterStageQueueDepth << '\n';
+    } else {
+        std::cout << "disabled\n";
+    }
+    std::cout << "  inFlight first/last/max/finalAfterFlush = "
               << first.inFlightFanOutBlocks << "/" << last.inFlightFanOutBlocks
               << "/" << inFlightMax << "/"
               << result.pipeline.parallelFanOutInFlightBlocks << '\n'
@@ -1116,7 +1141,10 @@ void printBacklogTrend(const AuditResult& result)
               << "  spectrum = " << backlogTrendName(trend.spectrum) << '\n'
               << "  bearing = " << backlogTrendName(trend.bearing) << '\n'
               << "  signalParameter = "
-              << backlogTrendName(trend.signalParameter) << '\n'
+              << (result.signalParameterStageEnabled
+                      ? backlogTrendName(trend.signalParameter)
+                      : "disabled")
+              << '\n'
               << "  overall = " << backlogTrendName(trend.overall) << '\n';
 }
 
@@ -1315,7 +1343,7 @@ void printParallelFanOutBacklog(const AuditResult& result)
         return;
     }
 
-    const auto stages = parallelStageBacklogs(result.pipeline);
+    const auto stages = activeParallelStageBacklogs(result);
     const auto durationSeconds = std::max(0.001, static_cast<double>(result.duration.count()));
     for (const auto& stage : stages) {
         const auto& metrics = stage.metrics;
@@ -1343,6 +1371,9 @@ void printParallelFanOutBacklog(const AuditResult& result)
                   << static_cast<double>(metrics.processedBlocks) / durationSeconds << "/"
                   << static_cast<double>(metrics.processedSamples) / durationSeconds
                   << '\n';
+    }
+    if (!result.signalParameterStageEnabled) {
+        std::cout << "  signalParameter disabled\n";
     }
 
     const auto byDepth =
@@ -1482,15 +1513,19 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     hardware::SimulatorLoadProfile profile,
     AuditPipelineSizing sizing = AuditPipelineSizing::Default,
     std::size_t batchSizeMultiplier = 1,
-    CapacityProfile capacityProfile = CapacityProfile::Current)
+    CapacityProfile capacityProfile = CapacityProfile::Current,
+    bool forceParallelProcessingEngine = false,
+    bool enableSignalParameterStage = true)
 {
     pipeline::DataIngestPipelineConfig config;
+    const bool useParallelProcessing =
+        forceParallelProcessingEngine || parallelProcessingEngineEnabled();
     config.blockPool = pipeline::SignalBlockPoolConfig{256, 20'000};
     config.queueCapacity = 256;
     if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
         const auto maxSamplesPerBlock = targetRawMaxSamplesPerBlock(batchSizeMultiplier);
         if (sizing == AuditPipelineSizing::FullTargetRawSustain) {
-            const bool useCapacityProfile = parallelProcessingEngineEnabled();
+            const bool useCapacityProfile = useParallelProcessing;
             const auto capacity =
                 capacityProfileConfig(useCapacityProfile ? capacityProfile
                                                          : CapacityProfile::Current,
@@ -1535,7 +1570,8 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
 
     config.signalParameters.estimatorConfig.samplePeriodNs = timeBase.samplePeriodNs;
     config.signalParameters.enableDetailedTiming = detailedSignalParameterTimingEnabled();
-    if (parallelProcessingEngineEnabled()) {
+    config.processing.enableSignalParameterStage = enableSignalParameterStage;
+    if (useParallelProcessing) {
         config.processing.processingMode = pipeline::ProcessingMode::ParallelFanOut;
         const bool useCapacityProfile =
             profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps
@@ -1557,12 +1593,15 @@ pipeline::SourceToPipelineBridgeConfig makeBridgeConfig(
     hardware::SimulatorLoadProfile profile,
     AuditPipelineSizing sizing = AuditPipelineSizing::Default,
     std::size_t batchSizeMultiplier = 1,
-    CapacityProfile capacityProfile = CapacityProfile::Current)
+    CapacityProfile capacityProfile = CapacityProfile::Current,
+    bool forceParallelProcessingEngine = false)
 {
     pipeline::SourceToPipelineBridgeConfig config;
+    const bool useParallelProcessing =
+        forceParallelProcessingEngine || parallelProcessingEngineEnabled();
     if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
         if (sizing == AuditPipelineSizing::FullTargetRawSustain
-            && parallelProcessingEngineEnabled()) {
+            && useParallelProcessing) {
             config.queueCapacity =
                 capacityProfileConfig(capacityProfile, batchSizeMultiplier)
                     .bridgeQueueCapacity;
@@ -1603,31 +1642,38 @@ AuditResult runAudit(std::chrono::seconds duration,
                      AuditMode auditMode = AuditMode::Smoke,
                      LatencyBudget latencyBudget = {},
                      std::size_t batchSizeMultiplier = 1,
-                     CapacityProfile capacityProfile = CapacityProfile::Current)
+                     CapacityProfile capacityProfile = CapacityProfile::Current,
+                     bool forceParallelProcessingEngine = false,
+                     std::optional<bool> signalParameterStageEnabledOverride = std::nullopt)
 {
     AuditResult result;
     result.auditMode = auditMode;
     result.profileName = profileName(profile);
     result.duration = duration;
     result.latencyBudget = latencyBudget;
+    result.signalParameterStageEnabled =
+        signalParameterStageEnabledOverride.value_or(!signalParameterStageDisabledByEnv());
     result.batchSizeMultiplier = normalizeBatchMultiplier(batchSizeMultiplier);
     result.capacityProfile = capacityProfile;
     result.capacityProfileName = capacityProfileName(capacityProfile);
     result.capacityProfileApplied =
         profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps
         && sizing == AuditPipelineSizing::FullTargetRawSustain
-        && parallelProcessingEngineEnabled();
+        && (forceParallelProcessingEngine || parallelProcessingEngineEnabled());
 
     const auto streamConfig = makeStreamConfig(profile);
     auto pipelineConfig = makePipelineConfig(streamConfig.timeBase,
                                              profile,
                                              sizing,
                                              result.batchSizeMultiplier,
-                                             capacityProfile);
+                                             capacityProfile,
+                                             forceParallelProcessingEngine,
+                                             result.signalParameterStageEnabled);
     auto bridgeConfig = makeBridgeConfig(profile,
                                          sizing,
                                          result.batchSizeMultiplier,
-                                         capacityProfile);
+                                         capacityProfile,
+                                         forceParallelProcessingEngine);
     result.bridgeQueueCapacity = bridgeConfig.queueCapacity;
     result.pipelineQueueCapacity = pipelineConfig.queueCapacity;
     result.blockPoolCapacity = pipelineConfig.blockPool.blockCount;
@@ -1809,6 +1855,8 @@ void printAuditSummary(const AuditResult& result)
               << (result.latencyBudget.enabled ? "true" : "false") << '\n'
               << "  processingMode = " << processingModeName(result.processingMode)
               << '\n'
+              << "  signalParameterStageEnabled = "
+              << (result.signalParameterStageEnabled ? "true" : "false") << '\n'
               << "  batchSizeMultiplier = " << result.batchSizeMultiplier << '\n'
               << "  capacityProfile = " << result.capacityProfileName << '\n'
               << "  capacityProfileApplied = "
@@ -1937,9 +1985,14 @@ void printAuditSummary(const AuditResult& result)
               << stageBlocksPerSecond(result, result.pipeline.bearingStage) << '\n'
               << "  signalParameterStageProcessedBlocks = "
               << result.pipeline.signalParameterStageProcessedBlocks << '\n'
-              << "  signalParameterStageBlocksPerSecond = "
-              << stageBlocksPerSecond(result, result.pipeline.signalParameterStage) << '\n'
-              << "Visual stage policy results:\n"
+              << "  signalParameterStageBlocksPerSecond = ";
+    if (result.signalParameterStageEnabled) {
+        std::cout << stageBlocksPerSecond(result, result.pipeline.signalParameterStage)
+                  << '\n';
+    } else {
+        std::cout << "disabled\n";
+    }
+    std::cout << "Visual stage policy results:\n"
               << "  waterfall dropped/coalesced/skipped = "
               << result.pipeline.waterfallStageDroppedByPolicy << "/"
               << result.pipeline.waterfallStageCoalescedByPolicy << "/"
@@ -1963,7 +2016,10 @@ void printAuditSummary(const AuditResult& result)
               << "  input/processed = " << result.pipeline.inputSamples << "/"
               << result.pipeline.processedSamples << '\n'
               << "  signalParameter policy drops = "
-              << result.pipeline.signalParameterStageDroppedByPolicy << '\n'
+              << (result.signalParameterStageEnabled
+                      ? std::to_string(result.pipeline.signalParameterStageDroppedByPolicy)
+                      : std::string{"disabled"})
+              << '\n'
               << "  criticalNoDrop = "
               << passFailName(criticalNoDropPasses(result)) << '\n'
               << "  visualDegradation = "
@@ -1992,9 +2048,14 @@ void printAuditSummary(const AuditResult& result)
               << "  bearingMs avg/max = "
               << result.pipeline.bearingAggregationLatency.averageMs() << "/"
               << result.pipeline.bearingAggregationLatency.maxMs << '\n'
-              << "  signalParametersMs avg/max = "
-              << result.pipeline.signalParameterAggregationLatency.averageMs() << "/"
-              << result.pipeline.signalParameterAggregationLatency.maxMs << '\n'
+              << "  signalParametersMs avg/max = ";
+    if (result.signalParameterStageEnabled) {
+        std::cout << result.pipeline.signalParameterAggregationLatency.averageMs() << "/"
+                  << result.pipeline.signalParameterAggregationLatency.maxMs << '\n';
+    } else {
+        std::cout << "disabled\n";
+    }
+    std::cout
               << "  waterfallRowPublishMs avg/max = "
               << result.pipeline.waterfallRowPublishLatency.averageMs() << "/"
               << result.pipeline.waterfallRowPublishLatency.maxMs << '\n'
@@ -2094,6 +2155,9 @@ void printAuditSummary(const AuditResult& result)
               << "  bearingBlockLocalAccumulationBlocks = "
               << result.pipeline.bearingBlockLocalAccumulationBlocks << '\n'
               << "SignalParameter critical diagnostics:\n"
+              << "  stage = "
+              << (result.signalParameterStageEnabled ? "enabled" : "disabled")
+              << '\n'
               << "  detailedTiming = "
               << (detailedSignalParameterTimingEnabled() ? "enabled" : "disabled")
               << '\n'
@@ -2119,10 +2183,18 @@ void printAuditSummary(const AuditResult& result)
               << result.pipeline.signalParameterCompletedPulses << '\n'
               << "  outOfOrderSamples = "
               << result.pipeline.signalParameterOutOfOrderSamples << '\n'
-              << "Signal parameter micro-breakdown:\n"
-              << "  ingest avg/max = "
-              << result.pipeline.signalParameterIngestLatency.averageMs() << "/"
-              << result.pipeline.signalParameterIngestLatency.maxMs << '\n'
+              << "Signal parameter micro-breakdown:\n";
+    if (!result.signalParameterStageEnabled) {
+        std::cout << "  stage disabled\n";
+    }
+    std::cout << "  ingest avg/max = "
+              << (result.signalParameterStageEnabled
+                      ? std::to_string(result.pipeline.signalParameterIngestLatency.averageMs())
+                      : std::string{"disabled"});
+    if (result.signalParameterStageEnabled) {
+        std::cout << "/" << result.pipeline.signalParameterIngestLatency.maxMs;
+    }
+    std::cout << '\n'
               << "  SignalParameter detailed timing: "
               << (detailedSignalParameterTimingEnabled() ? "enabled" : "disabled")
               << '\n'
@@ -2331,10 +2403,17 @@ void assertAuditSucceeded(TestRunner& test, const AuditResult& result)
 
     test.require(result.hasSpectrumSnapshot, "pipeline publishes spectrum snapshot");
     test.require(result.hasBearingSnapshot, "pipeline publishes bearing snapshot");
-    test.require(result.hasSignalParameterSnapshot,
-                 "pipeline publishes signal parameter snapshot");
-    test.require(result.pipeline.producedSignalParameterSnapshots > 0,
-                 "pipeline metrics count produced signal parameter snapshots");
+    if (result.signalParameterStageEnabled) {
+        test.require(result.hasSignalParameterSnapshot,
+                     "pipeline publishes signal parameter snapshot");
+        test.require(result.pipeline.producedSignalParameterSnapshots > 0,
+                     "pipeline metrics count produced signal parameter snapshots");
+    } else {
+        test.require(!result.hasSignalParameterSnapshot,
+                     "disabled signal parameter stage publishes no snapshot");
+        test.require(result.pipeline.producedSignalParameterSnapshots == 0,
+                     "disabled signal parameter stage produces no snapshot metrics");
+    }
 }
 
 void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
@@ -2385,10 +2464,17 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
 
     test.require(result.hasSpectrumSnapshot,
                  "target raw full pipeline publishes spectrum snapshot");
-    test.require(result.hasSignalParameterSnapshot,
-                 "target raw full pipeline publishes signal parameter snapshot");
-    test.require(result.pipeline.producedSignalParameterSnapshots > 0,
-                 "target raw full pipeline metrics count signal parameter snapshots");
+    if (result.signalParameterStageEnabled) {
+        test.require(result.hasSignalParameterSnapshot,
+                     "target raw full pipeline publishes signal parameter snapshot");
+        test.require(result.pipeline.producedSignalParameterSnapshots > 0,
+                     "target raw full pipeline metrics count signal parameter snapshots");
+    } else {
+        test.require(!result.hasSignalParameterSnapshot,
+                     "target raw disabled signal parameter publishes no snapshot");
+        test.require(result.pipeline.producedSignalParameterSnapshots == 0,
+                     "target raw disabled signal parameter produces no snapshot metrics");
+    }
     if (result.pipeline.producedBearingSnapshots > 0) {
         test.require(result.hasBearingSnapshot,
                      "target raw full pipeline publishes bearing snapshot");
@@ -2431,10 +2517,12 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
                  "strict target raw full pipeline has no fan-out blocks in flight after flush");
     test.require(result.pipeline.blockPoolInUse == 0,
                  "strict target raw full pipeline returns all blocks to the pool after flush");
-    test.require(result.pipeline.signalParameterStageDroppedByPolicy == 0,
-                 "strict target raw full pipeline keeps signal parameter policy drops at zero");
-    test.require(result.pipeline.signalParameterStageCoalescedByPolicy == 0,
-                 "strict target raw full pipeline keeps signal parameter policy coalesces at zero");
+    if (result.signalParameterStageEnabled) {
+        test.require(result.pipeline.signalParameterStageDroppedByPolicy == 0,
+                     "strict target raw full pipeline keeps signal parameter policy drops at zero");
+        test.require(result.pipeline.signalParameterStageCoalescedByPolicy == 0,
+                     "strict target raw full pipeline keeps signal parameter policy coalesces at zero");
+    }
     test.require(!visualDegradationActive(result)
                      || result.allowVisualDegradationInStrict,
                  "strict target raw full pipeline allows visual degradation only by explicit env");
@@ -2613,15 +2701,19 @@ CapacityBacklogTrend makeCapacityBacklogTrend(const AuditResult& result)
                                          result.pipeline.bearingStage.queueCapacity,
                                          queueDepthRatio(result.pipeline.bearingStage),
                                          sampleCount);
-    trend.signalParameter =
-        classifyBacklogTrend(first.signalParameterDepth,
-                             last.signalParameterDepth,
-                             result.pipeline.signalParameterStage.queueCapacity,
-                             queueDepthRatio(result.pipeline.signalParameterStage),
-                             sampleCount);
-    trend.overall = worstBacklogTrend(
-        worstBacklogTrend(trend.waterfall, trend.spectrum),
-        worstBacklogTrend(trend.bearing, trend.signalParameter));
+    if (result.signalParameterStageEnabled) {
+        trend.signalParameter =
+            classifyBacklogTrend(first.signalParameterDepth,
+                                 last.signalParameterDepth,
+                                 result.pipeline.signalParameterStage.queueCapacity,
+                                 queueDepthRatio(result.pipeline.signalParameterStage),
+                                 sampleCount);
+    }
+    trend.overall = worstBacklogTrend(trend.waterfall, trend.spectrum);
+    trend.overall = worstBacklogTrend(trend.overall, trend.bearing);
+    if (result.signalParameterStageEnabled) {
+        trend.overall = worstBacklogTrend(trend.overall, trend.signalParameter);
+    }
     return trend;
 }
 
@@ -2666,8 +2758,9 @@ bool criticalNoDropPasses(const AuditResult& result)
         && result.pipeline.parallelFanOutRejectedBlocks == 0
         && result.pipeline.parallelFanOutInFlightBlocks == 0
         && result.pipeline.blockPoolInUse == 0
-        && result.pipeline.signalParameterStageDroppedByPolicy == 0
-        && result.pipeline.signalParameterStageCoalescedByPolicy == 0
+        && (!result.signalParameterStageEnabled
+            || (result.pipeline.signalParameterStageDroppedByPolicy == 0
+                && result.pipeline.signalParameterStageCoalescedByPolicy == 0))
         && result.source.simulatorBackpressureEvents == 0;
 }
 
@@ -2693,7 +2786,7 @@ std::uint64_t profileDroppedSamples(const AuditResult& result)
 double maxStageQueueWaitAverageMs(const AuditResult& result)
 {
     double maxAverageMs = 0.0;
-    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+    for (const auto& stage : activeParallelStageBacklogs(result)) {
         maxAverageMs =
             std::max(maxAverageMs, stage.metrics.queueWaitLatency.averageMs());
     }
@@ -2703,7 +2796,7 @@ double maxStageQueueWaitAverageMs(const AuditResult& result)
 double maxStageQueueWaitMaxMs(const AuditResult& result)
 {
     double maxMs = 0.0;
-    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+    for (const auto& stage : activeParallelStageBacklogs(result)) {
         maxMs = std::max(maxMs, stage.metrics.queueWaitLatency.maxMs);
     }
     return maxMs;
@@ -2712,7 +2805,7 @@ double maxStageQueueWaitMaxMs(const AuditResult& result)
 double maxStageServiceMaxMs(const AuditResult& result)
 {
     double maxMs = 0.0;
-    for (const auto& stage : parallelStageBacklogs(result.pipeline)) {
+    for (const auto& stage : activeParallelStageBacklogs(result)) {
         maxMs = std::max(maxMs, stage.metrics.serviceLatency.maxMs);
     }
     return maxMs;
@@ -3143,6 +3236,87 @@ void printCapacityProfileSweepSummary(
     std::cout << "  reason = " << selection.reason << '\n';
 }
 
+const char* signalParameterAblationConclusion(bool baselinePass, bool ablationPass)
+{
+    if (!baselinePass && ablationPass) {
+        return "CONCLUSION: SignalParameterAggregator is the primary 90 MB/s bottleneck.";
+    }
+    if (baselinePass && ablationPass) {
+        return "CONCLUSION: 90 MB/s passes with and without SignalParameterAggregator; bottleneck is not reproduced in this run.";
+    }
+    if (!baselinePass && !ablationPass) {
+        return "CONCLUSION: Disabling SignalParameterAggregator is not sufficient; another bottleneck remains.";
+    }
+    return "CONCLUSION: Unexpected result; inspect run stability and test configuration.";
+}
+
+void printSignalParameterValueOrDisabled(const AuditResult& result, double value)
+{
+    if (result.signalParameterStageEnabled) {
+        std::cout << value;
+    } else {
+        std::cout << "disabled";
+    }
+}
+
+void printSignalParameterValueOrDisabled(const AuditResult& result, std::uint64_t value)
+{
+    if (result.signalParameterStageEnabled) {
+        std::cout << value;
+    } else {
+        std::cout << "disabled";
+    }
+}
+
+void printSignalParameterAblationRow(const char* mode, const AuditResult& result)
+{
+    std::cout << "  " << mode << "  "
+              << rawMegabytesPerSecond(result) << "  "
+              << passFailName(noDropPasses(result)) << "  "
+              << result.pipeline.inputSamples << "  "
+              << result.pipeline.processedSamples << "  "
+              << processedToInputRatio(result) << "  "
+              << result.rejectedBlocks << "  "
+              << profileDroppedBlocks(result) << "  "
+              << result.pipeline.queueDroppedBlocks << "  "
+              << result.pipeline.blockPoolExhausted << "  "
+              << result.pipeline.parallelFanOutEndToEndLatency.averageMs() << "  "
+              << result.pipeline.parallelFanOutEndToEndLatency.maxMs << "  "
+              << maxStageQueueDepthRatio(result) << "  "
+              << result.pipeline.waterfallStage.queueMaxDepth << "  "
+              << result.pipeline.spectrumStage.queueMaxDepth << "  "
+              << result.pipeline.bearingStage.queueMaxDepth << "  ";
+    printSignalParameterValueOrDisabled(
+        result,
+        static_cast<std::uint64_t>(result.pipeline.signalParameterStage.queueMaxDepth));
+    std::cout << "  ";
+    printSignalParameterValueOrDisabled(
+        result,
+        result.pipeline.signalParameterStage.serviceLatency.averageMs());
+    std::cout << "  ";
+    printSignalParameterValueOrDisabled(
+        result,
+        result.pipeline.signalParameterStage.serviceLatency.maxMs);
+    std::cout << '\n';
+}
+
+void printSignalParameterAblationSummary(const AuditResult& baseline,
+                                         const AuditResult& ablation)
+{
+    const bool baselinePass = noDropPasses(baseline);
+    const bool ablationPass = noDropPasses(ablation);
+    std::cout << "SignalParameter ablation summary\n"
+              << "  mode  rawMBps  noDrop  inputSamples  processedSamples  "
+                 "processed/input  rejectedBlocks  droppedBlocks  "
+                 "queueDroppedBlocks  blockPoolExhausted  fanOutAvgMs  "
+                 "fanOutMaxMs  maxQueueRatio  waterfallQmax  spectrumQmax  "
+                 "bearingQmax  signalParameterQmax  signalParameterAvgMs  "
+                 "signalParameterMaxMs\n";
+    printSignalParameterAblationRow("baseline", baseline);
+    printSignalParameterAblationRow("without-signal-parameters", ablation);
+    std::cout << signalParameterAblationConclusion(baselinePass, ablationPass) << '\n';
+}
+
 bool stressTestsEnabled()
 {
     return envFlagEnabled("SIRIUSSCOPE_RUN_STRESS_TESTS");
@@ -3470,7 +3644,8 @@ void targetRaw90mbpsAccountingSmoke(TestRunner& test)
 void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
 {
     if (!targetRawPipelineTestEnabled() || targetRawBatchSweepEnabled()
-        || targetRawProfileSelectionEnabled() || targetRawCapacitySweepEnabled()) {
+        || targetRawProfileSelectionEnabled() || targetRawCapacitySweepEnabled()
+        || targetRawSignalParameterAblationEnabled()) {
         return;
     }
 
@@ -3497,7 +3672,8 @@ void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
 void targetRaw90mbpsProfileSelectionAudit(TestRunner& test)
 {
     if (!targetRawPipelineTestEnabled() || !targetRawProfileSelectionEnabled()
-        || targetRawCapacitySweepEnabled()) {
+        || targetRawCapacitySweepEnabled()
+        || targetRawSignalParameterAblationEnabled()) {
         return;
     }
 
@@ -3554,7 +3730,8 @@ void targetRaw90mbpsProfileSelectionAudit(TestRunner& test)
 
 void targetRaw90mbpsCapacitySweepAudit(TestRunner& test)
 {
-    if (!targetRawPipelineTestEnabled() || !targetRawCapacitySweepEnabled()) {
+    if (!targetRawPipelineTestEnabled() || !targetRawCapacitySweepEnabled()
+        || targetRawSignalParameterAblationEnabled()) {
         return;
     }
 
@@ -3609,10 +3786,75 @@ void targetRaw90mbpsCapacitySweepAudit(TestRunner& test)
     }
 }
 
+void targetRaw90mbpsSignalParameterAblationAudit(TestRunner& test)
+{
+    if (!targetRawSignalParameterAblationEnabled()) {
+        return;
+    }
+
+    constexpr std::size_t kAblationBatchMultiplier = 8;
+    const auto duration = targetRawSoakDuration();
+    const auto capacityProfile = envCapacityProfileOrDefault();
+    const auto auditMode = AuditMode::TargetRawSoak;
+    constexpr bool kForceParallelProcessing = true;
+
+    auto baseline = runAudit(duration,
+                             hardware::SimulatorLoadProfile::TargetRawThroughput90MBps,
+                             std::chrono::seconds{10},
+                             std::nullopt,
+                             AuditPipelineSizing::FullTargetRawSustain,
+                             auditMode,
+                             targetRawLatencyBudget(),
+                             kAblationBatchMultiplier,
+                             capacityProfile,
+                             kForceParallelProcessing,
+                             true);
+    printAuditSummary(baseline);
+    printSustainWarnings(baseline);
+
+    auto ablation = runAudit(duration,
+                             hardware::SimulatorLoadProfile::TargetRawThroughput90MBps,
+                             std::chrono::seconds{10},
+                             std::nullopt,
+                             AuditPipelineSizing::FullTargetRawSustain,
+                             auditMode,
+                             targetRawLatencyBudget(),
+                             kAblationBatchMultiplier,
+                             capacityProfile,
+                             kForceParallelProcessing,
+                             false);
+    printAuditSummary(ablation);
+    printSustainWarnings(ablation);
+
+    printSignalParameterAblationSummary(baseline, ablation);
+
+    test.require(auditInfrastructureSucceeded(baseline),
+                 "signal parameter ablation baseline infrastructure succeeds");
+    test.require(auditInfrastructureSucceeded(ablation),
+                 "signal parameter ablation run infrastructure succeeds");
+    test.require(rawThroughputValid(baseline),
+                 "signal parameter ablation baseline raw throughput is usable");
+    test.require(rawThroughputValid(ablation),
+                 "signal parameter ablation run raw throughput is usable");
+    test.require(baseline.signalParameterStageEnabled,
+                 "signal parameter ablation baseline enables signal parameter stage");
+    test.require(!ablation.signalParameterStageEnabled,
+                 "signal parameter ablation run disables signal parameter stage");
+    test.require(ablation.hasSpectrumSnapshot,
+                 "signal parameter ablation run keeps spectrum stage active");
+    test.require(ablation.hasBearingSnapshot || ablation.pipeline.producedBearingSnapshots == 0,
+                 "signal parameter ablation run keeps bearing stage active when snapshots are produced");
+    test.require(!ablation.hasSignalParameterSnapshot,
+                 "signal parameter ablation run publishes no signal parameter snapshot");
+    test.require(ablation.pipeline.signalParameterStageProcessedBlocks == 0,
+                 "signal parameter ablation run sends no blocks to signal parameter stage");
+}
+
 void targetRaw90mbpsBatchSweepAudit(TestRunner& test)
 {
     if (!targetRawBatchSweepEnabled() || targetRawProfileSelectionEnabled()
-        || targetRawCapacitySweepEnabled()) {
+        || targetRawCapacitySweepEnabled()
+        || targetRawSignalParameterAblationEnabled()) {
         return;
     }
 
@@ -3641,7 +3883,8 @@ void targetRaw90mbpsParallelSoakAudit(TestRunner& test)
 {
     if (!targetRawPipelineTestEnabled() || !parallelProcessingEngineEnabled()
         || !targetRawSoakTestEnabled() || targetRawBatchSweepEnabled()
-        || targetRawProfileSelectionEnabled() || targetRawCapacitySweepEnabled()) {
+        || targetRawProfileSelectionEnabled() || targetRawCapacitySweepEnabled()
+        || targetRawSignalParameterAblationEnabled()) {
         return;
     }
 
@@ -3671,6 +3914,7 @@ int main()
     testAuditHelperParsingAndBudget(test);
     highLoadDataPlaneSmoke(test);
     targetRaw90mbpsAccountingSmoke(test);
+    targetRaw90mbpsSignalParameterAblationAudit(test);
     targetRaw90mbpsPipelineSustainAudit(test);
     targetRaw90mbpsProfileSelectionAudit(test);
     targetRaw90mbpsCapacitySweepAudit(test);

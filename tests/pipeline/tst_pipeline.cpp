@@ -146,6 +146,8 @@ void testProcessingEngineConfigDefaultsToSequential(TestRunner& test)
                  "processing engine defaults to sequential mode");
     test.require(config.stageQueueCapacity == 64,
                  "processing engine defaults stage queue capacity");
+    test.require(config.enableSignalParameterStage,
+                 "processing engine enables signal parameter stage by default");
     test.require(config.overloadPolicy.waterfall
                      == pipeline::StageOverloadPolicy::LosslessRequired
                      && config.overloadPolicy.spectrum
@@ -457,6 +459,154 @@ void testProcessingEngineParallelFanOutProcessesBlocksAndFlushes(TestRunner& tes
                  "parallel flush leaves stage metric queue depths empty");
     test.require(pool.counters().inUse == 0,
                  "parallel fan-out releases pooled block after all stages complete");
+}
+
+void testProcessingEngineSignalParameterStageCanBeDisabledSequential(TestRunner& test)
+{
+    const auto band = makeBand(0);
+    pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{2, 8});
+    pipeline::BoundedBlockQueue queue(2);
+    pipeline::PipelineMetrics metrics;
+    pipeline::WaterfallRowQueue waterfallRows;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
+    pipeline::SnapshotExchange<pipeline::SignalParameterSnapshot> signalParameterSnapshots;
+    pipeline::ProcessingEngineConfig processingConfig;
+    processingConfig.enableSignalParameterStage = false;
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      nullptr,
+                                      &waterfallRows,
+                                      {},
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots,
+                                      {},
+                                      &signalParameterSnapshots,
+                                      {},
+                                      processingConfig);
+
+    const auto started = engine.start();
+    auto block = pool.acquire();
+    pipeline::SignalBlockMetadata metadata{0, 10, 11, std::chrono::steady_clock::now()};
+    metadata.antennaAzimuthDeg = 45.0;
+    block->reset(metadata);
+    const std::vector<core::SignalSample> samples{
+        makeSample(band, 10, 0, 40),
+        makeSample(band, 10, 1, 90),
+        makeSample(band, 11, 1, 45),
+    };
+    block->assignSamples(samples);
+    metrics.recordInputBlock(block->sampleCount(), block->producedAt());
+    const bool queued = queue.tryPush(std::move(block));
+    const auto flushed = engine.flush(std::chrono::milliseconds{1500});
+    const auto drainedWaterfallRows = waterfallRows.drain(10);
+    const auto spectrumSnapshot = spectrumSnapshots.latest();
+    const auto bearingSnapshot = bearingSnapshots.latest();
+    const auto signalParameterSnapshot = signalParameterSnapshots.latest();
+    const auto forcedSignalParameterSnapshot = engine.forceSignalParameterSnapshot();
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(), pool.counters(), waterfallRows.metrics());
+    engine.stop();
+
+    test.require(started.success, "sequential disabled signal parameter engine starts");
+    test.require(queued, "sequential disabled signal parameter queues block");
+    test.require(flushed.success, "sequential disabled signal parameter flushes block");
+    test.require(!drainedWaterfallRows.empty(),
+                 "sequential disabled signal parameter still queues waterfall rows");
+    test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
+                 "sequential disabled signal parameter still publishes spectrum");
+    test.require(bearingSnapshot && !bearingSnapshot->estimates.empty(),
+                 "sequential disabled signal parameter still publishes bearing");
+    test.require(signalParameterSnapshot == nullptr,
+                 "sequential disabled signal parameter publishes no signal snapshot");
+    test.require(forcedSignalParameterSnapshot == nullptr,
+                 "sequential disabled signal parameter force snapshot returns null");
+    test.require(metricsSnapshot.producedSignalParameterSnapshots == 0,
+                 "sequential disabled signal parameter produces no signal snapshots");
+    test.require(metricsSnapshot.signalParameterAggregationLatency.count == 0,
+                 "sequential disabled signal parameter records no aggregation latency");
+}
+
+void testProcessingEngineSignalParameterStageCanBeDisabledParallelFanOut(TestRunner& test)
+{
+    const auto band = makeBand(0);
+    pipeline::SignalBlockPool pool(pipeline::SignalBlockPoolConfig{4, 8});
+    pipeline::BoundedBlockQueue queue(4);
+    pipeline::PipelineMetrics metrics;
+    pipeline::WaterfallRowQueue waterfallRows;
+    pipeline::SnapshotExchange<pipeline::SpectrumSnapshot> spectrumSnapshots;
+    pipeline::SnapshotExchange<pipeline::BearingSnapshot> bearingSnapshots;
+    pipeline::SnapshotExchange<pipeline::SignalParameterSnapshot> signalParameterSnapshots;
+    pipeline::ProcessingEngineConfig processingConfig;
+    processingConfig.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    processingConfig.stageQueueCapacity = 8;
+    processingConfig.enableSignalParameterStage = false;
+    pipeline::ProcessingEngine engine(&queue,
+                                      &metrics,
+                                      nullptr,
+                                      &waterfallRows,
+                                      {},
+                                      &spectrumSnapshots,
+                                      {},
+                                      &bearingSnapshots,
+                                      {},
+                                      &signalParameterSnapshots,
+                                      {},
+                                      processingConfig);
+
+    const auto started = engine.start();
+    auto block = pool.acquire();
+    pipeline::SignalBlockMetadata metadata{0, 10, 11, std::chrono::steady_clock::now()};
+    metadata.antennaAzimuthDeg = 45.0;
+    block->reset(metadata);
+    const std::vector<core::SignalSample> samples{
+        makeSample(band, 10, 0, 40),
+        makeSample(band, 10, 1, 90),
+        makeSample(band, 11, 1, 45),
+    };
+    block->assignSamples(samples);
+    metrics.recordInputBlock(block->sampleCount(), block->producedAt());
+    const bool queued = queue.tryPush(std::move(block));
+    const auto flushed = engine.flush(std::chrono::milliseconds{1500});
+    const auto drainedWaterfallRows = waterfallRows.drain(10);
+    const auto spectrumSnapshot = spectrumSnapshots.latest();
+    const auto bearingSnapshot = bearingSnapshots.latest();
+    const auto signalParameterSnapshot = signalParameterSnapshots.latest();
+    const auto metricsSnapshot =
+        metrics.snapshot(queue.metrics(),
+                         pool.counters(),
+                         waterfallRows.metrics(),
+                         engine.parallelFanOutQueueMetrics());
+    engine.stop();
+
+    test.require(started.success, "parallel disabled signal parameter engine starts");
+    test.require(queued, "parallel disabled signal parameter queues block");
+    test.require(flushed.success, "parallel disabled signal parameter flushes block");
+    test.require(!drainedWaterfallRows.empty(),
+                 "parallel disabled signal parameter still queues waterfall rows");
+    test.require(spectrumSnapshot && !spectrumSnapshot->bins.empty(),
+                 "parallel disabled signal parameter still publishes spectrum");
+    test.require(bearingSnapshot && !bearingSnapshot->estimates.empty(),
+                 "parallel disabled signal parameter still publishes bearing");
+    test.require(signalParameterSnapshot == nullptr,
+                 "parallel disabled signal parameter publishes no signal snapshot");
+    test.require(metricsSnapshot.waterfallStageProcessedBlocks == 1,
+                 "parallel disabled signal parameter counts waterfall stage");
+    test.require(metricsSnapshot.spectrumStageProcessedBlocks == 1,
+                 "parallel disabled signal parameter counts spectrum stage");
+    test.require(metricsSnapshot.bearingStageProcessedBlocks == 1,
+                 "parallel disabled signal parameter counts bearing stage");
+    test.require(metricsSnapshot.signalParameterStageProcessedBlocks == 0,
+                 "parallel disabled signal parameter does not process signal stage");
+    test.require(metricsSnapshot.signalParameterStage.enqueuedBlocks == 0
+                     && metricsSnapshot.signalParameterStage.queueWaitLatency.count == 0
+                     && metricsSnapshot.signalParameterStage.serviceLatency.count == 0,
+                 "parallel disabled signal parameter leaves signal stage metrics empty");
+    test.require(metricsSnapshot.signalParameterStage.queueCapacity == 0,
+                 "parallel disabled signal parameter has no active signal queue");
+    test.require(pool.counters().inUse == 0,
+                 "parallel disabled signal parameter releases block after active stages");
 }
 
 void testProcessingEngineParallelFanOutStopDrainsWithoutDeadlock(TestRunner& test)
@@ -1060,6 +1210,8 @@ int main()
     testBoundedBlockQueuePushPopOverflowShutdown(test);
     testProcessingEngineProcessesBlocksAndFlushes(test);
     testProcessingEngineParallelFanOutProcessesBlocksAndFlushes(test);
+    testProcessingEngineSignalParameterStageCanBeDisabledSequential(test);
+    testProcessingEngineSignalParameterStageCanBeDisabledParallelFanOut(test);
     testProcessingEngineParallelFanOutStopDrainsWithoutDeadlock(test);
     testProcessingEngineParallelFanOutFallbackRecordsStageFailures(test);
     testParallelFanOutLatestOnlyCoalescesPendingVisualJobs(test);
