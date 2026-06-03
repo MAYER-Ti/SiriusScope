@@ -75,7 +75,7 @@ private:
 
     void openBucket(std::uint64_t bucketIndex, std::uint64_t sampleIndex);
     std::optional<WaterfallSnapshotRow> closeOpenRow();
-    void addSampleToOpenRow(const core::SignalSample& sample);
+    void addSampleToOpenRow(const core::SignalSample& sample, int bin);
 
     WaterfallAggregatorConfig m_config;
     WaterfallAggregatorCounters m_counters;

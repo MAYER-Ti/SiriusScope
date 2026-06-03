@@ -73,6 +73,9 @@ private:
                                                         double centerHz,
                                                         double widthHz,
                                                         QString* reason) const;
+    bool generatorPulseSettingsWithinBaselineBudget(int bandId,
+                                                    double pulsePeriodUs,
+                                                    double pulseWidthUs) const;
     bool rejectApply(int bandId, const QString& reason);
     bool rejectGeneratorPulseSettings(int bandId, const QString& reason);
     void publish(infrastructure::DiagnosticSeverity severity, const QString& message) const;

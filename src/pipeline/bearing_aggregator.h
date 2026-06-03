@@ -144,8 +144,18 @@ private:
     void prepareDerivedConfig();
     bool usesFlatCandidateStorage() const noexcept;
     bool usesBlockLocalFastPath() const noexcept;
+    bool usesTrustedBlockLocalFastPath() const noexcept;
     bool hasValidUntrustedSample(const core::SignalSample& sample) const;
+    BearingAggregationResult consumeTrustedBlockLocalFast(
+        std::span<const core::SignalSample> samples,
+        std::optional<double> antennaAzimuthDeg);
     std::optional<std::uint64_t> windowForSample(std::uint64_t sampleIndex) const;
+    std::optional<std::uint64_t> firstSampleIndexForWindow(
+        std::uint64_t windowIndex) const;
+    void resetIncrementalWindowState() noexcept;
+    void primeIncrementalWindowState(
+        std::uint64_t sampleIndex,
+        std::optional<std::uint64_t> windowIndex);
     std::int64_t utcNsForSample(std::uint64_t sampleIndex) const;
     int binForFrequency(std::int64_t frequencyHz) const noexcept;
     std::int64_t centerFrequencyForBin(std::uint32_t bin) const noexcept;
@@ -180,6 +190,9 @@ private:
         BearingCandidateStorageMode::MapByBandAndBin;
     std::uint64_t m_samplesPerWindow = 0;
     bool m_useFastWindowIndex = false;
+    std::optional<std::uint64_t> m_incrementalWindowIndex;
+    std::optional<std::uint64_t> m_incrementalNextWindowStartSampleIndex;
+    std::optional<std::uint64_t> m_lastWindowSampleIndex;
     bool m_useFastBinIndex = false;
     std::int64_t m_fastBinRangeHz = 0;
     std::int64_t m_fastBinMultiplier = 0;

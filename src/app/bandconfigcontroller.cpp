@@ -1,8 +1,11 @@
 #include "bandconfigcontroller.h"
 
+#include "hardware/simulator/simulated_bco_payload_accounting.h"
+
 #include <QDebug>
 #include <QStringList>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -14,6 +17,13 @@ namespace {
 
 constexpr double kMinThresholdAmplitude = 0.0;
 constexpr double kMaxThresholdAmplitude = 127.0;
+constexpr long double kCurrentBeamCount = 2.0L;
+
+std::size_t baselineSamplesPerBatch()
+{
+    return hardware::samplesPerBatchForTarget(
+        hardware::baselineRawThroughput60MbpsTarget());
+}
 
 } // namespace
 
@@ -224,6 +234,13 @@ bool BandConfigController::applyGeneratorPulseSettings(int bandId,
             bandId,
             QStringLiteral("generator pulse width must be less than pulse period"));
     }
+    if (!generatorPulseSettingsWithinBaselineBudget(bandId,
+                                                    pulsePeriodUs,
+                                                    pulseWidthUs)) {
+        return rejectGeneratorPulseSettings(
+            bandId,
+            QStringLiteral("Параметры генератора отклонены: превышение baseline-нагрузки 60 MB/s"));
+    }
 
     if (!m_bandListModel->updateGeneratorPulseSettings(bandId,
                                                        pulsePeriodUs,
@@ -339,6 +356,72 @@ core::DomainResult<core::BandConfig> BandConfigController::makeBandConfig(int ba
     }
 
     return created;
+}
+
+bool BandConfigController::generatorPulseSettingsWithinBaselineBudget(
+    int bandId,
+    double pulsePeriodUs,
+    double pulseWidthUs) const
+{
+    if (!m_bandListModel) {
+        return false;
+    }
+
+    const auto sampleBudget = baselineSamplesPerBatch();
+    if (sampleBudget == 0) {
+        return false;
+    }
+
+    int enabledBandCount = 0;
+    for (int row = 0; row < m_bandListModel->count(); ++row) {
+        const auto* band = m_bandListModel->bandAt(row);
+        if (band && band->config.enabled) {
+            ++enabledBandCount;
+        }
+    }
+    if (enabledBandCount <= 0) {
+        return true;
+    }
+
+    const auto baseSlotsPerBand =
+        sampleBudget / static_cast<std::size_t>(enabledBandCount);
+    const auto extraSlotCount =
+        sampleBudget % static_cast<std::size_t>(enabledBandCount);
+
+    std::size_t enabledBandSlot = 0;
+    long double estimatedSamples = 0.0L;
+    for (int row = 0; row < m_bandListModel->count(); ++row) {
+        const auto* band = m_bandListModel->bandAt(row);
+        if (!band || !band->config.enabled) {
+            continue;
+        }
+
+        const auto bandSlots =
+            baseSlotsPerBand + (enabledBandSlot < extraSlotCount ? 1ULL : 0ULL);
+        ++enabledBandSlot;
+
+        const bool proposedBand = band->config.bandIndex == bandId;
+        const double periodUs =
+            proposedBand ? pulsePeriodUs : band->generatorPulsePeriodUs;
+        const double widthUs =
+            proposedBand ? pulseWidthUs : band->generatorPulseWidthUs;
+        const long double dutyCycle =
+            std::isfinite(periodUs) && std::isfinite(widthUs) && periodUs > 0.0
+                ? std::clamp(static_cast<long double>(widthUs)
+                                 / static_cast<long double>(periodUs),
+                             0.0L,
+                             1.0L)
+                : 1.0L;
+
+        estimatedSamples +=
+            std::ceil(static_cast<long double>(bandSlots) * dutyCycle)
+            * kCurrentBeamCount;
+        if (estimatedSamples > static_cast<long double>(sampleBudget)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool BandConfigController::rejectApply(int bandId, const QString& reason)

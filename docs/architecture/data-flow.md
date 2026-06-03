@@ -43,7 +43,7 @@ BCO UDP stream or HighLoadSimulator
     -> WaterfallAggregator
     -> SpectrumAggregator
     -> BearingAggregator
-    -> SignalParameterAggregator
+    -> optional/future SignalParameterAggregator
     -> StoragePipeline / StorageWriter
     -> GuiSnapshotPublisher
     -> Qt adapter / presentation models
@@ -277,6 +277,10 @@ flags.
 
 ## 9. Signal Parameter Flow
 
+Signal parameters are intentionally outside the current
+`BaselineRawThroughput60MBps` production runtime. The flow below describes the optional /
+future capability if PRI/PW is reintroduced after a separate perf audit.
+
 ```text
 SignalBlock stream
     -> ProcessingEngine
@@ -341,9 +345,13 @@ Supported simulator profiles:
 - `RealBcoEquivalent` - approximates real BCO throughput, about 1,000,000 sample slots/s
   with 10 ms batches.
 - `Stress150Percent` - overload/stress profile.
+- `BaselineRawThroughput60MBps` - current fixed production baseline, packet-aligned to
+  59.856 MB/s effective raw BCO input.
+- `TargetRawThroughput90MBps` - future development/audit target.
 
-`RealBcoEquivalent` must not be the ordinary default until the high-load data plane is
-bounded, instrumented, and performance-tested.
+`BaselineRawThroughput60MBps` is the ordinary runtime default. `RealBcoEquivalent` and
+`TargetRawThroughput90MBps` are engineering/audit profiles, not current production
+defaults.
 
 Current bootstrap uses `HighLoadSimulatorBcoStreamSource` through `IBcoStreamSource`.
 Legacy simulator sample-source paths may remain covered by tests but are not the target

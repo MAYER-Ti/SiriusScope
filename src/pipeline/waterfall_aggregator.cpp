@@ -95,7 +95,7 @@ WaterfallAggregationResult WaterfallAggregator::consume(
             openBucket(*bucketIndex, sample.sampleIndex);
         }
 
-        addSampleToOpenRow(sample);
+        addSampleToOpenRow(sample, bin);
     }
 
     return result;
@@ -184,10 +184,18 @@ int WaterfallAggregator::binForFrequency(std::int64_t frequencyHz) const noexcep
         return 0;
     }
 
-    const auto numerator =
-        static_cast<__int128>(frequencyHz - m_config.sourceMinHz)
-        * static_cast<__int128>(m_config.renderBinCount - 1);
-    const auto denominator = static_cast<__int128>(m_config.sourceMaxHz - m_config.sourceMinHz);
+    const auto range = m_config.sourceMaxHz - m_config.sourceMinHz;
+    const auto multiplier = static_cast<std::int64_t>(m_config.renderBinCount - 1);
+    if (range > 0 && multiplier > 0
+        && range <= std::numeric_limits<std::int64_t>::max() / multiplier) {
+        const auto numerator = (frequencyHz - m_config.sourceMinHz) * multiplier;
+        const auto bin = numerator / range;
+        return std::clamp(static_cast<int>(bin), 0, m_config.renderBinCount - 1);
+    }
+
+    const auto numerator = static_cast<__int128>(frequencyHz - m_config.sourceMinHz)
+        * static_cast<__int128>(multiplier);
+    const auto denominator = static_cast<__int128>(range);
     const auto bin = denominator == 0 ? 0 : numerator / denominator;
     return std::clamp(static_cast<int>(bin), 0, m_config.renderBinCount - 1);
 }
@@ -234,13 +242,12 @@ std::optional<WaterfallSnapshotRow> WaterfallAggregator::closeOpenRow()
     return row;
 }
 
-void WaterfallAggregator::addSampleToOpenRow(const core::SignalSample& sample)
+void WaterfallAggregator::addSampleToOpenRow(const core::SignalSample& sample, int bin)
 {
     if (!m_openRow) {
         return;
     }
 
-    const int bin = binForFrequency(sample.absoluteFrequencyHz);
     if (bin < 0 || static_cast<std::size_t>(bin) >= m_openRow->cells.size()) {
         return;
     }

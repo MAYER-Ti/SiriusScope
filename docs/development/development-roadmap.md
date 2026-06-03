@@ -23,8 +23,12 @@ Current known state:
 - QML UI exists and is useful for layout, operator scenarios, and visual contracts.
 - Core/domain models and constraints exist partially.
 - Processing exists partially through `SampleProcessor`.
-- Runtime may use `HighLoadSimulatorBcoStreamSource` and the `RealBcoEquivalent` profile.
-- `RealBcoEquivalent` produces about 1,000,000 sample slots/s with 10 ms batches.
+- Runtime uses `HighLoadSimulatorBcoStreamSource` with
+  `BaselineRawThroughput60MBps` as the fixed production baseline.
+- `BaselineRawThroughput60MBps` targets 60,000,000 raw B/s and is packet-aligned to
+  59,856,000 effective raw B/s, 37,120 samples per 10 ms batch.
+- `RealBcoEquivalent` remains an engineering comparison profile, not the ordinary
+  runtime default.
 - Older downstream paths were designed around much lower rates, around 1,280 samples/s.
 - `WaterfallController`, `SignalSampleBus`, `BearingFrameBus`, and `ScanController`
   paths may still carry raw or large vectors in transition scenarios.
@@ -44,7 +48,7 @@ BCO UDP / HighLoadSimulator
     -> WaterfallAggregator
     -> SpectrumAggregator
     -> BearingAggregator
-    -> SignalParameterAggregator
+    -> optional/future SignalParameterAggregator
     -> StoragePipeline
     -> GuiSnapshotPublisher
     -> Qt/QML GUI
@@ -91,8 +95,11 @@ development.
 
 Tasks:
 
-- document `UiDemo`, `MediumLoad`, `RealBcoEquivalent`, and `Stress150Percent` profiles;
-- prevent `RealBcoEquivalent` from being treated as a safe ordinary default;
+- document `UiDemo`, `MediumLoad`, `RealBcoEquivalent`, `Stress150Percent`,
+  `BaselineRawThroughput60MBps`, and `TargetRawThroughput90MBps` profiles;
+- keep `BaselineRawThroughput60MBps` as the ordinary runtime default;
+- prevent `RealBcoEquivalent` and `TargetRawThroughput90MBps` from being treated as safe
+  ordinary defaults;
 - add or expose basic throughput and drop metrics;
 - aggregate diagnostics instead of publishing per-sample/per-candidate warnings;
 - identify and isolate paths that copy large vectors into GUI/control-plane components.
@@ -100,6 +107,7 @@ Tasks:
 Acceptance:
 
 - `UiDemo` is safe for UI development;
+- `BaselineRawThroughput60MBps` is covered by strict no-drop audit;
 - `RealBcoEquivalent` overloads are visible and do not crash the app immediately;
 - diagnostics/log/UI queues do not get spammed by per-sample messages.
 
@@ -218,8 +226,12 @@ Acceptance:
 
 - `UiDemo`: no drops.
 - `MediumLoad`: no drops or accepted controlled drops.
+- `BaselineRawThroughput60MBps`: strict no-drop sustain audit, packet-aligned
+  59.856 MB/s effective raw B/s, Waterfall/Spectrum/Bearing active, SignalParameter
+  absent.
 - `RealBcoEquivalent`: no crash, no OOM, bounded queues, responsive GUI, no diagnostics
   spam.
+- `TargetRawThroughput90MBps`: future/audit profile with explicit bottleneck reporting.
 - `Stress150Percent`: system survives by detecting and bounding overload.
 - Long `RealBcoEquivalent`: at least 30 minutes without uncontrolled memory growth.
 

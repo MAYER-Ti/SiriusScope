@@ -131,6 +131,13 @@ bool SpectrumAggregator::usesBlockLocalFastPath() const noexcept
         && m_config.renderBinCount > 0 && m_config.bandCapacity > 0;
 }
 
+bool SpectrumAggregator::usesTrustedBlockLocalFastPath() const noexcept
+{
+    return usesBlockLocalFastPath() && !m_config.enableDetailedTiming
+        && m_canUseIncrementalWindowIndex && m_canUseFastBinIndex
+        && m_config.sourceMaxHz > m_config.sourceMinHz;
+}
+
 bool SpectrumAggregator::hasValidUntrustedSample(
     const core::SignalSample& sample) const
 {
@@ -138,6 +145,180 @@ bool SpectrumAggregator::hasValidUntrustedSample(
         && core::validateBandIndex(sample.bandIndex).isValid()
         && core::validateBeamIndex(sample.beamIndex).isValid()
         && core::validateSystemFrequency(sample.absoluteFrequencyHz).isValid();
+}
+
+SpectrumAggregationResult SpectrumAggregator::consumeTrustedBlockLocalFast(
+    std::span<const core::SignalSample> samples)
+{
+    SpectrumAggregationResult result;
+    const auto totalStartedAt = Clock::now();
+    const auto incrementalFallbacksBefore = m_incrementalWindowFallbacks;
+
+    result.usedFastWindowIndex = m_canUseFastWindowIndex;
+    result.usedIncrementalWindowIndex = m_canUseIncrementalWindowIndex;
+    result.usedFastBinIndex = m_canUseFastBinIndex;
+    result.usedFastBandSummaryStorage = true;
+    result.usedBlockLocalAccumulation = !samples.empty();
+    result.snapshots.reserve(2);
+    prepareLocalAccumulationBuffers();
+
+    const auto sampleLoopStartedAt = Clock::now();
+    for (const auto& sample : samples) {
+        ++m_counters.consumedSamples;
+        ++result.deltaCounters.consumedSamples;
+
+        if (sample.sampleIndex < m_config.timeBase.firstSampleIndex
+            || sample.amplitude <= 0) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+
+        std::optional<std::uint64_t> fallbackWindow;
+        if (m_lastWindowSampleIndex
+            && sample.sampleIndex < *m_lastWindowSampleIndex) {
+            ++m_incrementalWindowFallbacks;
+            resetIncrementalWindowState();
+            fallbackWindow = exactWindowForSample(sample.sampleIndex);
+            primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+        } else if (!m_incrementalWindowIndex
+                   || !m_incrementalNextWindowStartSampleIndex) {
+            fallbackWindow = exactWindowForSample(sample.sampleIndex);
+            primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+        } else {
+            while (m_incrementalNextWindowStartSampleIndex
+                   && sample.sampleIndex >= *m_incrementalNextWindowStartSampleIndex) {
+                if (*m_incrementalWindowIndex
+                    == std::numeric_limits<std::uint64_t>::max()) {
+                    ++m_incrementalWindowFallbacks;
+                    fallbackWindow = exactWindowForSample(sample.sampleIndex);
+                    primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+                    break;
+                }
+
+                ++(*m_incrementalWindowIndex);
+                if (*m_incrementalWindowIndex
+                    == std::numeric_limits<std::uint64_t>::max()) {
+                    m_incrementalNextWindowStartSampleIndex.reset();
+                    break;
+                }
+
+                const auto nextBoundary =
+                    firstSampleIndexForWindow(*m_incrementalWindowIndex + 1);
+                if (!nextBoundary) {
+                    ++m_incrementalWindowFallbacks;
+                    fallbackWindow = exactWindowForSample(sample.sampleIndex);
+                    primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+                    break;
+                }
+                m_incrementalNextWindowStartSampleIndex = *nextBoundary;
+            }
+            if (m_incrementalWindowIndex) {
+                m_lastWindowSampleIndex = sample.sampleIndex;
+            }
+        }
+
+        if (!m_incrementalWindowIndex) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+        const auto windowIndex = *m_incrementalWindowIndex;
+
+        if (sample.absoluteFrequencyHz < m_config.sourceMinHz
+            || sample.absoluteFrequencyHz > m_config.sourceMaxHz) {
+            if (sample.absoluteFrequencyHz <= 0) {
+                ++m_counters.invalidSamples;
+                ++result.deltaCounters.invalidSamples;
+            } else {
+                ++m_counters.outOfRangeSamples;
+                ++result.deltaCounters.outOfRangeSamples;
+            }
+            continue;
+        }
+
+        if (sample.amplitude < m_config.amplitudeFloor) {
+            continue;
+        }
+
+        if (sample.bandIndex < 0
+            || static_cast<std::size_t>(sample.bandIndex) >= m_config.bandCapacity) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+
+        const auto relativeFrequencyHz =
+            sample.absoluteFrequencyHz - m_config.sourceMinHz;
+        const auto numerator = relativeFrequencyHz * m_fastBinMultiplier;
+        const auto binIndex = static_cast<std::size_t>(
+            std::clamp(static_cast<int>(numerator / m_fastBinRangeHz),
+                       0,
+                       m_config.renderBinCount - 1));
+
+        if (!m_openWindow) {
+            openWindow(windowIndex, sample.sampleIndex);
+        } else if (m_openWindow->windowIndex != windowIndex) {
+            mergeLocalAccumulationIntoOpenWindow();
+            if (auto snapshot = closeOpenWindow()) {
+                result.snapshots.push_back(std::move(snapshot));
+                ++result.deltaCounters.producedSnapshots;
+            }
+            openWindow(windowIndex, sample.sampleIndex);
+        }
+
+        if (!m_localHasSamples) {
+            m_localFirstSampleIndex = sample.sampleIndex;
+            m_localLastSampleIndex = sample.sampleIndex;
+            m_localHasSamples = true;
+        } else {
+            m_localLastSampleIndex = sample.sampleIndex;
+        }
+
+        const auto amplitude =
+            static_cast<std::uint16_t>(std::clamp(
+                sample.amplitude,
+                0,
+                static_cast<int>(std::numeric_limits<std::uint16_t>::max())));
+
+        auto& bin = m_localBins[binIndex];
+        if (bin.used == 0) {
+            bin.used = 1;
+            m_touchedBins.push_back(static_cast<std::uint32_t>(binIndex));
+        }
+        bin.totalPeak = std::max(bin.totalPeak, amplitude);
+        if (m_config.separateBeams && sample.beamIndex == 0) {
+            bin.beam0Peak = std::max(bin.beam0Peak, amplitude);
+        } else if (m_config.separateBeams && sample.beamIndex == 1) {
+            bin.beam1Peak = std::max(bin.beam1Peak, amplitude);
+        }
+        if (bin.hitCount < std::numeric_limits<std::uint16_t>::max()) {
+            ++bin.hitCount;
+        }
+
+        const auto bandIndex = static_cast<std::size_t>(sample.bandIndex);
+        auto& band = m_localBands[bandIndex];
+        if (band.used == 0) {
+            band.used = 1;
+            band.bandIndex = sample.bandIndex;
+            m_touchedBands.push_back(static_cast<std::uint32_t>(bandIndex));
+        }
+        ++band.sampleCount;
+        band.totalPeak = std::max(band.totalPeak, amplitude);
+        if (m_config.separateBeams && sample.beamIndex == 0) {
+            band.beam0Peak = std::max(band.beam0Peak, amplitude);
+        } else if (m_config.separateBeams && sample.beamIndex == 1) {
+            band.beam1Peak = std::max(band.beam1Peak, amplitude);
+        }
+    }
+
+    mergeLocalAccumulationIntoOpenWindow();
+    result.timing.sampleLoop = Clock::now() - sampleLoopStartedAt;
+    result.timing.total = Clock::now() - totalStartedAt;
+    result.incrementalWindowFallbacks =
+        m_incrementalWindowFallbacks - incrementalFallbacksBefore;
+
+    return result;
 }
 
 bool SpectrumAggregator::hasFixedBandSummarySlot(int bandIndex) const noexcept
@@ -163,6 +344,10 @@ SpectrumAggregationResult SpectrumAggregator::consume(const SignalBlock& block)
 SpectrumAggregationResult SpectrumAggregator::consume(
     std::span<const core::SignalSample> samples)
 {
+    if (usesTrustedBlockLocalFastPath()) {
+        return consumeTrustedBlockLocalFast(samples);
+    }
+
     SpectrumAggregationResult result;
     const auto totalStartedAt = Clock::now();
     const bool detailedTiming = m_config.enableDetailedTiming;

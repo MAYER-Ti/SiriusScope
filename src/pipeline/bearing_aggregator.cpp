@@ -113,6 +113,7 @@ void BearingAggregator::reset()
     m_counters = {};
     m_openWindow.reset();
     m_nextSnapshotSequenceId = 1;
+    resetIncrementalWindowState();
     resetLocalCandidateTouched();
 }
 
@@ -180,6 +181,13 @@ bool BearingAggregator::usesBlockLocalFastPath() const noexcept
         && m_config.bandCapacity > 0 && m_config.frequencyBinCount > 0;
 }
 
+bool BearingAggregator::usesTrustedBlockLocalFastPath() const noexcept
+{
+    return usesBlockLocalFastPath() && !m_config.enableDetailedTiming
+        && m_config.timeBase.samplePeriodNs > 0 && m_config.windowPeriodNs > 0
+        && m_useFastBinIndex && m_config.sourceMaxHz > m_config.sourceMinHz;
+}
+
 bool BearingAggregator::hasValidUntrustedSample(
     const core::SignalSample& sample) const
 {
@@ -187,6 +195,192 @@ bool BearingAggregator::hasValidUntrustedSample(
         && core::validateBandIndex(sample.bandIndex).isValid()
         && core::validateBeamIndex(sample.beamIndex).isValid()
         && core::validateSystemFrequency(sample.absoluteFrequencyHz).isValid();
+}
+
+BearingAggregationResult BearingAggregator::consumeTrustedBlockLocalFast(
+    std::span<const core::SignalSample> samples,
+    std::optional<double> antennaAzimuthDeg)
+{
+    BearingAggregationResult result;
+    const auto totalStartedAt = Clock::now();
+    result.usedFastCandidateStorage = true;
+    result.usedBlockLocalAccumulation = !samples.empty();
+    result.snapshots.reserve(2);
+    prepareLocalCandidateBuffers();
+
+    const double blockAntennaAzimuthDeg =
+        antennaAzimuthDeg.value_or(m_config.fallbackAntennaAzimuthDeg);
+    const auto frequencyBinCount =
+        static_cast<std::size_t>(m_config.frequencyBinCount);
+
+    const auto sampleLoopStartedAt = Clock::now();
+    for (const auto& sample : samples) {
+        ++m_counters.consumedSamples;
+        ++result.deltaCounters.consumedSamples;
+
+        if (sample.sampleIndex < m_config.timeBase.firstSampleIndex
+            || sample.amplitude <= 0) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+
+        if (sample.amplitude < m_config.amplitudeFloor) {
+            continue;
+        }
+
+        std::optional<std::uint64_t> fallbackWindow;
+        if (m_lastWindowSampleIndex
+            && sample.sampleIndex < *m_lastWindowSampleIndex) {
+            resetIncrementalWindowState();
+            fallbackWindow = windowForSample(sample.sampleIndex);
+            primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+        } else if (!m_incrementalWindowIndex
+                   || !m_incrementalNextWindowStartSampleIndex) {
+            fallbackWindow = windowForSample(sample.sampleIndex);
+            primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+        } else {
+            while (m_incrementalNextWindowStartSampleIndex
+                   && sample.sampleIndex >= *m_incrementalNextWindowStartSampleIndex) {
+                if (*m_incrementalWindowIndex
+                    == std::numeric_limits<std::uint64_t>::max()) {
+                    fallbackWindow = windowForSample(sample.sampleIndex);
+                    primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+                    break;
+                }
+
+                ++(*m_incrementalWindowIndex);
+                if (*m_incrementalWindowIndex
+                    == std::numeric_limits<std::uint64_t>::max()) {
+                    m_incrementalNextWindowStartSampleIndex.reset();
+                    break;
+                }
+
+                const auto nextBoundary =
+                    firstSampleIndexForWindow(*m_incrementalWindowIndex + 1);
+                if (!nextBoundary) {
+                    fallbackWindow = windowForSample(sample.sampleIndex);
+                    primeIncrementalWindowState(sample.sampleIndex, fallbackWindow);
+                    break;
+                }
+                m_incrementalNextWindowStartSampleIndex = *nextBoundary;
+            }
+            if (m_incrementalWindowIndex) {
+                m_lastWindowSampleIndex = sample.sampleIndex;
+            }
+        }
+
+        if (!m_incrementalWindowIndex) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+        const auto windowIndex = *m_incrementalWindowIndex;
+
+        if (sample.absoluteFrequencyHz < m_config.sourceMinHz
+            || sample.absoluteFrequencyHz > m_config.sourceMaxHz) {
+            if (sample.absoluteFrequencyHz <= 0) {
+                ++m_counters.invalidSamples;
+                ++result.deltaCounters.invalidSamples;
+            } else {
+                ++m_counters.outOfRangeSamples;
+                ++result.deltaCounters.outOfRangeSamples;
+            }
+            continue;
+        }
+
+        if (sample.bandIndex < 0) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+        const auto band = static_cast<std::size_t>(sample.bandIndex);
+        if (band >= m_config.bandCapacity) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+
+        const auto relativeFrequencyHz =
+            sample.absoluteFrequencyHz - m_config.sourceMinHz;
+        const auto numerator = relativeFrequencyHz * m_fastBinMultiplier;
+        const auto binIndex = static_cast<std::size_t>(
+            std::clamp(static_cast<int>(numerator / m_fastBinRangeHz),
+                       0,
+                       m_config.frequencyBinCount - 1));
+        if (binIndex >= frequencyBinCount) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+
+        if (!m_openWindow) {
+            openWindow(windowIndex, sample.sampleIndex, blockAntennaAzimuthDeg);
+        } else if (m_openWindow->windowIndex != windowIndex) {
+            mergeLocalCandidatesIntoOpenWindow();
+            if (auto snapshot = closeOpenWindow(result.deltaCounters)) {
+                result.snapshots.push_back(std::move(snapshot));
+            }
+            openWindow(windowIndex, sample.sampleIndex, blockAntennaAzimuthDeg);
+        }
+
+        if (!m_localHasSamples) {
+            m_localHasSamples = true;
+            m_localFirstSampleIndex = sample.sampleIndex;
+            m_localLastSampleIndex = sample.sampleIndex;
+        } else {
+            if (sample.sampleIndex < m_localFirstSampleIndex) {
+                m_localFirstSampleIndex = sample.sampleIndex;
+            }
+            if (sample.sampleIndex > m_localLastSampleIndex) {
+                m_localLastSampleIndex = sample.sampleIndex;
+            }
+        }
+
+        const auto index = band * frequencyBinCount + binIndex;
+        if (index >= m_localCandidates.size()) {
+            ++m_counters.invalidSamples;
+            ++result.deltaCounters.invalidSamples;
+            continue;
+        }
+
+        auto& candidate = m_localCandidates[index];
+        if (!candidate.hasSamples) {
+            candidate.hasSamples = true;
+            candidate.bandIndex = sample.bandIndex;
+            candidate.frequencyBin = static_cast<std::uint32_t>(binIndex);
+            candidate.centerFrequencyHz =
+                centerFrequencyForBin(candidate.frequencyBin);
+            candidate.firstSampleIndex = sample.sampleIndex;
+            candidate.lastSampleIndex = sample.sampleIndex;
+            m_touchedCandidateIndexes.push_back(static_cast<std::uint32_t>(index));
+        } else {
+            if (sample.sampleIndex < candidate.firstSampleIndex) {
+                candidate.firstSampleIndex = sample.sampleIndex;
+            }
+            if (sample.sampleIndex > candidate.lastSampleIndex) {
+                candidate.lastSampleIndex = sample.sampleIndex;
+            }
+        }
+
+        const auto amplitude =
+            static_cast<std::uint16_t>(std::clamp(
+                sample.amplitude,
+                0,
+                static_cast<int>(std::numeric_limits<std::uint16_t>::max())));
+        if (sample.beamIndex == 0) {
+            candidate.beam0Peak = std::max(candidate.beam0Peak, amplitude);
+            candidate.hasBeam0 = true;
+        } else if (sample.beamIndex == 1) {
+            candidate.beam1Peak = std::max(candidate.beam1Peak, amplitude);
+            candidate.hasBeam1 = true;
+        }
+    }
+
+    mergeLocalCandidatesIntoOpenWindow();
+    result.timing.sampleLoop = Clock::now() - sampleLoopStartedAt;
+    result.timing.total = Clock::now() - totalStartedAt;
+    return result;
 }
 
 BearingAggregationResult BearingAggregator::consume(const SignalBlock& block)
@@ -211,6 +405,10 @@ BearingAggregationResult BearingAggregator::consumeSamples(
     std::span<const core::SignalSample> samples,
     std::optional<double> antennaAzimuthDeg)
 {
+    if (usesTrustedBlockLocalFastPath()) {
+        return consumeTrustedBlockLocalFast(samples, antennaAzimuthDeg);
+    }
+
     BearingAggregationResult result;
     const auto totalStartedAt = Clock::now();
     const bool detailedTiming = m_config.enableDetailedTiming;
@@ -393,6 +591,61 @@ std::optional<std::uint64_t> BearingAggregator::windowForSample(
         return std::nullopt;
     }
     return static_cast<std::uint64_t>(window);
+}
+
+std::optional<std::uint64_t> BearingAggregator::firstSampleIndexForWindow(
+    std::uint64_t windowIndex) const
+{
+    if (m_config.windowPeriodNs == 0 || m_config.timeBase.samplePeriodNs == 0) {
+        return std::nullopt;
+    }
+
+    const auto numerator =
+        static_cast<unsigned __int128>(windowIndex)
+        * static_cast<unsigned __int128>(m_config.windowPeriodNs);
+    const auto denominator =
+        static_cast<unsigned __int128>(m_config.timeBase.samplePeriodNs);
+    auto relativeSampleIndex = numerator / denominator;
+    if (numerator % denominator != 0) {
+        ++relativeSampleIndex;
+    }
+    if (relativeSampleIndex > std::numeric_limits<std::uint64_t>::max()) {
+        return std::nullopt;
+    }
+
+    const auto relative = static_cast<std::uint64_t>(relativeSampleIndex);
+    if (relative
+        > std::numeric_limits<std::uint64_t>::max()
+            - m_config.timeBase.firstSampleIndex) {
+        return std::nullopt;
+    }
+    return m_config.timeBase.firstSampleIndex + relative;
+}
+
+void BearingAggregator::resetIncrementalWindowState() noexcept
+{
+    m_incrementalWindowIndex.reset();
+    m_incrementalNextWindowStartSampleIndex.reset();
+    m_lastWindowSampleIndex.reset();
+}
+
+void BearingAggregator::primeIncrementalWindowState(
+    std::uint64_t sampleIndex,
+    std::optional<std::uint64_t> windowIndex)
+{
+    if (!windowIndex) {
+        resetIncrementalWindowState();
+        return;
+    }
+
+    m_incrementalWindowIndex = *windowIndex;
+    if (*windowIndex == std::numeric_limits<std::uint64_t>::max()) {
+        m_incrementalNextWindowStartSampleIndex.reset();
+    } else {
+        m_incrementalNextWindowStartSampleIndex =
+            firstSampleIndexForWindow(*windowIndex + 1);
+    }
+    m_lastWindowSampleIndex = sampleIndex;
 }
 
 std::int64_t BearingAggregator::utcNsForSample(std::uint64_t sampleIndex) const

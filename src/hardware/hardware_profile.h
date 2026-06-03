@@ -23,6 +23,7 @@ enum class SimulatorLoadProfile
     MediumLoad,
     RealBcoEquivalent,
     Stress150Percent,
+    BaselineRawThroughput60MBps,
     TargetRawThroughput90MBps,
 };
 

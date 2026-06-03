@@ -494,15 +494,20 @@ Simulator profile acceptance criteria:
 
 * `UiDemo`: no drops, no diagnostics spam, stable GUI.
 * `MediumLoad`: no drops, or only explicitly accepted controlled drops with metrics.
+* `BaselineRawThroughput60MBps`: strict no-drop sustain audit, packet-aligned to
+  59.856 MB/s effective raw BCO input, Waterfall/Spectrum/Bearing active,
+  SignalParameter absent.
 * `RealBcoEquivalent`: no crash, no OOM, bounded queues, responsive GUI, rate-limited
   diagnostics, visible throughput and latency metrics.
+* `TargetRawThroughput90MBps`: future/audit target with explicit bottleneck reporting.
 * `Stress150Percent`: system does not die; overload is detected, bounded, and shown
   explicitly.
 * Long `RealBcoEquivalent` run: at least 30 minutes without uncontrolled memory growth.
 
-`RealBcoEquivalent` approximates real BCO throughput at about 1,000,000 sample slots/s
-with 10 ms batches. It must not be used as an ordinary safe default until the high-load
-data plane is implemented, bounded, instrumented, and performance-tested.
+`BaselineRawThroughput60MBps` is the ordinary runtime default. `RealBcoEquivalent`
+approximates real BCO throughput at about 1,000,000 sample slots/s with 10 ms batches and
+remains an engineering comparison profile. `TargetRawThroughput90MBps` remains a future /
+audit target, not the current production baseline.
 
 Expected long-term performance targets are defined in scope and subsystem documents,
 especially `docs/architecture/high-load-data-plane.md`.

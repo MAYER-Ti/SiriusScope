@@ -13,6 +13,22 @@ explicit overload event counted by queue metrics and rate-limited diagnostics. R
 `SignalSample` vectors are not transported through Qt, QML, `SignalSampleBus`, or
 `BearingFrameBus` on the high-load path.
 
+## Current baseline
+
+SiriusScope baseline is `BaselineRawThroughput60MBps`.
+
+The baseline generator is packet-aligned to 59.856 MB/s raw BCO input:
+
+- 145 packets per 10 ms batch;
+- 37,120 samples per batch;
+- 3,712,000 samples per second;
+- 598,560 raw bytes per batch.
+
+The baseline runtime processes Waterfall, Spectrum, and Bearing in `ParallelFanOut`.
+SignalParameter / PRI / PW calculation is intentionally out of the baseline high-load
+runtime. 90 MB/s is a future development target. 60 MB/s without
+SignalParameter/PRI/PW is the current fixed baseline.
+
 Spectrum output is published as immutable `SpectrumSnapshot` objects through the same
 latest-value exchange model. `SpectrumAggregator` builds fixed frequency bins and compact
 per-band summaries from `SignalBlock` data. The Qt layer adapts the latest snapshot to
@@ -38,16 +54,14 @@ out of the per-sample loop; perf tests can enable it with:
 $env:SIRIUSSCOPE_ENABLE_DETAILED_BEARING_TIMING = "1"
 ```
 
-Signal parameter output is published as immutable `SignalParameterSnapshot` objects.
-`SignalParameterAggregator` reuses the processing accumulator inside the data plane and
-publishes compact per-band PRI/PW summaries without returning raw samples to Qt. Signal
-parameter snapshots are throttled in the data plane, and processing flush can force a
-final snapshot so scan completion receives complete PRI/PW summaries. The default
-data-plane policy publishes signal parameter snapshots by processed-block interval, not
-on every processed block. The default high-load signal parameter path uses a trusted
-fixed-band batch ingest loop, so accumulator updates and per-band sample span tracking
-share one tight pass over accepted samples while validated, sorted, and map-backed safe
-modes remain available for untrusted inputs.
+Signal parameter output remains available as immutable `SignalParameterSnapshot` objects
+for optional/future work. It is not part of the current 60 MB/s baseline. When explicitly
+enabled, `SignalParameterAggregator` reuses the processing accumulator inside the data
+plane and publishes compact per-band PRI/PW summaries without returning raw samples to
+Qt. The high-load signal parameter path uses a trusted fixed-band batch ingest loop, so
+accumulator updates and per-band sample span tracking share one tight pass over accepted
+samples while validated, sorted, and map-backed safe modes remain available for untrusted
+inputs.
 P1.21 adds critical-stage diagnostics for this path: input/accepted/rejected samples,
 touched bands, pulse transitions, active pulse updates, completed pulses, out-of-order
 samples, below-threshold fast skips, and trusted/block-local fast-path block counts are
@@ -60,9 +74,10 @@ of the per-sample path; perf tests can enable it with:
 $env:SIRIUSSCOPE_ENABLE_DETAILED_SIGNAL_PARAMETER_TIMING = "1"
 ```
 
-`ProcessingEngine` supports an experimental `ParallelFanOut` mode for high-load audits.
-In this mode a popped `SignalBlock` is fanned out to separate Waterfall, Spectrum,
-Bearing, and SignalParameter stage workers. The pooled block handle is owned by a shared
+`ProcessingEngine` uses `ParallelFanOut` for the fixed 60 MB/s baseline and supports the
+same mode for high-load audits. In this mode a popped `SignalBlock` is fanned out to
+separate Waterfall, Spectrum, Bearing, and optional SignalParameter stage workers. The
+pooled block handle is owned by a shared
 fan-out context and returns to the pool only after all four stages complete. Sequential
 processing remains the default runtime mode; perf tests can opt into fan-out with:
 
@@ -108,7 +123,15 @@ $env:SIRIUSSCOPE_VISUAL_BEARING_BEST_EFFORT = "0"
 $env:SIRIUSSCOPE_ENABLE_PARALLEL_PROCESSING_ENGINE = "1"
 ```
 
-90 MB/s strict and soak validation is gated through perf-test environment variables so
+The current baseline sustain audit is gated so ordinary `ctest` runs stay short:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_BASELINE_60MBPS_PIPELINE_TEST = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+```
+
+90 MB/s strict and soak validation is a future development target gated through
+perf-test environment variables so
 ordinary `ctest` runs stay short. A short strict no-drop audit can be run with:
 
 ```powershell

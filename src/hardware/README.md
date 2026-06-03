@@ -26,4 +26,11 @@ Simulator profiles:
 - `MediumLoad` - intermediate integration load;
 - `RealBcoEquivalent` - approximately real BCO rate, about 1,000,000 sample slots/s with
   10 ms batches;
-- `Stress150Percent` - overload/stress profile.
+- `Stress150Percent` - overload/stress profile;
+- `BaselineRawThroughput60MBps` - current fixed production baseline, packet-aligned to
+  59.856 MB/s effective raw BCO input;
+- `TargetRawThroughput90MBps` - future development/audit target.
+
+`BaselineRawThroughput60MBps` is the ordinary runtime default. `RealBcoEquivalent` and
+`TargetRawThroughput90MBps` are engineering/audit profiles, not current production
+defaults.

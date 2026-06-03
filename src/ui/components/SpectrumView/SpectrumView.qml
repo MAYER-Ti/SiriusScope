@@ -35,6 +35,17 @@ Item {
     property int pendingBandPreviewId: -1
     property real pendingBandPreviewCenterHz: 0
     property real pendingBandPreviewWidthHz: 0
+    property int lastGeneratorPulseRejectedBandId: -1
+    property string lastGeneratorPulseRejectionReason: ""
+
+    Connections {
+        target: BandConfigController
+
+        function onGeneratorPulseSettingsRejected(bandId, reason) {
+            root.lastGeneratorPulseRejectedBandId = bandId
+            root.lastGeneratorPulseRejectionReason = reason
+        }
+    }
 
     function decimateAndRepaint() {
         if (signalCanvas.width <= 0) {
@@ -201,11 +212,18 @@ Item {
                 return
             }
 
+            root.lastGeneratorPulseRejectedBandId = -1
+            root.lastGeneratorPulseRejectionReason = ""
             var accepted = BandConfigController.applyGeneratorPulseSettings(bandId,
                                                                             pulsePeriodUs,
                                                                             pulseWidthUs)
             if (!accepted) {
-                window.showControllerError(qsTr("Параметры генератора отклонены."))
+                var reason = root.lastGeneratorPulseRejectedBandId === bandId
+                        ? root.lastGeneratorPulseRejectionReason
+                        : ""
+                window.showControllerError(reason.length > 0
+                                           ? reason
+                                           : qsTr("Параметры генератора отклонены."))
             }
         })
 

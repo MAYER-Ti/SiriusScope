@@ -7,13 +7,35 @@ path can carry the high-load raw BCO stream.
 
 ## 1. Context
 
-The current runtime can use `HighLoadSimulatorBcoStreamSource` with the
-`RealBcoEquivalent` profile. That profile is intended to approximate the real BCO data
-rate and produces about 1,000,000 sample slots per second with batches every 10 ms.
+The current runtime uses `HighLoadSimulatorBcoStreamSource` with the
+`BaselineRawThroughput60MBps` profile as the fixed production baseline.
+`RealBcoEquivalent` remains an engineering profile for comparison and transition work,
+not the ordinary runtime default.
 
 The older runtime was around 1,280 samples per second. It was useful for proving the UI
 layout and early processing path, but it is not the production architecture for a real
 BCO stream.
+
+## Current baseline
+
+SiriusScope baseline is `BaselineRawThroughput60MBps`.
+
+The baseline generator is packet-aligned to 59.856 MB/s raw BCO input:
+
+- 145 packets per 10 ms batch;
+- 37,120 samples per batch;
+- 3,712,000 samples per second;
+- 598,560 raw bytes per batch.
+
+The baseline runtime processes:
+
+- Waterfall;
+- Spectrum;
+- Bearing.
+
+SignalParameter / PRI / PW calculation is intentionally out of the baseline high-load
+runtime. 90 MB/s is a future development target. 60 MB/s without
+SignalParameter/PRI/PW is the current fixed baseline.
 
 Known transition risks:
 
@@ -128,19 +150,24 @@ but their high-load input must be prepared by data plane aggregators.
 
 Current experimental mode:
 
-- `ProcessingEngine` defaults to `Sequential` processing, where one worker runs
-  Waterfall, Spectrum, Bearing, and SignalParameter aggregation in order.
-- `ParallelFanOut` is an opt-in high-load audit mode. It fans each pooled `SignalBlock`
-  out to separate stage workers for Waterfall, Spectrum, Bearing, and SignalParameter
-  aggregation.
+- The production baseline uses `ParallelFanOut` with Waterfall, Spectrum, and Bearing
+  active and `SignalParameterAggregator` disabled.
+- `ProcessingEngine` still supports `Sequential` processing, where one worker runs
+  active stages in order.
+- Outside the fixed production baseline, `ParallelFanOut` remains an audit mode. It fans
+  each pooled `SignalBlock` out to separate stage workers for Waterfall, Spectrum,
+  Bearing, and optionally SignalParameter aggregation.
 - The fan-out context owns the pooled block handle until every stage completes, so stage
   workers read the same block without copying samples and the block is not returned to
   the pool early.
 - Stage queues are bounded and expose queue depth, max depth, capacity, queue wait
   latency, service latency, submit failures, per-stage processed block/sample counts,
   in-flight block, fallback/rejection, and end-to-end fan-out latency metrics.
-- `ParallelFanOut` must not become the GUI runtime default until audit results prove the
-  behavior is stable enough for production use.
+- `ParallelFanOut` is the GUI runtime default only for the fixed 60 MB/s baseline. Higher
+  target-raw modes remain audit/future work until their own no-drop evidence exists.
+- `SIRIUSSCOPE_RUN_BASELINE_60MBPS_PIPELINE_TEST=1` runs the strict baseline sustain
+  audit. It uses `BaselineRawThroughput60MBps`, `ParallelFanOut`, Waterfall/Spectrum/
+  Bearing active, and SignalParameter disabled.
 - 90 MB/s target-raw validation remains gated by environment variables. The short audit
   uses `SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST=1`; strict no-drop assertions are enabled by
   `SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS=1`; long soak validation also requires
@@ -351,11 +378,12 @@ Current v1 implementation:
 
 ## 8.1 SignalParameter Critical-Stage Diagnostics
 
-SignalParameter aggregation is a critical data-plane stage. It remains
-`LosslessRequired` even when audit-only visual overload policy is enabled, and
-SignalParameter jobs are not dropped, coalesced, or treated as best-effort UI work.
-The only exception is the explicit audit-only ablation mode, where the whole
-SignalParameter stage is disabled to measure whether it is the 90 MB/s bottleneck.
+SignalParameter aggregation remains available as an optional/future data-plane stage.
+It is intentionally disabled in the current 60 MB/s production baseline, so PRI/PW is
+not calculated or displayed as baseline output. When SignalParameter is explicitly
+enabled for future work or audits, it remains `LosslessRequired` even when audit-only
+visual overload policy is enabled, and SignalParameter jobs are not dropped, coalesced,
+or treated as best-effort UI work.
 
 Current v1 diagnostics:
 
@@ -470,10 +498,15 @@ Simulator profiles must be used consistently:
 - `RealBcoEquivalent` - load approximating real BCO throughput; about 1,000,000 sample
   slots/s with 10 ms batches.
 - `Stress150Percent` - overload/stress profile.
+- `BaselineRawThroughput60MBps` - current fixed production baseline, packet-aligned to
+  59.856 MB/s effective raw BCO input.
+- `TargetRawThroughput90MBps` - future development/audit target, not the current
+  production baseline.
 
-The current production simulator path uses `RealBcoEquivalent` by default through the
-bounded `DataIngestPipeline`. It remains an engineering load profile, not a selectable UI
-profile.
+The current production simulator path uses `BaselineRawThroughput60MBps` by default
+through the bounded `DataIngestPipeline`. `RealBcoEquivalent` and
+`TargetRawThroughput90MBps` remain engineering/audit profiles, not selectable UI
+profiles and not ordinary production defaults.
 
 ## 13. Acceptance Criteria
 
@@ -481,8 +514,11 @@ High-load readiness is evaluated by profile:
 
 - `UiDemo`: no drops, stable GUI, no warning spam.
 - `MediumLoad`: no drops, or only explicitly accepted controlled drops with metrics.
+- `BaselineRawThroughput60MBps`: strict no-drop sustain audit, `ParallelFanOut`,
+  Waterfall/Spectrum/Bearing active, SignalParameter absent.
 - `RealBcoEquivalent`: no crash, no OOM, bounded queues, responsive GUI, rate-limited
   diagnostics, visible throughput and latency metrics.
+- `TargetRawThroughput90MBps`: future/audit target with explicit bottleneck reporting.
 - `Stress150Percent`: the system does not die; overload is detected, bounded, and shown
   explicitly.
 - Long `RealBcoEquivalent` run: at least 30 minutes without uncontrolled memory growth.

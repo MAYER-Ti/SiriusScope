@@ -499,6 +499,47 @@ void testRejectsInvalidGeneratorPulseSettings(TestRunner& test)
     }
 }
 
+void testRejectsGeneratorPulseSettingsAboveBaselineBudget(TestRunner& test)
+{
+    BandListModel model;
+    RecordingBcoControl bco;
+    RecordingDiagnosticsSink diagnostics;
+    BandConfigController controller(&model, &bco, &diagnostics);
+
+    QString rejectedReason;
+    QObject::connect(&controller,
+                     &BandConfigController::generatorPulseSettingsRejected,
+                     [&rejectedReason](int bandId, const QString& reason) {
+                         if (bandId == 2) {
+                             rejectedReason = reason;
+                         }
+                     });
+
+    const bool firstOk = controller.applyGeneratorPulseSettings(0, 1.001, 1.0);
+    const bool secondOk = controller.applyGeneratorPulseSettings(1, 1.001, 1.0);
+    const double originalPeriod =
+        model.getByBandId(2).value(QStringLiteral("generatorPulsePeriodUs")).toDouble();
+    const double originalWidth =
+        model.getByBandId(2).value(QStringLiteral("generatorPulseWidthUs")).toDouble();
+
+    const bool thirdOk = controller.applyGeneratorPulseSettings(2, 1.001, 1.0);
+    const QVariantMap band = model.getByBandId(2);
+
+    test.require(firstOk, "first dense generator pulse setting stays inside baseline budget");
+    test.require(secondOk, "second dense generator pulse setting stays inside baseline budget");
+    test.require(!thirdOk, "third dense generator pulse setting exceeds baseline budget");
+    test.require(rejectedReason
+                     == QStringLiteral("Параметры генератора отклонены: превышение baseline-нагрузки 60 MB/s"),
+                 "baseline generator rejection reason is user-facing");
+    test.require(bco.applySingleCount == 0, "generator pulse settings are not sent to BCO");
+    test.require(band.value(QStringLiteral("generatorPulsePeriodUs")).toDouble()
+                     == originalPeriod,
+                 "over-budget generator pulse keeps previous period");
+    test.require(band.value(QStringLiteral("generatorPulseWidthUs")).toDouble()
+                     == originalWidth,
+                 "over-budget generator pulse keeps previous width");
+}
+
 void testEditingLockRejectsGeneratorPulseSettings(TestRunner& test)
 {
     BandListModel model;
@@ -550,6 +591,7 @@ int main(int argc, char *argv[])
     testEditingLockRestoresActivePreview(test);
     testApplyValidGeneratorPulseSettings(test);
     testRejectsInvalidGeneratorPulseSettings(test);
+    testRejectsGeneratorPulseSettingsAboveBaselineBudget(test);
     testEditingLockRejectsGeneratorPulseSettings(test);
 
     return test.result();

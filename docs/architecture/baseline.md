@@ -95,7 +95,7 @@ BCO UDP / HighLoadSimulator
     -> WaterfallAggregator
     -> SpectrumAggregator
     -> BearingAggregator
-    -> SignalParameterAggregator
+    -> optional/future SignalParameterAggregator
     -> StoragePipeline
     -> GuiSnapshotPublisher
     -> Qt/QML presentation
@@ -135,10 +135,15 @@ The baseline recognizes these simulator profiles:
 - `RealBcoEquivalent` - approximately real BCO rate; about 1,000,000 sample slots/s with
   10 ms batches.
 - `Stress150Percent` - overload/stress profile.
+- `BaselineRawThroughput60MBps` - current fixed production baseline, packet-aligned to
+  59.856 MB/s effective raw BCO input.
+- `TargetRawThroughput90MBps` - future development/audit target, not the current
+  production baseline.
 
-`RealBcoEquivalent` is a high-load verification profile. It must not be treated as a
-safe everyday default until bounded queues, block pool ownership, data plane aggregation,
-storage backpressure, diagnostics rate limiting, and performance tests are in place.
+`BaselineRawThroughput60MBps` is the ordinary runtime default. `RealBcoEquivalent` is a
+high-load verification profile, and `TargetRawThroughput90MBps` is a future/audit target.
+Neither must be treated as a safe everyday default without an explicit product decision
+and updated perf evidence.
 
 ## 7. Migration Milestones
 

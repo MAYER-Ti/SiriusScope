@@ -79,6 +79,20 @@ std::size_t boundedFloor(long double value)
 
 } // namespace
 
+ThroughputTarget baselineRawThroughput60MbpsTarget()
+{
+    ThroughputTarget target;
+    target.targetBytesPerSecond = 60'000'000;
+    target.batchPeriod = std::chrono::milliseconds{10};
+    target.mode = PayloadAccountingMode::RawBcoBytes;
+    target.packetModel.packetHeaderBytes = 32;
+    target.packetModel.sampleRecordBytes = 16;
+    target.packetModel.packetFooterBytes = 0;
+    target.packetModel.samplesPerPacket = 256;
+    target.packetModel.alignmentBytes = 0;
+    return target;
+}
+
 std::size_t rawBytesPerPacket(const SimulatedBcoPacketModel& model)
 {
     const auto sampleBytes =

@@ -130,6 +130,14 @@ hardware::SimulatorBcoLoadConfig makeTargetRawLoadConfig()
     return loadConfig;
 }
 
+hardware::SimulatorBcoLoadConfig makeBaselineRawLoadConfig()
+{
+    hardware::SimulatorBcoLoadConfig loadConfig;
+    loadConfig.profile = hardware::SimulatorLoadProfile::BaselineRawThroughput60MBps;
+    loadConfig.minVisibleAmplitude = 1;
+    return loadConfig;
+}
+
 bool collectBlocks(hardware::HighLoadSimulatorBcoStreamSource& source,
                    std::size_t targetBlockCount,
                    std::vector<hardware::IBcoStreamSource::SampleBlockPtr>& blocks,
@@ -751,6 +759,70 @@ void testTargetRawInvalidBatchMultiplierFallsBackToDefault(TestRunner& test)
     }
 }
 
+void testBaselineRaw60MbpsProfileEmitsPacketAlignedBatch(TestRunner& test)
+{
+    hardware::HighLoadSimulatorBcoStreamSource source(makeBaselineRawLoadConfig());
+    const auto configureResult = source.configure(makeValidConfig());
+
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    const bool arrived = configureResult.success
+        && collectBlocks(source, 1, blocks, std::chrono::milliseconds{1000});
+
+    const auto target = hardware::baselineRawThroughput60MbpsTarget();
+    test.require(configureResult.success,
+                 "baseline raw source accepts stream config");
+    test.require(arrived, "baseline raw source emits block");
+    test.require(!blocks.empty() && blocks.front() != nullptr,
+                 "baseline raw block is available");
+    if (blocks.empty() || !blocks.front()) {
+        return;
+    }
+
+    test.require(blocks.front()->samples.size() == hardware::samplesPerBatchForTarget(target),
+                 "baseline raw source emits packet-aligned sample count");
+    test.require(blocks.front()->stats.packetCount
+                     == hardware::packetsPerBatchForTarget(target),
+                 "baseline raw source reports packet-aligned packet count");
+    test.require(hardware::rawBytesForSamples(blocks.front()->samples.size(),
+                                             target.packetModel)
+                     == 598'560,
+                 "baseline raw source accounts expected raw bytes per batch");
+}
+
+void testBaselineRaw60MbpsPulseConfigCannotExceedBatchBudget(TestRunner& test)
+{
+    auto loadConfig = makeBaselineRawLoadConfig();
+    loadConfig.pulseBandConfigs = {hardware::SimulatorPulseBandConfig{
+        0,
+        true,
+        1.001,
+        1.0,
+    }};
+    hardware::HighLoadSimulatorBcoStreamSource source(loadConfig);
+    const auto configureResult = source.configure(makeValidConfig());
+
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    const bool arrived = configureResult.success
+        && collectBlocks(source, 1, blocks, std::chrono::milliseconds{1000});
+
+    const auto target = hardware::baselineRawThroughput60MbpsTarget();
+    const auto baselineSamplesPerBatch = hardware::samplesPerBatchForTarget(target);
+    test.require(configureResult.success,
+                 "baseline pulse source accepts stream config");
+    test.require(arrived, "baseline pulse source emits block");
+    test.require(!blocks.empty() && blocks.front() != nullptr,
+                 "baseline pulse block is available");
+    if (blocks.empty() || !blocks.front()) {
+        return;
+    }
+
+    test.require(blocks.front()->samples.size() <= baselineSamplesPerBatch,
+                 "extreme pulse settings cannot exceed baseline samples per batch");
+    test.require(blocks.front()->stats.packetCount
+                     <= hardware::packetsPerBatchForTarget(target),
+                 "extreme pulse settings cannot exceed baseline packet budget");
+}
+
 void testConfigurePublishesTimebaseMismatchWarning(TestRunner& test)
 {
     auto loadConfig = makePulseLoadConfig();
@@ -834,6 +906,8 @@ int main()
     testTargetRawBatchMultiplierChangesBatchSize(test);
     testTargetRawBatchMultiplierKeepsSampleIndexesContiguousAcrossBlocks(test);
     testTargetRawInvalidBatchMultiplierFallsBackToDefault(test);
+    testBaselineRaw60MbpsProfileEmitsPacketAlignedBatch(test);
+    testBaselineRaw60MbpsPulseConfigCannotExceedBatchBudget(test);
     testConfigurePublishesTimebaseMismatchWarning(test);
     testConfigureDoesNotWarnWhenTimebaseMatchesThroughput(test);
     testFactoryCreatesHighLoadSimulator(test);

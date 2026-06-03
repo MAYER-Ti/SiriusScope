@@ -61,17 +61,25 @@ BCO UDP / HighLoadSimulator
 - `RealBcoEquivalent` - нагрузка, приближенная к реальному БЦО, примерно
   1,000,000 sample slots/s и batch каждые 10 ms.
 - `Stress150Percent` - стресс-тест перегрузки.
+- `BaselineRawThroughput60MBps` - текущий зафиксированный production baseline,
+  packet-aligned до 59.856 MB/s effective raw BCO input.
+- `TargetRawThroughput90MBps` - будущая development/audit цель, не текущий production
+  baseline.
 
-`RealBcoEquivalent` не должен включаться как обычный safe default до завершения
-high-load data plane, bounded queues, storage backpressure, diagnostics rate limiting и
-end-to-end performance tests.
+`BaselineRawThroughput60MBps` является обычным runtime default. `RealBcoEquivalent` и
+`TargetRawThroughput90MBps` являются engineering/audit профилями, а не текущими
+production defaults.
 
 Acceptance criteria:
 
 - `UiDemo`: без drops.
 - `MediumLoad`: без drops или только controlled drops с явными metrics.
+- `BaselineRawThroughput60MBps`: строгий no-drop sustain audit, packet-aligned
+  59.856 MB/s effective raw BCO input, Waterfall/Spectrum/Bearing активны,
+  SignalParameter отсутствует.
 - `RealBcoEquivalent`: приложение не падает, нет OOM, очереди bounded, GUI отвечает,
   diagnostics не спамят.
+- `TargetRawThroughput90MBps`: future/audit profile с явным bottleneck reporting.
 - `Stress150Percent`: система не умирает, overload обнаруживается и явно отображается.
 - Длительный `RealBcoEquivalent`: минимум 30 минут без неконтролируемого роста памяти.
 
@@ -1018,7 +1026,10 @@ public:
 - GUI получает immutable/downsampled snapshot с bounded cadence, ориентировочно 20-30 FPS;
 - историческая формулировка "примерно 1 строка WaterfallView в секунду" относится к раннему UI/demo behavior и не задает production data plane rate;
 - Waterfall row в целевой архитектуре строится из time-bucket aggregation;
-- входной поток данных от БЦО: до 90 МБ/с или выше в соответствии с профилем `RealBcoEquivalent`/реальной аппаратурой;
+- текущий зафиксированный baseline входного потока БЦО: `BaselineRawThroughput60MBps`,
+  target 60,000,000 B/s, effective 59,856,000 B/s;
+- историческая/future цель входного потока БЦО: до 90 МБ/с или выше в соответствии с
+  профилем `TargetRawThroughput90MBps`/реальной аппаратурой;
 - UDP-пакеты БЦО: около 1500 байт;
 - количество BandItem в текущей версии: 5;
 - SiriusScope должен сохранять отзывчивость интерфейса при приеме, обработке, отображении и записи данных.
@@ -1091,7 +1102,7 @@ SiriusScope должен работать с генератором так же,
 - тесты ротации файлов;
 - тесты настройки BandItem и формирования конфигурации БЦО;
 - интеграционные тесты с тестовым генератором;
-- нагрузочные тесты по профилям `UiDemo`, `MediumLoad`, `RealBcoEquivalent` и `Stress150Percent`; историческая проверка до 90 МБ/с остается совместимой, но не заменяет profile-based high-load acceptance;
+- нагрузочные тесты по профилям `UiDemo`, `MediumLoad`, `BaselineRawThroughput60MBps`, `RealBcoEquivalent`, `Stress150Percent` и `TargetRawThroughput90MBps`; историческая проверка до 90 МБ/с остается совместимой, но не заменяет текущий baseline 60 MB/s;
 - тесты bounded queues, backpressure, dropped blocks, queue depth, max block age и diagnostics rate limiting;
 - UI-тесты критических сценариев, если это технически оправдано.
 
@@ -1223,7 +1234,7 @@ SiriusScope должен вести технический лог, достат�
 
 - Довести покрытие тестами до 50%.
 - Провести интеграционные тесты с генератором.
-- Провести нагрузочные тесты по профилям `UiDemo`, `MediumLoad`, `RealBcoEquivalent` и `Stress150Percent`.
+- Провести нагрузочные тесты по профилям `UiDemo`, `MediumLoad`, `BaselineRawThroughput60MBps`, `RealBcoEquivalent`, `Stress150Percent` и `TargetRawThroughput90MBps`.
 - Проверить bounded queues, backpressure, dropped blocks, queue depth, RX/DSP/storage latency, GUI snapshot FPS и max block age.
 - Проверить отсутствие заморозки интерфейса.
 - Проверить сохранение и восстановление WaterfallView и итоговой таблицы.

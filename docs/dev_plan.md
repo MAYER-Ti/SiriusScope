@@ -1,8 +1,8 @@
 # SiriusScope — план разработки high-load версии
 
-**Цель документа:** зафиксировать ближайший и полный план переработки SiriusScope в реальное high-load изделие, рассчитанное на честный входной поток не менее **90 MB/s**, предсказуемые задержки, контролируемый backpressure и корректное отображение/анализ данных.
+**Цель документа:** зафиксировать ближайший и полный план переработки SiriusScope в реальное high-load изделие. Текущий зафиксированный baseline — `BaselineRawThroughput60MBps` без расчёта ППИ/ДИ; честный поток **90 MB/s** остаётся будущей целью оптимизации.
 
-Документ составлен после перехода runtime БЦО на `HighLoadSimulatorBcoStreamSource`, внедрения нового `src/pipeline` data plane, `WaterfallAggregator`, `SpectrumAggregator`, `BearingAggregator` и ручного тестирования, которое выявило проблемы live/history водопада, итоговой таблицы и расчёта ППИ/ДИ.
+Документ составлен после перехода runtime БЦО на `HighLoadSimulatorBcoStreamSource`, внедрения нового `src/pipeline` data plane, `WaterfallAggregator`, `SpectrumAggregator`, `BearingAggregator` и ручного тестирования, которое выявило проблемы live/history водопада, итоговой таблицы и необходимости явно зафиксировать статус ППИ/ДИ вне текущего baseline.
 
 ---
 
@@ -48,9 +48,30 @@ HighLoadSimulatorBcoStreamSource
 5. `HighLoadSimulatorBcoStreamSource` вызывает callback синхронно, поэтому callback может замедлять сам генератор.
 6. `WaterfallSnapshot` публикуется через latest-only exchange, поэтому временные строки водопада могут теряться до того, как UI их заберёт.
 7. Live-водопад и history-водопад используют разные фактические semantics отображения.
-8. ППИ/ДИ больше не считаются, потому что старый raw `SignalParameterAccumulator` отключён от high-load потока.
+8. ППИ/ДИ намеренно исключены из текущего baseline 60 MB/s; `SignalParameterAggregator` остаётся опциональным направлением дальнейшей разработки.
 9. Итоговая таблица создаёт несколько строк на один `BandItem`, если есть несколько частотных bins.
-10. Текущий `RealBcoEquivalent` не является строгим доказательством потока 90 MB/s.
+10. Текущий production baseline зафиксирован как 60 MB/s raw BCO input; `RealBcoEquivalent` и 90 MB/s профили не являются обычным runtime default.
+
+### Current baseline
+
+SiriusScope baseline is `BaselineRawThroughput60MBps`.
+
+The baseline generator is packet-aligned to 59.856 MB/s raw BCO input:
+
+- 145 packets per 10 ms batch;
+- 37,120 samples per batch;
+- 3,712,000 samples per second;
+- 598,560 raw bytes per batch.
+
+The baseline runtime processes:
+
+- Waterfall;
+- Spectrum;
+- Bearing.
+
+SignalParameter / PRI / PW calculation is intentionally out of the baseline high-load
+runtime. 90 MB/s is a future development target. 60 MB/s without
+SignalParameter/PRI/PW is the current fixed baseline.
 
 ---
 
@@ -131,7 +152,7 @@ samplesPerSecond = N
 
 ## 3. P0 — исправить прямо сейчас
 
-Цель P0: стабилизировать уже реализованный high-load runtime, чтобы ручное тестирование перестало показывать рассинхрон водопада, потерю строк, отсутствие ППИ/ДИ и дубли в итоговой таблице.
+Цель P0: стабилизировать уже реализованный high-load runtime, чтобы ручное тестирование перестало показывать рассинхрон водопада, потерю строк, дубли в итоговой таблице и неявные ограничения нагрузки.
 
 ---
 
@@ -271,21 +292,21 @@ new row -> calculate slot by row.utcMs -> write slot
 
 ---
 
-### P0.4. Вернуть расчёт ППИ/ДИ через data plane
+### P0.4. Зафиксировать ППИ/ДИ вне текущего baseline
 
-**Проблема:**  
-ППИ и ДИ всегда `Н/Д`, потому что `SignalParameterAccumulator` больше не получает raw samples через `SignalSampleBus`. Возвращать raw samples в `ScanController` нельзя.
+**Baseline-решение:**
+ППИ и ДИ намеренно исключены из текущего production baseline `BaselineRawThroughput60MBps`. Это не считается дефектом baseline. `SignalParameterAggregator`, `SignalParameterSnapshot` и `SignalParameterSnapshotAdapter` остаются в кодовой базе как optional/future capability, но не стартуют в обычном 60 MB/s runtime и не показываются в baseline ResultTable.
 
-**Нужно сделать:**
+**Требования к текущему baseline:**
 
-Добавить компонент:
+- production runtime использует `ParallelFanOut` с активными Waterfall, Spectrum и Bearing;
+- `SignalParameterAggregator` в baseline не работает;
+- `SignalParameterSnapshotAdapter` в baseline не создаётся;
+- ResultTable не показывает колонки ППИ/ДИ как обязательный результат;
+- роли модели и storage-поля ППИ/ДИ сохраняются для совместимости;
+- raw samples не возвращаются в `SignalSampleBus`.
 
-```text
-src/pipeline/signal_parameter_aggregator.*
-src/pipeline/signal_parameter_snapshot.*
-```
-
-Поток:
+**Future capability, если ППИ/ДИ будут возвращаться позже:**
 
 ```text
 SignalBlock
@@ -296,34 +317,14 @@ SignalBlock
     -> ResultTable
 ```
 
-**Минимальная модель:**
+Такой возврат должен быть отдельным решением с perf-аудитом и без ослабления baseline 60 MB/s.
 
-```cpp
-struct BandSignalParametersSummary
-{
-    int bandIndex = 0;
-    std::vector<std::int64_t> frequenciesHz;
-    std::optional<double> pulseRepetitionPeriodUs;
-    std::optional<double> pulseWidthUs;
-    std::uint64_t pulseCount = 0;
-    std::uint64_t firstSampleIndex = 0;
-    std::uint64_t lastSampleIndex = 0;
-};
-```
+**Acceptance criteria для baseline:**
 
-**Требования:**
-
-- работать в `ProcessingEngine`, а не в Qt layer;
-- не публиковать raw samples;
-- считать параметры по `bandIndex`;
-- поддержать импульсные данные симулятора;
-- выдавать summary в `ScanController`.
-
-**Acceptance criteria:**
-
-- после сканирования ResultTable показывает ППИ/ДИ вместо `Н/Д`, если поток содержит валидные импульсы;
-- `ScanController::finalizeCompletedScan()` использует data-plane summaries, а не пустой старый accumulator;
-- raw samples не возвращаются в `SignalSampleBus`.
+- `signalParameterStageProcessedBlocks == 0`;
+- SignalParameter snapshot отсутствует;
+- Waterfall, Spectrum и Bearing продолжают получать blocks;
+- отсутствие ППИ/ДИ в ResultTable документировано как intentional baseline constraint.
 
 ---
 
@@ -438,9 +439,9 @@ live/history не расходятся
 
 ---
 
-## 4. P1 — полная high-load пропускная способность
+## 4. P1 — будущая high-load пропускная способность выше baseline
 
-Цель P1: перейти от “архитектура стала правильной” к “система доказанно держит поток 90 MB/s”.
+Цель P1: перейти от зафиксированного production baseline 60 MB/s к будущей цели 90 MB/s с честным raw-byte accounting и явными bottleneck-метриками.
 
 ---
 
@@ -455,7 +456,7 @@ live/history не расходятся
 TargetRawThroughput90MBps
 ```
 
-Но не как UI-selectable profile, а как production/perf default для high-load тестов.
+Но не как обычный runtime default. `TargetRawThroughput90MBps` остаётся future/perf-аудит профилем, пока baseline 60 MB/s не ослабляется и не заменяется отдельным решением.
 
 **Главный контракт:**
 
@@ -839,12 +840,12 @@ deliveredRows + droppedRows == producedRows
 - пропуски не сжимаются;
 - history и live совпадают.
 
-### PR-04: SignalParameterAggregator
+### PR-04: Optional/Future SignalParameterAggregator
 
-- ППИ/ДИ в data plane;
-- `SignalParameterSnapshotAdapter`;
-- `ScanController` получает summary;
-- ResultTable снова показывает ППИ/ДИ.
+- ППИ/ДИ возвращаются только как отдельная optional/future capability;
+- `SignalParameterAggregator` и `SignalParameterSnapshotAdapter` проходят perf-аудит;
+- baseline 60 MB/s продолжает работать без SignalParameter stage;
+- ResultTable baseline не обязан показывать ППИ/ДИ.
 
 ### PR-05: Final scan result aggregation by BandItem
 
@@ -900,12 +901,15 @@ SiriusScope можно считать готовым к high-load runtime тол
 ### Throughput
 
 ```text
-inputRawBytesPerSecond >= 90_000_000
+currentBaselineInputRawBytesPerSecond == 59_856_000 effective raw B/s
+currentBaselineTargetRawBytesPerSecond == 60_000_000 target raw B/s
 processedBytesPerSecond >= inputRawBytesPerSecond
 droppedSamples == 0 в lossless режиме
 queueDroppedBlocks == 0
 blockPoolExhausted == 0
 ```
+
+90 MB/s остаётся future/audit target и не является текущим production DoD.
 
 ### Latency
 
@@ -944,15 +948,17 @@ missing beam diagnostics aggregated
 ### Signal parameters
 
 ```text
-ППИ/ДИ считаются в data plane
-ResultTable получает parameters summary
+ППИ/ДИ intentionally out of current baseline
+SignalParameter stage processed blocks == 0 in baseline
+ResultTable baseline does not present PRI/PW columns
 no raw SignalSample bus delivery
 ```
 
 ### Simulator
 
 ```text
-90 MB/s measured by raw byte accounting
+BaselineRawThroughput60MBps measured by raw byte accounting
+TargetRawThroughput90MBps remains future/audit profile
 source does not silently slow down under callback pressure
 scheduleLagMs and missedDeadlines visible
 ```
@@ -995,7 +1001,7 @@ High-load runtime stabilization: time, row delivery, scan summaries, throughput 
 SiriusScope честно принимает high-load поток,
 не теряет строки водопада без счётчиков,
 одинаково показывает live/history,
-считает ППИ/ДИ в data plane,
+фиксирует ППИ/ДИ вне текущего baseline,
 агрегирует итоговую таблицу по BandItem,
 и имеет тест, доказывающий пропускную способность.
 ```

@@ -3,6 +3,7 @@
 #include "appstate.h"
 #include "hardware/simulator/high_load_simulator_bco_control.h"
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
+#include "hardware/simulator/simulated_bco_payload_accounting.h"
 #include "infrastructure/storage/binary_result_table_storage.h"
 #include "infrastructure/storage/binary_waterfall_session_storage.h"
 #include "qmlsingletons.h"
@@ -27,6 +28,22 @@ QString defaultWaterfallDataRootPath()
     }
 
     return QDir(QDir::currentPath()).filePath(QStringLiteral("SiriusScopeData"));
+}
+
+pipeline::DataIngestPipelineConfig makeBaselineDataIngestPipelineConfig()
+{
+    const auto target = hardware::baselineRawThroughput60MbpsTarget();
+    const auto samplesPerBatch = hardware::samplesPerBatchForTarget(target);
+
+    pipeline::DataIngestPipelineConfig config;
+    config.blockPool = pipeline::SignalBlockPoolConfig{256, samplesPerBatch};
+    config.queueCapacity = 128;
+    config.diagnosticsPublishInterval = std::chrono::milliseconds{1000};
+    config.acceptingOnStart = false;
+    config.processing.processingMode = pipeline::ProcessingMode::ParallelFanOut;
+    config.processing.stageQueueCapacity = 128;
+    config.processing.enableSignalParameterStage = false;
+    return config;
 }
 
 std::vector<hardware::SimulatorPulseBandConfig> simulatorPulseConfigsFromBands(
@@ -80,12 +97,7 @@ ApplicationBootstrap::ApplicationBootstrap()
     , m_bearingFrameBus(std::make_unique<BearingFrameBus>())
     , m_signalSampleBus(std::make_unique<SignalSampleBus>())
     , m_dataIngestPipeline(std::make_unique<pipeline::DataIngestPipeline>(
-          pipeline::DataIngestPipelineConfig{
-              pipeline::SignalBlockPoolConfig{256, 16'384},
-              128,
-              std::chrono::milliseconds{1000},
-              false,
-          },
+          makeBaselineDataIngestPipelineConfig(),
           m_diagnosticsService.get()))
     , m_bearingService(std::make_unique<processing::BearingService>())
     , m_scanAcquisitionRecorder(std::make_unique<InMemoryScanAcquisitionRecorder>())
@@ -153,10 +165,6 @@ ApplicationBootstrap::ApplicationBootstrap()
         std::make_unique<BearingSnapshotAdapter>(m_scanController.get(),
                                                  m_dataIngestPipeline.get(),
                                                  m_diagnosticsService.get());
-    m_signalParameterSnapshotAdapter =
-        std::make_unique<SignalParameterSnapshotAdapter>(m_scanController.get(),
-                                                         m_dataIngestPipeline.get(),
-                                                         m_diagnosticsService.get());
 
     m_statusModel = std::make_unique<StatusModel>(m_diagnosticsService.get(),
                                                   &AppState::instance(),
@@ -257,7 +265,8 @@ hardware::HardwareProfile ApplicationBootstrap::makeDefaultHardwareProfile() con
     hardware::HardwareProfile profile;
     profile.dataSourceMode = hardware::DataSourceMode::Simulator;
     profile.bcoStreamConfig = makeBcoStreamConfig();
-    profile.simulatorLoadConfig.profile = hardware::SimulatorLoadProfile::RealBcoEquivalent;
+    profile.simulatorLoadConfig.profile =
+        hardware::SimulatorLoadProfile::BaselineRawThroughput60MBps;
     profile.simulatorLoadConfig.pulseBandConfigs =
         simulatorPulseConfigsFromBands(m_bandListModel);
     return profile;
@@ -293,7 +302,7 @@ void ApplicationBootstrap::createBcoStreamSource()
         m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
             infrastructure::DiagnosticSeverity::Info,
             "Application",
-            "High-load BCO profile: RealBcoEquivalent",
+            "High-load BCO profile: BaselineRawThroughput60MBps",
             std::chrono::system_clock::now(),
         });
     }

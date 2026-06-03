@@ -7,6 +7,7 @@
 
 namespace siriusscope::hardware {
 
+ThroughputTarget baselineRawThroughput60MbpsTarget();
 std::size_t rawBytesPerPacket(const SimulatedBcoPacketModel& model);
 double rawBytesPerSample(const SimulatedBcoPacketModel& model);
 std::size_t samplesPerPacketForModel(const SimulatedBcoPacketModel& model);

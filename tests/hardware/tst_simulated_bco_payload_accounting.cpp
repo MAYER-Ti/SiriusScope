@@ -79,6 +79,31 @@ void testSamplesPerBatchForTarget(TestRunner& test)
                  "target samples per batch is aligned to samples per packet");
 }
 
+void testBaselineRaw60MbpsAccounting(TestRunner& test)
+{
+    const auto target = hardware::baselineRawThroughput60MbpsTarget();
+    const auto packetsPerBatch = hardware::packetsPerBatchForTarget(target);
+    const auto samplesPerBatch = hardware::samplesPerBatchForTarget(target);
+    const auto rawBytesPerBatch =
+        hardware::rawBytesForSamples(samplesPerBatch, target.packetModel);
+    const auto effectiveRawBytesPerSecond =
+        rawBytesPerBatch * 1000ULL
+        / static_cast<std::uint64_t>(target.batchPeriod.count());
+
+    test.require(target.targetBytesPerSecond == 60'000'000,
+                 "baseline raw target is 60 MBps");
+    test.require(hardware::rawBytesPerPacket(target.packetModel) == 4'128,
+                 "baseline raw packet bytes include 32-byte header and 256 records");
+    test.require(packetsPerBatch == 145,
+                 "baseline packets per batch stays below 60 MBps target");
+    test.require(samplesPerBatch == 37'120,
+                 "baseline samples per batch is packet aligned");
+    test.require(rawBytesPerBatch == 598'560,
+                 "baseline raw bytes per batch is packet aligned");
+    test.require(effectiveRawBytesPerSecond == 59'856'000,
+                 "baseline effective raw throughput is below target");
+}
+
 void testRawBytesForSamplesUsesFullPackets(TestRunner& test)
 {
     const auto model = defaultPacketModel();
@@ -139,6 +164,7 @@ int main()
     testRawBytesPerPacket(test);
     testRawBytesPerSample(test);
     testSamplesPerBatchForTarget(test);
+    testBaselineRaw60MbpsAccounting(test);
     testRawBytesForSamplesUsesFullPackets(test);
     testParsedSignalSampleAccountingMode(test);
     testInvalidConfigUsesSafeMinimums(test);

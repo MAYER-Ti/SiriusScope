@@ -1,14 +1,17 @@
 #include "app/applicationbootstrap.h"
 #include "app/qmlsingletons.h"
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
+#include "hardware/simulator/simulated_bco_payload_accounting.h"
 
 #include <QCoreApplication>
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -32,6 +35,25 @@ private:
     int m_failed = 0;
 };
 
+std::vector<siriusscope::core::SignalSample> makeBaselineSamples(
+    const siriusscope::core::BandConfig& band,
+    std::size_t sampleCount)
+{
+    std::vector<siriusscope::core::SignalSample> samples;
+    samples.reserve(sampleCount);
+    for (std::size_t index = 0; index < sampleCount; ++index) {
+        samples.push_back(siriusscope::core::SignalSample{
+            static_cast<std::uint64_t>(index),
+            band.bandIndex,
+            0,
+            band.centerFrequencyHz,
+            90,
+            static_cast<int>(index % 2),
+        });
+    }
+    return samples;
+}
+
 void testBootstrapProvidesObjects(TestRunner& test)
 {
     siriusscope::app::ApplicationBootstrap bootstrap;
@@ -50,11 +72,8 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap provides spectrum snapshot adapter");
     test.require(bootstrap.bearingSnapshotAdapter() != nullptr,
                  "bootstrap provides bearing snapshot adapter");
-    test.require(bootstrap.signalParameterSnapshotAdapter() != nullptr,
-                 "bootstrap provides signal parameter snapshot adapter");
-    test.require(bootstrap.signalParameterSnapshotAdapter()
-                     && bootstrap.signalParameterSnapshotAdapter()->running(),
-                 "bootstrap starts signal parameter snapshot adapter");
+    test.require(bootstrap.signalParameterSnapshotAdapter() == nullptr,
+                 "bootstrap does not create signal parameter snapshot adapter in baseline");
     test.require(bootstrap.waterfallController() != nullptr,
                  "bootstrap provides waterfall controller");
     test.require(bootstrap.antennaController() != nullptr,
@@ -144,6 +163,64 @@ void testBootstrapProvidesObjects(TestRunner& test)
                  "bootstrap registers result table model singleton");
 }
 
+void testBootstrapBaselinePipelineDisablesSignalParameterStage(TestRunner& test)
+{
+    siriusscope::app::ApplicationBootstrap bootstrap;
+    auto* pipeline = bootstrap.dataIngestPipeline();
+    auto* bandModel = bootstrap.bandListModel();
+    const auto* band = bandModel ? bandModel->bandAt(0) : nullptr;
+
+    test.require(pipeline != nullptr, "bootstrap provides baseline data pipeline");
+    test.require(band != nullptr, "bootstrap provides a band for baseline smoke");
+    if (!pipeline || !band) {
+        return;
+    }
+
+    const auto target = siriusscope::hardware::baselineRawThroughput60MbpsTarget();
+    const auto sampleCount = siriusscope::hardware::samplesPerBatchForTarget(target);
+    auto samples = makeBaselineSamples(band->config, sampleCount);
+    siriusscope::pipeline::SignalBlockMetadata metadata;
+    metadata.firstSampleIndex = 0;
+    metadata.lastSampleIndex = static_cast<std::uint64_t>(samples.size() - 1);
+    metadata.producedAt = std::chrono::steady_clock::now();
+    metadata.antennaAzimuthDeg = 45.0;
+
+    pipeline->setAccepting(true);
+    const auto ingested = pipeline->ingestSamples(samples, metadata);
+    const auto flushed = pipeline->flushProcessing(std::chrono::milliseconds{5000});
+    const auto metrics = pipeline->metricsSnapshot();
+    const auto spectrumSnapshot = pipeline->latestSpectrumSnapshot();
+    const auto bearingSnapshot = pipeline->latestBearingSnapshot();
+    const auto signalParameterSnapshot = pipeline->latestSignalParameterSnapshot();
+    pipeline->setAccepting(false);
+
+    test.require(sampleCount == 37'120, "baseline smoke uses 37120 samples per batch");
+    test.require(ingested.success, "baseline pipeline accepts one full baseline block");
+    test.require(flushed.success, "baseline pipeline flushes one full baseline block");
+    test.require(metrics.parallelFanOutBlocks > 0,
+                 "baseline pipeline uses parallel fan-out");
+    test.require(metrics.inputSamples == sampleCount,
+                 "baseline pipeline records full baseline input block");
+    test.require(metrics.processedSamples == sampleCount,
+                 "baseline pipeline processes full baseline input block");
+    test.require(metrics.waterfallStageProcessedBlocks > 0,
+                 "baseline pipeline processes waterfall stage");
+    test.require(metrics.spectrumStageProcessedBlocks > 0,
+                 "baseline pipeline processes spectrum stage");
+    test.require(metrics.bearingStageProcessedBlocks > 0,
+                 "baseline pipeline processes bearing stage");
+    test.require(metrics.signalParameterStageProcessedBlocks == 0,
+                 "baseline pipeline sends no blocks to signal parameter stage");
+    test.require(metrics.producedSignalParameterSnapshots == 0,
+                 "baseline pipeline produces no signal parameter snapshots");
+    test.require(spectrumSnapshot != nullptr,
+                 "baseline pipeline publishes spectrum snapshot");
+    test.require(bearingSnapshot != nullptr,
+                 "baseline pipeline publishes bearing snapshot");
+    test.require(signalParameterSnapshot == nullptr,
+                 "baseline pipeline keeps signal parameter snapshot absent");
+}
+
 void testBootstrapWiresGeneratorPulseSettingsToSimulator(TestRunner& test)
 {
     siriusscope::app::ApplicationBootstrap bootstrap;
@@ -184,6 +261,7 @@ int main(int argc, char *argv[])
     TestRunner test;
 
     testBootstrapProvidesObjects(test);
+    testBootstrapBaselinePipelineDisablesSignalParameterStage(test);
     testBootstrapWiresGeneratorPulseSettingsToSimulator(test);
 
     return test.result();

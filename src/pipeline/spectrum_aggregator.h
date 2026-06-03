@@ -125,7 +125,10 @@ private:
     void prepareDerivedConfig();
     bool usesFixedBandSummaryStorage() const noexcept;
     bool usesBlockLocalFastPath() const noexcept;
+    bool usesTrustedBlockLocalFastPath() const noexcept;
     bool hasValidUntrustedSample(const core::SignalSample& sample) const;
+    SpectrumAggregationResult consumeTrustedBlockLocalFast(
+        std::span<const core::SignalSample> samples);
     bool hasFixedBandSummarySlot(int bandIndex) const noexcept;
     std::optional<std::uint64_t> exactWindowForSample(
         std::uint64_t sampleIndex) const;

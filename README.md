@@ -90,9 +90,35 @@ Expected simulator profiles:
 - `RealBcoEquivalent` - approximately real BCO rate, about 1,000,000 sample slots/s with
   10 ms batches.
 - `Stress150Percent` - overload/stress profile.
+- `BaselineRawThroughput60MBps` - current fixed production baseline, packet-aligned to
+  59.856 MB/s raw BCO input.
+- `TargetRawThroughput90MBps` - future development and audit target, not the current
+  production baseline.
 
-`RealBcoEquivalent` must not be treated as an ordinary safe default until the high-load
-data plane is implemented, bounded, instrumented, and performance-tested.
+`BaselineRawThroughput60MBps` is the ordinary runtime default. `RealBcoEquivalent` and
+`TargetRawThroughput90MBps` must not be treated as production defaults unless a future
+task explicitly changes the baseline and updates the audit evidence.
+
+## Current baseline
+
+SiriusScope baseline is `BaselineRawThroughput60MBps`.
+
+The baseline generator is packet-aligned to 59.856 MB/s raw BCO input:
+
+- 145 packets per 10 ms batch;
+- 37,120 samples per batch;
+- 3,712,000 samples per second;
+- 598,560 raw bytes per batch.
+
+The baseline runtime processes:
+
+- Waterfall;
+- Spectrum;
+- Bearing.
+
+SignalParameter / PRI / PW calculation is intentionally out of the baseline high-load
+runtime. 90 MB/s is a future development target. 60 MB/s without
+SignalParameter/PRI/PW is the current fixed baseline.
 
 ## Technology Stack
 
@@ -131,10 +157,21 @@ Run CTest from the configured build directory:
 ctest --test-dir build/win-mingw-debug --output-on-failure
 ```
 
-### Full 90 MB/s Data-Plane Audit
+### Baseline 60 MB/s Data-Plane Audit
+
+The current production baseline can be audited from PowerShell:
+
+```powershell
+$env:SIRIUSSCOPE_RUN_BASELINE_60MBPS_PIPELINE_TEST = "1"
+ctest --test-dir build/win-mingw-debug -R tst_high_load_data_plane --output-on-failure
+Remove-Item Env:\SIRIUSSCOPE_RUN_BASELINE_60MBPS_PIPELINE_TEST
+```
+
+### Future 90 MB/s Data-Plane Audit
 
 The regular test suite keeps `TargetRawThroughput90MBps` capped as a source-accounting
-smoke. To run the uncapped full pipeline audit from PowerShell:
+smoke. This is a future optimization audit, not the current production baseline. To run
+the uncapped full pipeline audit from PowerShell:
 
 The audit also prints per-aggregator latency breakdown, a spectrum micro-breakdown for
 sample loop, window/bin calculation, bin update, band-summary update, close window, and
@@ -150,13 +187,10 @@ per-sample spectrum timing is disabled by default and can be enabled for diagnos
 with `SIRIUSSCOPE_ENABLE_DETAILED_SPECTRUM_TIMING=1`. Exact fallback calculations and
 legacy vector summary storage remain available for compatibility tests.
 
-Signal parameter estimation uses trusted streaming mode with fixed band-state storage
-for internally generated high-load samples. The validated sorted mode remains available
-for unordered or untrusted inputs and tests. Signal parameter snapshots are not published
-on every processed block by default: the data plane uses a processed-block interval
-policy and forces a final snapshot during processing flush, so ResultTable receives
-complete PRI/PW at scan completion while the high-load path avoids repeated
-finalize/snapshot work.
+Signal parameter estimation remains available as an optional/future data-plane
+capability, but it is not part of the current 60 MB/s baseline. In baseline runtime,
+SignalParameter snapshots are not published and ResultTable does not present PRI/PW as
+calculated output.
 The high-load signal parameter path uses a trusted fixed-band batch ingest loop to avoid
 per-sample mode dispatch and per-sample band span updates. Safe validated and sorted
 modes remain available for untrusted inputs.

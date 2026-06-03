@@ -101,6 +101,13 @@ SimulatorBcoLoadConfig makeSimulatorBcoLoadConfig(SimulatorLoadProfile profile)
         config.burstDuration = std::chrono::milliseconds{20};
         config.calmDuration = std::chrono::milliseconds{80};
         break;
+    case SimulatorLoadProfile::BaselineRawThroughput60MBps:
+        config.throughputTarget = baselineRawThroughput60MbpsTarget();
+        config.batchPeriod = config.throughputTarget->batchPeriod;
+        config.samplesPerSecond =
+            estimatedSamplesPerSecondFromTarget(*config.throughputTarget);
+        config.burstModeEnabled = false;
+        break;
     case SimulatorLoadProfile::TargetRawThroughput90MBps:
         config.throughputTarget = ThroughputTarget{};
         config.throughputTarget->targetBytesPerSecond = 90'000'000;
@@ -147,8 +154,7 @@ SimulatorBcoLoadConfig normalizeLoadConfig(SimulatorBcoLoadConfig config)
     if (config.batchPeriod < kMinBatchPeriod) {
         config.batchPeriod = kMinBatchPeriod;
     }
-    if (config.profile == SimulatorLoadProfile::TargetRawThroughput90MBps
-        && config.throughputTarget) {
+    if (config.throughputTarget) {
         config.batchPeriod =
             scaledBatchPeriod(config.throughputTarget->batchPeriod,
                               config.samplesPerBatchMultiplier);

@@ -112,10 +112,14 @@ The current simulator profile set is:
 - `MediumLoad` - intermediate integration load;
 - `RealBcoEquivalent` - approximate real BCO load, about 1,000,000 sample slots/s with
   10 ms batches;
-- `Stress150Percent` - overload/stress profile.
+- `Stress150Percent` - overload/stress profile;
+- `BaselineRawThroughput60MBps` - current fixed production baseline, packet-aligned to
+  59.856 MB/s effective raw BCO input;
+- `TargetRawThroughput90MBps` - future development/audit target.
 
-`RealBcoEquivalent` is not a safe ordinary default until the high-load data plane is
-bounded, instrumented, and covered by performance tests.
+`BaselineRawThroughput60MBps` is the ordinary runtime default. `RealBcoEquivalent` and
+`TargetRawThroughput90MBps` are engineering/audit profiles, not current production
+defaults.
 
 ## 6. Input Data
 
@@ -348,8 +352,12 @@ Performance acceptance by simulator profile:
 
 - `UiDemo`: no drops.
 - `MediumLoad`: no drops or only explicitly accepted controlled drops.
+- `BaselineRawThroughput60MBps`: strict no-drop sustain audit, packet-aligned
+  59.856 MB/s effective raw BCO input, Waterfall/Spectrum/Bearing active,
+  SignalParameter absent.
 - `RealBcoEquivalent`: no crash, no OOM, bounded queues, responsive GUI, rate-limited
   diagnostics, visible throughput and latency metrics.
+- `TargetRawThroughput90MBps`: future/audit profile with explicit bottleneck reporting.
 - `Stress150Percent`: the system does not die; overload is detected and displayed.
 - Long `RealBcoEquivalent` run: at least 30 minutes without uncontrolled memory growth.
 

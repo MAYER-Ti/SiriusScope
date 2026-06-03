@@ -35,6 +35,8 @@ constexpr std::int64_t kSourceMinHz = core::DomainConstraints::minSystemFrequenc
 constexpr std::int64_t kSourceMaxHz = core::DomainConstraints::maxSystemFrequencyHz;
 constexpr int kRenderBinCount = 512;
 constexpr std::uint64_t kRowPeriodNs = 20'000'000;
+constexpr std::uint64_t kBaselineRawBytesPerSecond = 60'000'000;
+constexpr std::uint64_t kExpectedBaselineRawBytesPerSecond = 59'856'000;
 constexpr std::uint64_t kTargetRawBytesPerSecond = 90'000'000;
 constexpr std::uint64_t kExpectedTargetRawBytesPerSecond = 89'990'400;
 
@@ -78,6 +80,7 @@ private:
 enum class AuditMode
 {
     Smoke,
+    BaselineRaw60,
     TargetRawShort,
     TargetRawStrict,
     TargetRawSoak,
@@ -315,6 +318,15 @@ hardware::ThroughputTarget targetRaw90Mbps()
     target.packetModel.samplesPerPacket = 256;
     target.packetModel.alignmentBytes = 0;
     return target;
+}
+
+std::uint64_t effectiveRawBytesPerSecondFor(const hardware::ThroughputTarget& target)
+{
+    const auto samplesPerBatch = hardware::samplesPerBatchForTarget(target);
+    const auto rawBytesPerBatch =
+        hardware::rawBytesForSamples(samplesPerBatch, target.packetModel);
+    const auto batchPeriodMs = std::max<std::int64_t>(1, target.batchPeriod.count());
+    return rawBytesPerBatch * 1000ULL / static_cast<std::uint64_t>(batchPeriodMs);
 }
 
 double ratioOrZero(double numerator, double denominator)
@@ -800,6 +812,11 @@ bool targetRawPipelineTestEnabled()
     return envFlagEnabled("SIRIUSSCOPE_RUN_90MBPS_PIPELINE_TEST");
 }
 
+bool baselineRaw60mbpsPipelineTestEnabled()
+{
+    return envFlagEnabled("SIRIUSSCOPE_RUN_BASELINE_60MBPS_PIPELINE_TEST");
+}
+
 bool strictTargetRawPipelineSustainRequired()
 {
     return envFlagEnabled("SIRIUSSCOPE_REQUIRE_90MBPS_NO_DROPS");
@@ -837,6 +854,13 @@ std::chrono::seconds targetRawAuditDuration()
     };
 }
 
+std::chrono::seconds baselineRaw60mbpsAuditDuration()
+{
+    return std::chrono::seconds{
+        envPositiveIntOr("SIRIUSSCOPE_BASELINE_60MBPS_DURATION_SEC", 30),
+    };
+}
+
 std::chrono::seconds targetRawSoakDuration()
 {
     return std::chrono::seconds{
@@ -859,6 +883,8 @@ const char* auditModeName(AuditMode mode)
     switch (mode) {
     case AuditMode::Smoke:
         return "Smoke";
+    case AuditMode::BaselineRaw60:
+        return "BaselineRaw60";
     case AuditMode::TargetRawShort:
         return "TargetRawShort";
     case AuditMode::TargetRawStrict:
@@ -1410,6 +1436,14 @@ std::size_t samplesPerSecondFor(hardware::SimulatorLoadProfile profile)
         return 1'000'000;
     case hardware::SimulatorLoadProfile::Stress150Percent:
         return 1'500'000;
+    case hardware::SimulatorLoadProfile::BaselineRawThroughput60MBps: {
+        const auto target = hardware::baselineRawThroughput60MbpsTarget();
+        const auto samplesPerBatch = hardware::samplesPerBatchForTarget(target);
+        const auto batchPeriodMs = std::max<std::int64_t>(1, target.batchPeriod.count());
+        return std::max<std::size_t>(
+            1,
+            samplesPerBatch * 1000ULL / static_cast<std::uint64_t>(batchPeriodMs));
+    }
     case hardware::SimulatorLoadProfile::TargetRawThroughput90MBps: {
         const auto target = targetRaw90Mbps();
         const auto samplesPerBatch = hardware::samplesPerBatchForTarget(target);
@@ -1442,6 +1476,8 @@ std::string profileName(hardware::SimulatorLoadProfile profile)
         return "RealBcoEquivalent";
     case hardware::SimulatorLoadProfile::Stress150Percent:
         return "Stress150Percent";
+    case hardware::SimulatorLoadProfile::BaselineRawThroughput60MBps:
+        return "BaselineRawThroughput60MBps";
     case hardware::SimulatorLoadProfile::TargetRawThroughput90MBps:
         return "TargetRawThroughput90MBps";
     }
@@ -1539,6 +1575,13 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
             config.blockPool = pipeline::SignalBlockPoolConfig{4, maxSamplesPerBlock};
             config.queueCapacity = 2;
         }
+    } else if (profile == hardware::SimulatorLoadProfile::BaselineRawThroughput60MBps) {
+        config.blockPool = pipeline::SignalBlockPoolConfig{
+            256,
+            hardware::samplesPerBatchForTarget(
+                hardware::baselineRawThroughput60MbpsTarget()),
+        };
+        config.queueCapacity = 128;
     }
     config.diagnosticsPublishInterval = std::chrono::milliseconds{1000};
     config.acceptingOnStart = true;
@@ -1548,8 +1591,13 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
     config.waterfall.sourceMaxHz = kSourceMaxHz;
     config.waterfall.rowPeriodNs = kRowPeriodNs;
     config.waterfall.timeBase = timeBase;
+    const bool fullTargetRawSustain =
+        profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps
+        && sizing == AuditPipelineSizing::FullTargetRawSustain;
+    const bool baselineRaw60 =
+        profile == hardware::SimulatorLoadProfile::BaselineRawThroughput60MBps;
     config.waterfallRows = pipeline::WaterfallRowQueueConfig{
-        sizing == AuditPipelineSizing::FullTargetRawSustain ? 16'384ULL : 4096ULL,
+        fullTargetRawSustain || baselineRaw60 ? 16'384ULL : 4096ULL,
         pipeline::WaterfallOverflowPolicy::DropOldest,
     };
 
@@ -1583,7 +1631,7 @@ pipeline::DataIngestPipelineConfig makePipelineConfig(
         config.processing.stageQueueCapacity =
             useCapacityProfile
             ? capacity.stageQueueCapacity
-            : 64;
+            : (baselineRaw60 ? 128 : 64);
     }
     config.processing.overloadPolicy = makeStageOverloadConfigFromEnv();
     return config;
@@ -1599,7 +1647,9 @@ pipeline::SourceToPipelineBridgeConfig makeBridgeConfig(
     pipeline::SourceToPipelineBridgeConfig config;
     const bool useParallelProcessing =
         forceParallelProcessingEngine || parallelProcessingEngineEnabled();
-    if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
+    if (profile == hardware::SimulatorLoadProfile::BaselineRawThroughput60MBps) {
+        config.queueCapacity = 32;
+    } else if (profile == hardware::SimulatorLoadProfile::TargetRawThroughput90MBps) {
         if (sizing == AuditPipelineSizing::FullTargetRawSustain
             && useParallelProcessing) {
             config.queueCapacity =
@@ -2534,6 +2584,147 @@ void assertTargetRawPipelineSustain(TestRunner& test, const AuditResult& result)
         / static_cast<double>(result.source.targetBytesPerSecond);
     test.require(rawThroughputRelativeError <= 0.05,
                  "strict target raw full pipeline raw throughput stays within 5 percent");
+}
+
+void printBaselineRaw60Summary(const AuditResult& result)
+{
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "Baseline 60 MB/s summary\n\n"
+              << "mode " << processingModeName(result.processingMode) << '\n'
+              << "rawMBps " << result.source.producedRawBytesPerSecond / 1'000'000.0 << '\n'
+              << "expectedRawMBps "
+              << static_cast<double>(kExpectedBaselineRawBytesPerSecond) / 1'000'000.0
+              << '\n'
+              << "inputSamples " << result.pipeline.inputSamples << '\n'
+              << "processedSamples " << result.pipeline.processedSamples << '\n'
+              << "processed/input " << ratioOrZero(
+                     static_cast<double>(result.pipeline.processedSamples),
+                     static_cast<double>(result.pipeline.inputSamples)) << '\n'
+              << "rejectedBlocks " << result.bridge.rejectedBlocks << '\n'
+              << "droppedBlocks "
+              << (result.bridge.droppedBlocks + result.pipeline.droppedBlocks) << '\n'
+              << "queueDroppedBlocks " << result.pipeline.queueDroppedBlocks << '\n'
+              << "blockPoolExhausted " << result.pipeline.blockPoolExhausted << '\n'
+              << "fanOutAvgMs "
+              << result.pipeline.parallelFanOutEndToEndLatency.averageMs() << '\n'
+              << "fanOutMaxMs "
+              << result.pipeline.parallelFanOutEndToEndLatency.maxMs << '\n'
+              << "maxQueueRatio " << maxStageQueueDepthRatio(result) << '\n'
+              << "waterfallQmax " << result.pipeline.waterfallStage.queueMaxDepth << '\n'
+              << "spectrumQmax " << result.pipeline.spectrumStage.queueMaxDepth << '\n'
+              << "bearingQmax " << result.pipeline.bearingStage.queueMaxDepth << '\n'
+              << "signalParameterStage "
+              << (result.signalParameterStageEnabled ? "enabled" : "disabled") << '\n';
+}
+
+bool baselineRaw60PipelineAcceptancePasses(const AuditResult& result)
+{
+    const double expectedRelativeError =
+        std::abs(result.source.producedRawBytesPerSecond
+                 - static_cast<double>(kExpectedBaselineRawBytesPerSecond))
+        / static_cast<double>(kExpectedBaselineRawBytesPerSecond);
+    const double targetRelativeError =
+        std::abs(result.source.producedRawBytesPerSecond
+                 - static_cast<double>(kBaselineRawBytesPerSecond))
+        / static_cast<double>(kBaselineRawBytesPerSecond);
+    const bool bearingSnapshotOk =
+        result.pipeline.producedBearingSnapshots == 0 || result.hasBearingSnapshot;
+
+    return result.sourceConfigured && result.pipelineStarted && result.bridgeStarted
+        && result.sourceStarted && result.sourceStopped && result.bridgeFlushed
+        && result.flushed
+        && result.source.targetBytesPerSecond == kBaselineRawBytesPerSecond
+        && result.source.producedSamples > 0
+        && (expectedRelativeError <= 0.05 || targetRelativeError <= 0.05)
+        && result.bridge.droppedBlocks == 0
+        && result.bridge.rejectedBlocks == 0
+        && result.pipeline.droppedBlocks == 0
+        && result.pipeline.droppedSamples == 0
+        && result.pipeline.queueDroppedBlocks == 0
+        && result.pipeline.blockPoolExhausted == 0
+        && result.pipeline.processedSamples == result.pipeline.inputSamples
+        && result.pipeline.parallelFanOutRejectedBlocks == 0
+        && result.pipeline.parallelFanOutFallbackBlocks == 0
+        && result.pipeline.parallelFanOutInFlightBlocks == 0
+        && result.pipeline.blockPoolInUse == 0
+        && result.hasSpectrumSnapshot
+        && bearingSnapshotOk
+        && !result.hasSignalParameterSnapshot
+        && result.pipeline.producedSignalParameterSnapshots == 0
+        && result.pipeline.signalParameterStageProcessedBlocks == 0;
+}
+
+void assertBaselineRaw60PipelineSustain(TestRunner& test, const AuditResult& result)
+{
+    test.require(result.sourceConfigured,
+                 "baseline raw source accepts stream config");
+    test.require(result.pipelineStarted,
+                 "baseline data ingest pipeline starts");
+    test.require(result.bridgeStarted,
+                 "baseline source-to-pipeline bridge starts");
+    test.require(result.sourceStarted,
+                 "baseline high-load source starts");
+    test.require(result.sourceStopped,
+                 "baseline high-load source stops");
+    test.require(result.bridgeFlushed,
+                 "baseline source-to-pipeline bridge flushes");
+    test.require(result.flushed,
+                 "baseline data ingest pipeline flushes");
+
+    test.require(result.source.targetBytesPerSecond == kBaselineRawBytesPerSecond,
+                 "baseline source reports configured raw byte target");
+    test.require(result.source.producedSamples > 0,
+                 "baseline source produces samples");
+    test.require(result.source.producedRawBytes > 0,
+                 "baseline source reports produced raw bytes");
+
+    const double expectedRelativeError =
+        std::abs(result.source.producedRawBytesPerSecond
+                 - static_cast<double>(kExpectedBaselineRawBytesPerSecond))
+        / static_cast<double>(kExpectedBaselineRawBytesPerSecond);
+    const double targetRelativeError =
+        std::abs(result.source.producedRawBytesPerSecond
+                 - static_cast<double>(kBaselineRawBytesPerSecond))
+        / static_cast<double>(kBaselineRawBytesPerSecond);
+    test.require(expectedRelativeError <= 0.05 || targetRelativeError <= 0.05,
+                 "baseline raw throughput stays within 5 percent");
+
+    test.require(result.bridge.receivedBlocks > 0,
+                 "baseline bridge receives source blocks");
+    test.require(result.bridge.droppedBlocks == 0,
+                 "baseline bridge reports no dropped blocks");
+    test.require(result.bridge.rejectedBlocks == 0,
+                 "baseline bridge reports no rejected blocks");
+    test.require(result.pipeline.droppedBlocks == 0,
+                 "baseline pipeline reports no dropped blocks");
+    test.require(result.pipeline.droppedSamples == 0,
+                 "baseline pipeline reports no dropped samples");
+    test.require(result.pipeline.queueDroppedBlocks == 0,
+                 "baseline bounded queue reports no dropped blocks");
+    test.require(result.pipeline.blockPoolExhausted == 0,
+                 "baseline block pool is not exhausted");
+    test.require(result.pipeline.processedSamples == result.pipeline.inputSamples,
+                 "baseline pipeline processes every accepted sample");
+    test.require(result.pipeline.parallelFanOutRejectedBlocks == 0,
+                 "baseline has no fan-out rejected blocks");
+    test.require(result.pipeline.parallelFanOutFallbackBlocks == 0,
+                 "baseline has no fan-out fallback blocks");
+    test.require(result.pipeline.parallelFanOutInFlightBlocks == 0,
+                 "baseline has no fan-out blocks in flight after flush");
+    test.require(result.pipeline.blockPoolInUse == 0,
+                 "baseline returns all blocks to the pool after flush");
+    test.require(result.hasSpectrumSnapshot,
+                 "baseline publishes spectrum snapshot");
+    if (result.pipeline.producedBearingSnapshots > 0) {
+        test.require(result.hasBearingSnapshot,
+                     "baseline publishes bearing snapshot when bearing snapshots are produced");
+    }
+    test.require(!result.hasSignalParameterSnapshot,
+                 "baseline publishes no signal parameter snapshot");
+    test.require(result.pipeline.producedSignalParameterSnapshots == 0,
+                 "baseline metrics count no signal parameter snapshots");
+    test.require(result.pipeline.signalParameterStageProcessedBlocks == 0,
+                 "baseline sends no blocks to signal parameter stage");
 }
 
 double rawMegabytesPerSecond(const AuditResult& result)
@@ -3641,6 +3832,60 @@ void targetRaw90mbpsAccountingSmoke(TestRunner& test)
                  "target raw source stays within 15 percent of 90 MBps smoke target");
 }
 
+void baselineRaw60mbpsAccountingSmoke(TestRunner& test)
+{
+    const auto target = hardware::baselineRawThroughput60MbpsTarget();
+    const auto samplesPerBatch = hardware::samplesPerBatchForTarget(target);
+    const auto rawBytesPerBatch =
+        hardware::rawBytesForSamples(samplesPerBatch, target.packetModel);
+    const auto effectiveRawBytesPerSecond = effectiveRawBytesPerSecondFor(target);
+
+    test.require(target.targetBytesPerSecond == kBaselineRawBytesPerSecond,
+                 "baseline raw target is 60 MBps");
+    test.require(hardware::packetsPerBatchForTarget(target) == 145,
+                 "baseline raw packet count is packet-aligned below target");
+    test.require(samplesPerBatch == 37'120,
+                 "baseline raw samples per batch is packet aligned");
+    test.require(rawBytesPerBatch == 598'560,
+                 "baseline raw bytes per batch is packet aligned");
+    test.require(effectiveRawBytesPerSecond == kExpectedBaselineRawBytesPerSecond,
+                 "baseline raw expected throughput is fixed");
+}
+
+void baselineRaw60mbpsPipelineSustainAudit(TestRunner& test)
+{
+    if (!baselineRaw60mbpsPipelineTestEnabled()) {
+        return;
+    }
+
+    constexpr bool kForceParallelProcessing = true;
+    constexpr bool kSignalParameterStageEnabled = false;
+    const auto result = runAudit(baselineRaw60mbpsAuditDuration(),
+                                 hardware::SimulatorLoadProfile::
+                                     BaselineRawThroughput60MBps,
+                                 std::chrono::seconds{10},
+                                 std::nullopt,
+                                 AuditPipelineSizing::Default,
+                                 AuditMode::BaselineRaw60,
+                                 {},
+                                 1,
+                                 CapacityProfile::Current,
+                                 kForceParallelProcessing,
+                                 kSignalParameterStageEnabled);
+    printAuditSummary(result);
+    printSustainWarnings(result);
+    printBaselineRaw60Summary(result);
+    const bool passes = baselineRaw60PipelineAcceptancePasses(result);
+    assertBaselineRaw60PipelineSustain(test, result);
+    if (passes) {
+        std::cout << "CONCLUSION: SiriusScope baseline 60 MB/s passes without "
+                     "SignalParameter/PRI/PW calculation.\n";
+    } else {
+        std::cout << "CONCLUSION: SiriusScope baseline 60 MB/s does not pass; "
+                     "inspect failed assertions and bottleneck metrics above.\n";
+    }
+}
+
 void targetRaw90mbpsPipelineSustainAudit(TestRunner& test)
 {
     if (!targetRawPipelineTestEnabled() || targetRawBatchSweepEnabled()
@@ -3913,6 +4158,8 @@ int main()
 
     testAuditHelperParsingAndBudget(test);
     highLoadDataPlaneSmoke(test);
+    baselineRaw60mbpsAccountingSmoke(test);
+    baselineRaw60mbpsPipelineSustainAudit(test);
     targetRaw90mbpsAccountingSmoke(test);
     targetRaw90mbpsSignalParameterAblationAudit(test);
     targetRaw90mbpsPipelineSustainAudit(test);
