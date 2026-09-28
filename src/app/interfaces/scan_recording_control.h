@@ -11,6 +11,8 @@ class IScanRecordingControl
 public:
     virtual ~IScanRecordingControl() = default;
 
+    //! Разрешён ли запуск сбора данных текущим источником (без изменения состояния).
+    virtual bool recordingAvailable() const noexcept { return true; }
     virtual core::OperationResult beginScanRecording(std::uint64_t scanSessionId) = 0;
     virtual core::OperationResult endScanRecording(std::uint64_t scanSessionId) = 0;
 };

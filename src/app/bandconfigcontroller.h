@@ -25,6 +25,8 @@ public:
                                   QObject *parent = nullptr);
     bool editingLocked() const noexcept { return m_editingLocked; }
     void setEditingLocked(bool locked);
+    //! Заменяет control plane адаптер между сеансами; nullptr оставляет локальные настройки.
+    void setBcoControl(hardware::IBcoControl* control) { m_bcoControl = control; }
 
     Q_INVOKABLE bool applyBandSettings(int bandId,
                                        double centerHz,

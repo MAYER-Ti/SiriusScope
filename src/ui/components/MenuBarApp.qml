@@ -38,18 +38,17 @@ MenuBar {
     Menu {
         title: qsTr("Режим")
         Action {
-            text: qsTr("Тестовый")
+            text: qsTr("Генератор")
             checkable: true
             ActionGroup.group: appModeGroup
             enabled: !AppState.modeChangeLocked
             checked: AppState.mode === AppState.Test
             onTriggered: {
                 AppState.mode = AppState.Test
-                console.log("Режим->Тестовый")
             }
         }
         Action {
-            text: qsTr("Боевой")
+            text: qsTr("Аппаратура")
             checkable: true
             ActionGroup.group: appModeGroup
             enabled: !AppState.modeChangeLocked

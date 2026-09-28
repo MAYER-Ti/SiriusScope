@@ -859,7 +859,9 @@ target_include_directories(tst_application_bootstrap
         ${CMAKE_SOURCE_DIR}/src
 )
 
-add_test(NAME tst_application_bootstrap COMMAND tst_application_bootstrap)
+add_dependencies(tst_application_bootstrap bco-generator)
+add_test(NAME tst_application_bootstrap COMMAND tst_application_bootstrap $<TARGET_FILE:bco-generator>)
+set_tests_properties(tst_application_bootstrap PROPERTIES TIMEOUT 30)
 
 if(WIN32)
     get_target_property(_qt_core_location Qt6::Core IMPORTED_LOCATION)
@@ -966,3 +968,27 @@ if(WIN32)
         )
     endif()
 endif()
+
+# Portable core contract also runs in the complete SiriusScope suite.
+if(NOT TARGET tst_bco_generator)
+    add_executable(tst_bco_generator ../modules/bco-generator/tests/tst_generator.cpp)
+    set_target_properties(tst_bco_generator PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_link_libraries(tst_bco_generator PRIVATE BcoGenerator::Core)
+endif()
+add_test(NAME tst_bco_generator COMMAND tst_bco_generator)
+
+add_executable(tst_bco_acquisition_session pipeline/tst_bco_acquisition_session.cpp)
+target_link_libraries(tst_bco_acquisition_session PRIVATE siriusscope_pipeline siriusscope_hardware)
+add_test(NAME tst_bco_acquisition_session COMMAND tst_bco_acquisition_session)
+
+if(NOT TARGET tst_bco_protocol)
+    add_executable(tst_bco_protocol ../modules/bco-generator/tests/tst_protocol.cpp)
+    set_target_properties(tst_bco_protocol PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_link_libraries(tst_bco_protocol PRIVATE BcoGenerator::Core)
+endif()
+add_test(NAME tst_bco_protocol COMMAND tst_bco_protocol)
+add_executable(tst_udp_bco_stream_source hardware/tst_udp_bco_stream_source.cpp)
+target_link_libraries(tst_udp_bco_stream_source PRIVATE siriusscope_pipeline siriusscope_hardware Qt6::Core)
+add_dependencies(tst_udp_bco_stream_source bco-generator)
+add_test(NAME tst_udp_bco_stream_source COMMAND tst_udp_bco_stream_source $<TARGET_FILE:bco-generator>)
+set_tests_properties(tst_udp_bco_stream_source PROPERTIES TIMEOUT 30)

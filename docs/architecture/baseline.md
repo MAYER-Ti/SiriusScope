@@ -63,7 +63,24 @@ They are not all wrong by existence. The rule is narrower:
 - they must not make QML, `QObject`, or presentation models own raw stream processing;
 - they must be replaced or constrained as the high-load pipeline is introduced.
 
-## 4. Current Risk Areas
+## 4. Historical Risk Areas
+
+Update: the current source callback is owned by the Qt-free `BcoAcquisitionSession`,
+which submits directly to `SourceToPipelineBridge`. `WaterfallController` sees only
+`IAcquisitionControl`. Generation is supplied by the standalone `modules/bco-generator`
+core through the existing `HighLoadSimulatorBcoStreamSource` adapter.
+
+The application mode selects the BCO source between recording/scan sessions:
+Generator uses the built-in simulator, Hardware uses `UdpBcoStreamSource` and
+`UdpBcoControl`, and Control disables acquisition. An independent `bco-generator`
+process supplies SBCO v1 UDP packets to the same acquisition session and pipeline.
+Explicit UDP CLI options select Hardware at startup; otherwise the existing mode
+setting is honored (Generator by default). Switching rebinds the inactive acquisition
+session and control adapters without recreating QML singletons or the pipeline. See [SBCO UDP v1](../hardware/bco-udp-protocol.md) for the implemented
+wire format and launch instructions; real hardware protocol compatibility and
+60–90 MB/s physical-network throughput are not established by this integration.
+The accumulation path below describes the older implementation.
+
 
 Current/legacy behavior that must be treated as transition work:
 

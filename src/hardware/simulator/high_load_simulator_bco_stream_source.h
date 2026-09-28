@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bco_generator/generator.h"
 #include "hardware/hardware_profile.h"
 #include "hardware/interfaces/antenna_azimuth_provider.h"
 #include "hardware/simulator/simulator_radio_scene.h"
@@ -46,6 +47,8 @@ private:
                  const std::string& message) const;
 
 private:
+    std::vector<bco_generator::Sample> m_generatedSamples;
+    std::vector<bco_generator::Sample> m_templateScratch;
     SimulatorBcoLoadConfig m_loadConfig;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     IAntennaAzimuthProvider* m_antennaAzimuthProvider = nullptr;

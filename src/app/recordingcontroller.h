@@ -37,6 +37,8 @@ public:
                                  infrastructure::IDiagnosticsSink* diagnosticsSink,
                                  QObject* parent = nullptr);
 
+    //! Перепривязывает адаптер в состоянии Idle/Failed; nullptr запрещает новую запись.
+    bool setBcoControl(hardware::IBcoControl* control);
     bool recordingActive() const noexcept;
     bool bcoProcessingActive() const noexcept;
     bool canStartRecording() const noexcept;

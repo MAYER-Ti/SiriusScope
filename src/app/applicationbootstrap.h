@@ -1,5 +1,9 @@
 #pragma once
 
+#include "appstate.h"
+#include "pipeline/bco_acquisition_session.h"
+#include "hardware/udp/udp_bco_stream_source.h"
+
 #include "antennacontrollerstub.h"
 #include "bandconfigcontroller.h"
 #include "bandlistmodel.h"
@@ -51,7 +55,7 @@ namespace siriusscope::app {
 class ApplicationBootstrap
 {
 public:
-    ApplicationBootstrap();
+    explicit ApplicationBootstrap(std::optional<hardware::UdpBcoSourceConfig> udpSource = std::nullopt);
     ~ApplicationBootstrap();
 
     void registerQmlSingletons();
@@ -145,9 +149,12 @@ public:
 private:
     hardware::BcoStreamConfig makeBcoStreamConfig() const;
     hardware::HardwareProfile makeDefaultHardwareProfile() const;
-    void createBcoStreamSource();
+    bool selectBcoSource(AppState::Mode mode);
     void configureBcoStreamSource();
 
+    std::optional<hardware::UdpBcoSourceConfig> m_udpSourceConfig;
+    AppState::Mode m_sourceMode = AppState::Mode::Test;
+    QMetaObject::Connection m_modeConnection;
     FrequencyViewportModel m_viewportModel;
     FrequencyGridModel m_frequencyGridModel;
     SpectrumControllerStub m_spectrumController;
@@ -170,6 +177,7 @@ private:
     std::unique_ptr<BearingFrameBus> m_bearingFrameBus;
     std::unique_ptr<SignalSampleBus> m_signalSampleBus;
     std::unique_ptr<pipeline::DataIngestPipeline> m_dataIngestPipeline;
+    std::unique_ptr<pipeline::BcoAcquisitionSession> m_bcoAcquisition;
     std::unique_ptr<processing::BearingService> m_bearingService;
     std::unique_ptr<IScanAcquisitionRecorder> m_scanAcquisitionRecorder;
     std::unique_ptr<IScanRecordingControl> m_scanRecordingControl;

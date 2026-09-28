@@ -35,9 +35,10 @@ void testModeChangeLockBlocksModeMutation(TestRunner& test)
     appState.setMode(AppState::Mode::Test);
 
     int modeChanged = 0;
+    QObject connectionContext;
     QObject::connect(&appState,
                      &AppState::modeChanged,
-                     [&modeChanged](AppState::Mode) {
+                     &connectionContext, [&modeChanged](AppState::Mode) {
                          ++modeChanged;
                      });
 
@@ -56,6 +57,9 @@ void testModeChangeLockBlocksModeMutation(TestRunner& test)
                  "unlocked AppState accepts mode changes");
     test.require(modeChanged == 1, "unlocked AppState emits one modeChanged signal");
 
+    appState.setMode(static_cast<AppState::Mode>(99));
+    test.require(appState.mode() == AppState::Mode::Combat && modeChanged == 1,
+                 "invalid mode is rejected without notifying source selection");
     appState.setMode(AppState::Mode::Test);
 }
 

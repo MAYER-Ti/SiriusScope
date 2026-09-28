@@ -63,12 +63,16 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 
 ### Hardware and simulator
 
+- [Portable BCO generator](../modules/bco-generator/README.md) — standalone build,
+  generation contract and the Qt-free acquisition session used by SiriusScope.
+- [SBCO UDP v1](hardware/bco-udp-protocol.md) — implemented generator wire format,
+  network source, lifecycle, packet sizing and standalone launch commands.
+
 Read these documents before changing UDP/TCP communication, protocol parsers, hardware control, simulator behavior, ingest pipeline behavior, or simulator load profiles.
 
 These documents are planned but do not exist yet. Until they are added, use `spec/SiriusScope_TZ_v0.1.md`, `spec/scope.md`, and the architecture documents for the relevant requirements.
 
 - `hardware/interfaces-and-protocols.md` — hardware adapter boundaries, protocol-version rules, and simulator compatibility.
-- `hardware/bco-udp-protocol.md` — BCO UDP data stream format. May contain `TBD` sections until the real protocol is finalized.
 - `hardware/bco-control-protocol.md` — BCO control protocol for reception ranges, dwell time, filters, polarization, attenuators, diagnostics, and BCO-side RPU control. Planned; use `TBD` sections until the protocol is provided.
 - `hardware/antenna-tcp-protocol.md` — antenna / rotating device TCP messages. May contain `TBD` sections until the real protocol is finalized.
 - `hardware/simulator.md` — requirements for the software simulator, including `UiDemo`, `MediumLoad`, `RealBcoEquivalent`, `Stress150Percent`, `BaselineRawThroughput60MBps`, and `TargetRawThroughput90MBps` profiles.
@@ -84,6 +88,8 @@ These documents are planned but do not exist yet. Until they are added, use `spe
 - `storage/logging.md` — technical log requirements.
 
 ### Development
+
+- [Реестр расхождений в приёме, отображении и сохранении данных](development/display-data-audit.md) — результаты аудита от 29.09.2026: факты, последствия, ссылки на код и вопросы для отдельных обсуждений. **Не roadmap и не утверждённый план исправлений**; каждый пункт требует отдельного обсуждения и детального планирования.
 
 Read these documents before changing build scripts, tests, formatting, or developer workflow.
 

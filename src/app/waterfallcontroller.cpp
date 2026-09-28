@@ -1,7 +1,6 @@
 #include "waterfallcontroller.h"
 
 #include "frequencyviewportmodel.h"
-#include "pipeline/source_to_pipeline_bridge.h"
 #include "waterfallringbuffer.h"
 #include "waterfallrowresampler.h"
 
@@ -22,7 +21,6 @@ namespace {
 
 constexpr int kRetuneDelayMs = 160;
 constexpr int kRowsPerWheelStep = 5;
-constexpr std::size_t kSourceBridgeQueueCapacity = 32;
 
 std::int64_t nowUtcNs()
 {
@@ -57,7 +55,7 @@ QString sessionLabel(const WaterfallSessionMetadata& metadata)
 } // namespace
 
 WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
-                                         hardware::IBcoStreamSource* streamSource,
+                                         pipeline::IAcquisitionControl* acquisition,
                                          std::vector<core::BandConfig> bandConfigs,
                                          IWaterfallSessionStorage* sessionStorage,
                                          infrastructure::IDiagnosticsSink* diagnosticsSink,
@@ -69,7 +67,7 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
                                          QObject* parent)
     : QObject(parent)
     , m_viewportModel(viewportModel)
-    , m_streamSource(streamSource)
+    , m_acquisition(acquisition)
     , m_diagnosticsSink(diagnosticsSink)
     , m_dataIngestPipeline(dataIngestPipeline)
     , m_ringBuffer(new WaterfallRingBuffer(config.renderBinCount,
@@ -89,16 +87,6 @@ WaterfallController::WaterfallController(FrequencyViewportModel* viewportModel,
     if (!m_sessionStorage) {
         m_ownedSessionStorage = std::make_unique<InMemoryWaterfallSessionStorage>();
         m_sessionStorage = m_ownedSessionStorage.get();
-    }
-
-    if (m_dataIngestPipeline) {
-        pipeline::SourceToPipelineBridgeConfig bridgeConfig;
-        bridgeConfig.queueCapacity = kSourceBridgeQueueCapacity;
-        bridgeConfig.overflowPolicy = pipeline::RxOverflowPolicy::DropNewest;
-        m_sourceBridge = std::make_unique<pipeline::SourceToPipelineBridge>(
-            m_dataIngestPipeline,
-            bridgeConfig,
-            m_diagnosticsSink);
     }
 
     if (m_viewportModel) {
@@ -187,7 +175,7 @@ void WaterfallController::stop()
     m_snapshotTimer.stop();
     setAcceptingLiveSamples(false);
     stopLiveSource();
-    stopSourceBridge(true);
+    if (m_acquisition) m_acquisition->closeInput(true);
     stopWorkers();
 }
 
@@ -205,13 +193,13 @@ void WaterfallController::startWorkers()
 core::OperationResult WaterfallController::startLiveSource()
 {
     startWorkers();
-    if (!m_streamSource) {
+    if (!m_acquisition) {
         publish(infrastructure::DiagnosticSeverity::Warning,
                 "Waterfall stream source is not configured");
         return core::OperationResult::failure("waterfall stream source is not configured");
     }
 
-    if (m_sourceStarted) {
+    if (sourceActive()) {
         return core::OperationResult::ok();
     }
 
@@ -224,17 +212,13 @@ core::OperationResult WaterfallController::startLiveSource()
         }
     }
 
-    const auto started = m_streamSource->start([this](
-                                                   hardware::IBcoStreamSource::SampleBlockPtr block) {
-        enqueueSampleBlock(std::move(block));
-    });
+    const auto started = m_acquisition->startSource();
     if (!started) {
         publish(infrastructure::DiagnosticSeverity::Error,
                 "Waterfall stream source start failed: " + started.message);
         return started;
     }
 
-    m_sourceStarted = true;
     emit sourceActiveChanged();
     publish(infrastructure::DiagnosticSeverity::Info, "BCO stream source started");
     return core::OperationResult::ok();
@@ -242,15 +226,14 @@ core::OperationResult WaterfallController::startLiveSource()
 
 core::OperationResult WaterfallController::stopLiveSource()
 {
-    if (m_streamSource && m_sourceStarted) {
-        const auto stopped = m_streamSource->stop();
-        m_sourceStarted = false;
-        emit sourceActiveChanged();
+    if (sourceActive()) {
+        const auto stopped = m_acquisition->stopSource();
         if (!stopped) {
             publish(infrastructure::DiagnosticSeverity::Error,
                     "Waterfall stream source stop failed: " + stopped.message);
             return stopped;
         }
+        emit sourceActiveChanged();
         publish(infrastructure::DiagnosticSeverity::Info, "BCO stream source stopped");
     }
     return core::OperationResult::ok();
@@ -265,14 +248,14 @@ void WaterfallController::stopWorkers()
 
 void WaterfallController::setAcceptingLiveSamples(bool accepting)
 {
-    m_acceptingLiveSamples = accepting;
+    if (m_acquisition) m_acquisition->setAccepting(accepting);
 }
 
 void WaterfallController::clearQueuedBatches()
 {
     resetLiveRowTimeState();
-    if (m_sourceBridge) {
-        m_sourceBridge->clear();
+    if (m_acquisition) {
+        m_acquisition->clearInput();
     }
     if (m_dataIngestPipeline) {
         m_dataIngestPipeline->clearQueuedBlocks();
@@ -299,8 +282,8 @@ core::OperationResult WaterfallController::flushProcessing(std::chrono::millisec
         return core::OperationResult::ok();
     }
 
-    if (m_sourceBridge) {
-        const auto bridgeFlushed = m_sourceBridge->flush(timeout);
+    if (m_acquisition) {
+        const auto bridgeFlushed = m_acquisition->flushInput(timeout);
         if (!bridgeFlushed) {
             return bridgeFlushed;
         }
@@ -549,7 +532,10 @@ void WaterfallController::startRecording()
     metadata = m_sessionStorage->startSession(metadata);
     m_activeSessionId = metadata.id;
     m_sessionActive = true;
-    startSourceBridge();
+    if (m_acquisition) {
+        const auto opened = m_acquisition->openInput();
+        if (!opened) publish(infrastructure::DiagnosticSeverity::Error, opened.message);
+    }
     if (m_dataIngestPipeline) {
         m_dataIngestPipeline->setAccepting(true);
     }
@@ -577,7 +563,7 @@ void WaterfallController::stopRecording()
     const qint64 endUtcMs = metadata ? metadata->endUtcMs : m_timelineViewport.topUtcMs();
 
     setAcceptingLiveSamples(false);
-    stopSourceBridge(true);
+    if (m_acquisition) m_acquisition->closeInput(true);
     const auto flushed = flushProcessing(std::chrono::seconds{5});
     if (!flushed) {
         publish(infrastructure::DiagnosticSeverity::Warning,
@@ -630,89 +616,6 @@ void WaterfallController::pollWaterfallRows()
             m_controllerConfig.renderBinCount);
         appendRenderRow(std::move(adapted));
     }
-}
-
-void WaterfallController::enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block)
-{
-    if (!block) {
-        return;
-    }
-
-    if (!m_acceptingLiveSamples) {
-        return;
-    }
-
-    if (!m_sourceBridge) {
-        publish(infrastructure::DiagnosticSeverity::Warning,
-                "Source bridge is not configured; BCO block ignored");
-        return;
-    }
-
-    m_sourceBridge->submit(std::move(block));
-}
-
-void WaterfallController::startSourceBridge()
-{
-    if (!m_sourceBridge) {
-        return;
-    }
-
-    const auto started = m_sourceBridge->start();
-    if (!started) {
-        publish(infrastructure::DiagnosticSeverity::Error,
-                "Source bridge failed to start: " + started.message);
-    }
-}
-
-void WaterfallController::stopSourceBridge(bool flush)
-{
-    if (!m_sourceBridge || !m_sourceBridge->running()) {
-        return;
-    }
-
-    if (flush) {
-        const auto flushed = m_sourceBridge->flush(std::chrono::seconds{5});
-        if (!flushed) {
-            publish(infrastructure::DiagnosticSeverity::Warning,
-                    "Source bridge flush timed out: " + flushed.message);
-        }
-    }
-
-    m_sourceBridge->stop();
-    publishSourceBridgeMetrics(m_sourceBridge->metrics());
-}
-
-void WaterfallController::publishSourceBridgeMetrics(
-    const pipeline::SourceToPipelineBridgeMetrics& metrics) const
-{
-    const bool hasActivity = metrics.receivedBlocks > 0 || metrics.enqueuedBlocks > 0
-        || metrics.droppedBlocks > 0 || metrics.ingestedBlocks > 0
-        || metrics.rejectedBlocks > 0;
-    if (!hasActivity) {
-        return;
-    }
-
-    std::ostringstream summary;
-    summary << "Source bridge stopped: received=" << metrics.receivedBlocks
-            << " enqueued=" << metrics.enqueuedBlocks
-            << " dropped=" << metrics.droppedBlocks
-            << " ingested=" << metrics.ingestedBlocks
-            << " rejected=" << metrics.rejectedBlocks
-            << " queueDepth=" << metrics.queueDepth;
-    publish(infrastructure::DiagnosticSeverity::Info, summary.str());
-
-    if (metrics.droppedBlocks == 0 && metrics.rejectedBlocks == 0) {
-        return;
-    }
-
-    std::ostringstream warning;
-    warning << "Source bridge reported dropped/rejected blocks: dropped="
-            << metrics.droppedBlocks << " rejected=" << metrics.rejectedBlocks
-            << " received=" << metrics.receivedBlocks
-            << " enqueued=" << metrics.enqueuedBlocks
-            << " ingested=" << metrics.ingestedBlocks
-            << " queueDepth=" << metrics.queueDepth;
-    publish(infrastructure::DiagnosticSeverity::Warning, warning.str());
 }
 
 void WaterfallController::scheduleRetune(double minHz, double maxHz)

@@ -15,6 +15,7 @@ public:
     explicit WaterfallScanRecordingAdapter(WaterfallController* waterfallController);
     explicit WaterfallScanRecordingAdapter(RecordingController* recordingController);
 
+    bool recordingAvailable() const noexcept override;
     core::OperationResult beginScanRecording(std::uint64_t scanSessionId) override;
     core::OperationResult endScanRecording(std::uint64_t scanSessionId) override;
 

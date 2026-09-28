@@ -37,9 +37,14 @@ SignalParameter / PRI / PW calculation is intentionally out of the baseline high
 runtime. 90 MB/s is a future development target. 60 MB/s without
 SignalParameter/PRI/PW is the current fixed baseline.
 
-Known transition risks:
+The portable generation core now lives in `modules/bco-generator`, with no Qt or
+thread dependency. `HighLoadSimulatorBcoStreamSource` adapts it to `IBcoStreamSource`.
+`BcoAcquisitionSession` owns source callback delivery into `SourceToPipelineBridge`;
+`WaterfallController` only invokes control commands via `IAcquisitionControl`.
 
-- `WaterfallController` currently accumulates incoming blocks up to
+Historical transition risks (not a description of the current source callback path):
+
+- Older `WaterfallController` implementations accumulated incoming blocks up to
   `sourceFlushIntervalMs = 1000`, builds a large `std::vector`, and sends it through
   the older processing path.
 - `SampleProcessor` can build waterfall rows per `sampleIndex`, which is not viable at

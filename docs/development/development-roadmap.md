@@ -1,5 +1,7 @@
 # SiriusScope Development Roadmap
 
+> **Отдельный аудит от 29.09.2026:** [реестр расхождений в работе с данными](display-data-audit.md) фиксирует наблюдения и открытые вопросы. Его пункты не включаются автоматически в milestones этого roadmap. Приоритеты, решения и детальные планы по ним определяются в отдельных обсуждениях; предыдущий перечень возможных исправлений не является утверждённым roadmap.
+
 This document defines the strategic migration path for SiriusScope.
 
 It no longer describes the target as a minimal MVP/demo vertical slice. The target is a

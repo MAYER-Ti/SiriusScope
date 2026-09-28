@@ -295,6 +295,11 @@ void ScanController::startScan(double leftAngleDeg, double rightAngleDeg, double
         return;
     }
 
+    if (m_scanRecordingControl && !m_scanRecordingControl->recordingAvailable()) {
+        setLastError(QStringLiteral("приём данных недоступен в текущем режиме"));
+        return;
+    }
+
     QString speedError;
     if (!validateSpeed(speedDegPerSec, &speedError)) {
         setLastError(speedError);
@@ -623,8 +628,8 @@ void ScanController::beginSectorScan()
     if (m_scanRecordingControl) {
         const auto recordingResult = m_scanRecordingControl->beginScanRecording(sessionId);
         if (!recordingResult) {
-            publish(infrastructure::DiagnosticSeverity::Warning,
-                    "ScanController: scan recording start failed: " + recordingResult.message);
+            failScan(QString::fromStdString("scan recording start failed: " + recordingResult.message));
+            return;
         }
     }
 

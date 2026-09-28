@@ -67,7 +67,11 @@ public:
     virtual ~IBcoStreamSource() = default;
 
     virtual core::OperationResult configure(const BcoStreamConfig& config) = 0;
+    // Callback may run on the producer thread; failed start must not leave callbacks
+    // running. The owner must keep source/consumer alive until stop() returns.
     virtual core::OperationResult start(SampleBlockCallback callback) = 0;
+    // Quiescence boundary: no callback is executing or may start after return,
+    // including an error return. Called from the control thread, not a callback.
     virtual core::OperationResult stop() = 0;
     virtual BcoSourceMetrics metrics() const = 0;
 };

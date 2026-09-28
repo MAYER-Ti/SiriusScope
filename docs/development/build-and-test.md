@@ -161,6 +161,44 @@ ctest --test-dir build/win-mingw-debug --output-on-failure --verbose
 
 If CTest prints `No tests were found!!!`, the command itself succeeded but the current project configuration does not define test targets yet.
 
+### Standalone BCO generator and acquisition tests
+
+The portable module builds without Qt or Threads:
+
+```bash
+cmake -S modules/bco-generator -B build/bco-generator-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/bco-generator-debug
+ctest --test-dir build/bco-generator-debug --output-on-failure
+```
+
+`tst_bco_generator` also runs in the main CTest suite. `tst_bco_acquisition_session`
+checks headless source delivery, input gating, reopen, failure handling and teardown.
+For full extraction details see [module README](../../modules/bco-generator/README.md).
+
+### Characterization before extracting the BCO generator
+
+`tst_high_load_simulator_bco_stream_source` contains explicit reference-record tests
+for the current `HighLoadSimulatorBcoStreamSource` behavior. They cover pulse start/end
+boundaries, empty batches and time-slot advancement, paired beams, frequency drift,
+replay after reconfiguration, band edges, visibility filtering, the baseline fast path,
+callback thread and retained block ownership. Expectations compare all sample fields;
+wall-clock timestamps and exact scheduling latency are intentionally not golden values.
+
+Two current limitations are recorded for migration review, not endorsed as permanent
+requirements: an odd record budget truncates a beam pair without carrying it into the
+next batch; the continuous throughput fast path ignores frequency drift and assigns a
+separate sample index to each beam record. Changes to these behaviors must be explicit
+and update the corresponding characterization tests, rather than slip into extraction.
+
+Run the test in a configured build tree with:
+
+```bash
+ctest --test-dir build/<configured-tree> -R '^tst_high_load_simulator_bco_stream_source$' --output-on-failure
+```
+
+These tests characterize block contents and delivery; they do not establish sustained
+60/90 MB/s performance or exercise a real UDP transport.
+
 ## 7. Test framework
 
 Preferred frameworks:
@@ -564,3 +602,31 @@ When Codex works on the repository:
 - CMake uses MSYS2 instead of Qt Installer tools: remove the stale build directory or rerun configure with `--fresh`, then verify `CMAKE_CXX_COMPILER`, `CMAKE_MAKE_PROGRAM`, and `Qt6_DIR` in `CMakeCache.txt`.
 - Dependency drift between machines: regenerate and commit `conan.lock` after intentional dependency updates.
 - CI fails guard step: ensure configure uses `cmake --preset qt-win-mingw-debug` and the cache points to `C:/Qt/Tools/mingw1310_64`, `C:/Qt/Tools/Ninja`, and `C:/Qt/6.11.1/mingw_64`.
+
+## Standalone UDP generator and receiver
+
+See [SBCO UDP v1](../hardware/bco-udp-protocol.md) for full launch commands and packet
+layout. The host generator is built automatically with SiriusScope, or independently:
+
+```sh
+cmake -S modules/bco-generator -B build/bco-generator-host -DCMAKE_BUILD_TYPE=Release
+cmake --build build/bco-generator-host
+ctest --test-dir build/bco-generator-host --output-on-failure
+```
+
+For an embedded-oriented portable-only configure, add
+`-DBCO_GENERATOR_BUILD_HOST=OFF`; tests still exercise generation and wire codecs.
+`tst_bco_protocol` runs without sockets. `tst_udp_bco_stream_source` requires local
+IPv4 UDP sockets and permission to launch the standalone generator executable; it
+checks actual separate-process transport, control changes, pipeline delivery, invalid
+packets, losses, duplicates, restarts and fixed-pool exhaustion. Its separate-process
+case requests 100000 slots/s; it is a functional test, not a throughput certification.
+`tst_application_bootstrap` also launches a separate generator after Hardware recording
+has started, checks waiting/receiving status and pipeline delivery, switches back to
+the built-in generator, and covers Control mode, settings preservation and mode locks.
+`tst_bco_acquisition_session` rejects source replacement while callbacks or input are active.
+UDP clock regressions verify live waterfall/spectrum output before stop/flush at the
+host defaults (1280 slots/s, 320 ns sample clock, 100/10 ms PRI/PW), advancing timestamps,
+nonoverlapping indices and no model-time acceleration when the output budget exceeds
+the sample clock. Bootstrap checks that the separate default-rate process produces
+live rows, not just that some samples reach processing.

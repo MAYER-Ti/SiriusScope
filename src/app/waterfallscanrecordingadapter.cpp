@@ -17,6 +17,13 @@ WaterfallScanRecordingAdapter::WaterfallScanRecordingAdapter(
 {
 }
 
+bool WaterfallScanRecordingAdapter::recordingAvailable() const noexcept
+{
+    return m_recordingController
+        ? (m_recordingController->canStartRecording() || m_recordingController->recordingActive())
+        : m_waterfallController != nullptr;
+}
+
 core::OperationResult WaterfallScanRecordingAdapter::beginScanRecording(
     std::uint64_t scanSessionId)
 {
@@ -32,6 +39,9 @@ core::OperationResult WaterfallScanRecordingAdapter::beginScanRecording(
 
     if (m_recordingController) {
         m_recordingController->startRecording();
+        if (!m_recordingController->recordingActive()) {
+            return core::OperationResult::failure("scan recording could not start");
+        }
     } else {
         m_waterfallController->startRecording();
     }

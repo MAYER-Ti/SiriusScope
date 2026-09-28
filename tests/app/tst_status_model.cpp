@@ -6,6 +6,7 @@
 #include "app/scancontroller.h"
 #include "app/statusmodel.h"
 #include "app/waterfallcontroller.h"
+#include "pipeline/bco_acquisition_session.h"
 #include "app/waterfallstorage.h"
 #include "core/domain_models.h"
 #include "hardware/interfaces/bco_control.h"
@@ -171,12 +172,17 @@ void testInitialStatuses(TestRunner& test)
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
+    pipeline::DataIngestPipelineConfig pipelineConfig;
+    pipelineConfig.blockPool = {4, 16};
+    pipelineConfig.queueCapacity = 4;
+    pipeline::DataIngestPipeline dataPipeline(pipelineConfig);
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         makeBandConfigs(),
                                         &storage,
                                         &diagnostics,
-                                        config);
+                                        config, nullptr, nullptr, nullptr, &dataPipeline);
     hardware::StubBcoControl bcoControl;
     app::BandListModel bandListModel;
     app::RecordingController recordingController(&bcoControl,
@@ -231,12 +237,17 @@ void testModeAndSourceStatuses(TestRunner& test)
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
+    pipeline::DataIngestPipelineConfig pipelineConfig;
+    pipelineConfig.blockPool = {4, 16};
+    pipelineConfig.queueCapacity = 4;
+    pipeline::DataIngestPipeline dataPipeline(pipelineConfig);
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         makeBandConfigs(),
                                         &storage,
                                         &diagnostics,
-                                        config);
+                                        config, nullptr, nullptr, nullptr, &dataPipeline);
     hardware::StubBcoControl bcoControl;
     app::BandListModel bandListModel;
     app::RecordingController recordingController(&bcoControl,
@@ -257,10 +268,36 @@ void testModeAndSourceStatuses(TestRunner& test)
 
     test.require(model.modeValue() == QStringLiteral("аппаратура"),
                  "mode status follows AppState");
-    test.require(model.bcoValue() == QStringLiteral("поток активен"),
-                 "BCO status follows sourceActive");
-    test.require(model.bcoLevel() == app::StatusModel::StatusLevel::Good,
-                 "active BCO stream is good");
+    test.require(model.bcoValue() == QStringLiteral("ожидание данных")
+                     && model.bcoLevel() == app::StatusModel::StatusLevel::Neutral,
+                 "local UDP start waits for remote data");
+    publish(diagnostics, infrastructure::DiagnosticSeverity::Warning,
+            "HighLoadSimulatorBcoStreamSource", "old simulator warning");
+    QCoreApplication::processEvents();
+    test.require(model.bcoValue() == QStringLiteral("ожидание данных"),
+                 "queued simulator warning cannot overwrite hardware status");
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        publish(diagnostics, infrastructure::DiagnosticSeverity::Info,
+                "UdpBcoStreamSource", "UDP BCO: receiving data");
+        test.require(waitUntil([&] { return model.bcoValue() == QStringLiteral("приём данных"); })
+                         && model.bcoLevel() == app::StatusModel::StatusLevel::Good,
+                     "valid DATA or recovery marks receiving");
+        publish(diagnostics, infrastructure::DiagnosticSeverity::Warning,
+                "UdpBcoStreamSource", "UDP BCO: no matching data for 1 second");
+        test.require(waitUntil([&] { return model.bcoLevel() == app::StatusModel::StatusLevel::Warning; })
+                         && model.bcoValue() == QStringLiteral("ожидание данных"),
+                     "missing DATA returns to waiting");
+    }
+    recordingController.stopRecording();
+    publish(diagnostics, infrastructure::DiagnosticSeverity::Info,
+            "UdpBcoStreamSource", "UDP BCO: receiving data");
+    QCoreApplication::processEvents();
+    test.require(model.bcoValue() == QStringLiteral("остановлен"),
+                 "late network diagnostics cannot revive stopped status");
+    recordingController.startRecording();
+    test.require(model.bcoValue() == QStringLiteral("ожидание данных"),
+                 "new recording waits for its own network data");
+    recordingController.stopRecording();
 }
 
 void testDiagnosticRules(TestRunner& test)
@@ -286,12 +323,17 @@ void testDiagnosticRules(TestRunner& test)
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
+    pipeline::DataIngestPipelineConfig pipelineConfig;
+    pipelineConfig.blockPool = {4, 16};
+    pipelineConfig.queueCapacity = 4;
+    pipeline::DataIngestPipeline dataPipeline(pipelineConfig);
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         makeBandConfigs(),
                                         &storage,
                                         &diagnostics,
-                                        config);
+                                        config, nullptr, nullptr, nullptr, &dataPipeline);
     hardware::StubBcoControl bcoControl;
     app::BandListModel bandListModel;
     app::RecordingController recordingController(&bcoControl,
@@ -375,12 +417,17 @@ void testRecordingAndAzimuthStatuses(TestRunner& test)
                                        &diagnostics);
     app::WaterfallControllerConfig config;
     config.sourceFlushIntervalMs = 20;
+    pipeline::DataIngestPipelineConfig pipelineConfig;
+    pipelineConfig.blockPool = {4, 16};
+    pipelineConfig.queueCapacity = 4;
+    pipeline::DataIngestPipeline dataPipeline(pipelineConfig);
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         makeBandConfigs(),
                                         &storage,
                                         &diagnostics,
-                                        config);
+                                        config, nullptr, nullptr, nullptr, &dataPipeline);
     hardware::StubBcoControl bcoControl;
     app::BandListModel bandListModel;
     app::RecordingController recordingController(&bcoControl,

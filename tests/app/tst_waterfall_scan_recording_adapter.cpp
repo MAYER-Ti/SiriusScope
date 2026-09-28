@@ -1,5 +1,6 @@
 #include "app/frequencyviewportmodel.h"
 #include "app/waterfallcontroller.h"
+#include "pipeline/bco_acquisition_session.h"
 #include "app/waterfallscanrecordingadapter.h"
 #include "hardware/interfaces/bco_stream_source.h"
 
@@ -82,8 +83,9 @@ struct Fixture
     FakeBcoStreamSource source;
     infrastructure::NullDiagnosticsSink diagnostics;
     InMemoryWaterfallSessionStorage storage;
+    pipeline::BcoAcquisitionSession acquisition{&source, nullptr, &diagnostics};
     app::WaterfallController controller{&viewport,
-                                        &source,
+                                        &acquisition,
                                         makeBandConfigs(),
                                         &storage,
                                         &diagnostics,

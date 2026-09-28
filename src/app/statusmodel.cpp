@@ -28,6 +28,7 @@ bool isBcoSubsystem(const QString& subsystem)
 {
     return subsystem == QStringLiteral("SimulatorBcoSampleSource")
         || subsystem == QStringLiteral("HighLoadSimulatorBcoStreamSource")
+        || subsystem == QStringLiteral("UdpBcoStreamSource")
         || subsystem == QStringLiteral("WaterfallProcessing")
         || subsystem == QStringLiteral("DataIngestPipeline")
         || subsystem == QStringLiteral("ProcessingEngine")
@@ -78,7 +79,8 @@ StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
     updateModeStatus();
     if (!m_recordingController) {
         setBcoStatus(QStringLiteral("источник не задан"), StatusLevel::Warning);
-    } else if (m_waterfallController->sourceActive()) {
+    } else if ((m_waterfallController && m_waterfallController->sourceActive())
+               || (m_appState && m_appState->mode() == AppState::Mode::Control)) {
         updateBcoSourceStatus();
     }
     updateRecordingStatus();
@@ -97,6 +99,7 @@ StatusModel::StatusModel(DiagnosticsService* diagnosticsService,
                 this,
                 [this](AppState::Mode) {
                     updateModeStatus();
+                    updateBcoSourceStatus();
                 });
     }
 
@@ -166,6 +169,15 @@ void StatusModel::updateBcoSourceStatus()
         return;
     }
 
+    if (m_appState && m_appState->mode() == AppState::Mode::Control) {
+        setBcoStatus(QStringLiteral("приём отключён"), StatusLevel::Neutral);
+        return;
+    }
+    if (m_appState && m_appState->mode() == AppState::Mode::Combat
+        && m_recordingController->bcoProcessingActive()) {
+        setBcoStatus(QStringLiteral("ожидание данных"), StatusLevel::Neutral);
+        return;
+    }
     setBcoStatus(m_recordingController->bcoProcessingStateText(),
                  m_recordingController->bcoProcessingActive() ? StatusLevel::Good
                                                               : StatusLevel::Neutral);
@@ -296,10 +308,26 @@ void StatusModel::updateDiagnosticsFromDiagnostic(int severity, const QString& m
     }
 }
 
-void StatusModel::updateBcoFromDiagnostic(const QString&,
+void StatusModel::updateBcoFromDiagnostic(const QString& subsystem,
                                           int severity,
                                           const QString& message)
 {
+    if (m_appState && m_appState->mode() == AppState::Mode::Control) return;
+    if (m_appState && m_appState->mode() != AppState::Mode::Test
+        && (subsystem == QStringLiteral("HighLoadSimulatorBcoStreamSource")
+            || subsystem == QStringLiteral("SimulatorBcoSampleSource"))) return;
+    if (subsystem == QStringLiteral("UdpBcoStreamSource")) {
+        if (!m_appState || m_appState->mode() != AppState::Mode::Combat
+            || !m_recordingController || !m_recordingController->bcoProcessingActive()) return;
+        if (message.startsWith(QStringLiteral("UDP BCO: receiving data"))) {
+            setBcoStatus(QStringLiteral("приём данных"), StatusLevel::Good);
+            return;
+        }
+        if (message.contains(QStringLiteral("no matching data"))) {
+            setBcoStatus(QStringLiteral("ожидание данных"), StatusLevel::Warning);
+            return;
+        }
+    }
     const QString lower = message.toLower();
     if (isError(severity)) {
         setBcoStatus(QStringLiteral("ошибка потока"), StatusLevel::Error);

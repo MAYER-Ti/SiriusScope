@@ -1,4 +1,5 @@
 #include "applicationbootstrap.h"
+#include "hardware/udp/udp_bco_control.h"
 
 #include "appstate.h"
 #include "hardware/simulator/high_load_simulator_bco_control.h"
@@ -71,8 +72,9 @@ std::vector<hardware::SimulatorPulseBandConfig> simulatorPulseConfigsFromBands(
 
 } // namespace
 
-ApplicationBootstrap::ApplicationBootstrap()
-    : m_diagnosticLogWriter(std::make_unique<infrastructure::DiagnosticLogWriter>(
+ApplicationBootstrap::ApplicationBootstrap(std::optional<hardware::UdpBcoSourceConfig> udpSource)
+    : m_udpSourceConfig(std::move(udpSource))
+    , m_diagnosticLogWriter(std::make_unique<infrastructure::DiagnosticLogWriter>(
           infrastructure::DiagnosticLogWriter::Config{
               defaultWaterfallDataRootPath(),
           }))
@@ -120,19 +122,20 @@ ApplicationBootstrap::ApplicationBootstrap()
                                                   m_dataIngestPipeline.get(),
                                                   m_diagnosticsService.get());
 
-    createBcoStreamSource();
-    configureBcoStreamSource();
-    m_bcoControl = std::make_unique<hardware::HighLoadSimulatorBcoControl>(
-        &m_hardwareProfile,
-        m_bcoStreamSource.get(),
-        m_diagnosticsService.get());
+    m_hardwareProfile = makeDefaultHardwareProfile();
+    if (m_udpSourceConfig) {
+        AppState::instance().setMode(AppState::Mode::Combat);
+    }
+    selectBcoSource(AppState::instance().mode());
     m_bandConfigController =
         std::make_unique<BandConfigController>(&m_bandListModel,
                                                m_bcoControl.get(),
                                                m_diagnosticsService.get());
 
+    m_bcoAcquisition = std::make_unique<pipeline::BcoAcquisitionSession>(
+        m_bcoStreamSource.get(), m_dataIngestPipeline.get(), m_diagnosticsService.get());
     m_waterfallController = std::make_unique<WaterfallController>(&m_viewportModel,
-                                                                  m_bcoStreamSource.get(),
+                                                                  m_bcoAcquisition.get(),
                                                                   m_bandListModel.bandConfigs(),
                                                                   m_waterfallSessionStorage.get(),
                                                                   m_diagnosticsService.get(),
@@ -209,8 +212,16 @@ ApplicationBootstrap::ApplicationBootstrap()
                                  dynamic_cast<hardware::HighLoadSimulatorBcoStreamSource*>(
                                      m_bcoStreamSource.get())) {
                              highLoadSource->setPulseBandConfigs(pulseConfigs);
+                         } else if (auto* udp = dynamic_cast<hardware::UdpBcoStreamSource*>(m_bcoStreamSource.get())) {
+                             udp->setPulseBandConfigs(pulseConfigs);
                          }
                      });
+    m_modeConnection = QObject::connect(&AppState::instance(), &AppState::modeChanged,
+                                        m_diagnosticsService.get(), [this](AppState::Mode mode) {
+        if (!selectBcoSource(mode)) {
+            AppState::instance().setMode(m_sourceMode);
+        }
+    });
     m_waterfallController->start();
     if (m_spectrumSnapshotAdapter) {
         m_spectrumSnapshotAdapter->start();
@@ -233,6 +244,7 @@ ApplicationBootstrap::ApplicationBootstrap()
 
 ApplicationBootstrap::~ApplicationBootstrap()
 {
+    QObject::disconnect(m_modeConnection);
     if (m_spectrumSnapshotAdapter) {
         m_spectrumSnapshotAdapter->stop();
     }
@@ -272,40 +284,73 @@ hardware::HardwareProfile ApplicationBootstrap::makeDefaultHardwareProfile() con
     return profile;
 }
 
-void ApplicationBootstrap::createBcoStreamSource()
+bool ApplicationBootstrap::selectBcoSource(AppState::Mode mode)
 {
-    m_hardwareProfile = makeDefaultHardwareProfile();
-
-    m_bcoStreamSource =
-        hardware::DataSourceFactory::createHighLoadSimulatorBcoStreamSource(
-            m_hardwareProfile,
-            m_diagnosticsService.get(),
-            m_antennaState.get());
-
-    if (!m_bcoStreamSource && m_diagnosticsService) {
-        m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
-            infrastructure::DiagnosticSeverity::Error,
-            "Application",
-            "High-load BCO stream source creation failed",
-            std::chrono::system_clock::now(),
-        });
-        return;
+    if ((m_waterfallController && m_waterfallController->sourceActive())
+        || (m_scanController && m_scanController->scanActive())
+        || AppState::instance().modeChangeLocked()) {
+        m_diagnosticsService->publish({infrastructure::DiagnosticSeverity::Warning, "Application",
+            "Stop recording/scanning before switching BCO source", std::chrono::system_clock::now()});
+        return false;
     }
 
-    if (m_diagnosticsService) {
-        m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
-            infrastructure::DiagnosticSeverity::Info,
-            "Application",
-            "BCO stream source selected: high-load simulator",
-            std::chrono::system_clock::now(),
-        });
-        m_diagnosticsService->publish(infrastructure::DiagnosticEvent{
-            infrastructure::DiagnosticSeverity::Info,
-            "Application",
-            "High-load BCO profile: BaselineRawThroughput60MBps",
-            std::chrono::system_clock::now(),
-        });
+    const auto pulseConfigs = simulatorPulseConfigsFromBands(m_bandListModel);
+    m_hardwareProfile.bcoStreamConfig = makeBcoStreamConfig();
+    m_hardwareProfile.simulatorLoadConfig.pulseBandConfigs = pulseConfigs;
+    std::unique_ptr<hardware::IBcoStreamSource> source;
+    std::unique_ptr<hardware::IBcoControl> control;
+    std::string description;
+    switch (mode) {
+    case AppState::Mode::Test:
+        source = hardware::DataSourceFactory::createHighLoadSimulatorBcoStreamSource(
+            m_hardwareProfile, m_diagnosticsService.get(), m_antennaState.get());
+        control = std::make_unique<hardware::HighLoadSimulatorBcoControl>(
+            &m_hardwareProfile, source.get(), m_diagnosticsService.get());
+        description = "BCO source: built-in generator, BaselineRawThroughput60MBps";
+        break;
+    case AppState::Mode::Combat: {
+        const auto endpoint = m_udpSourceConfig.value_or(hardware::UdpBcoSourceConfig{});
+        auto udp = std::make_unique<hardware::UdpBcoStreamSource>(
+            endpoint, m_diagnosticsService.get(), m_antennaState.get());
+        udp->setPulseBandConfigs(pulseConfigs);
+        source = std::move(udp);
+        control = std::make_unique<hardware::UdpBcoControl>(source.get());
+        description = "BCO source: UDP generator " + endpoint.generatorHost + ":"
+            + std::to_string(endpoint.generatorPort);
+        break;
     }
+    case AppState::Mode::Control:
+        description = "Control mode: BCO acquisition disabled";
+        break;
+    default:
+        return false;
+    }
+
+    auto configured = core::OperationResult::ok();
+    if (mode != AppState::Mode::Control) {
+        configured = source ? source->configure(m_hardwareProfile.bcoStreamConfig)
+                            : core::OperationResult::failure("BCO source creation failed");
+    }
+    if (configured && m_bcoAcquisition) {
+        configured = m_bcoAcquisition->setSource(source.get());
+    }
+    if (!configured) {
+        m_diagnosticsService->publish({infrastructure::DiagnosticSeverity::Error, "Application",
+            "BCO source switch failed: " + configured.message, std::chrono::system_clock::now()});
+        return false;
+    }
+
+    // Keep the previous pair alive until all control-plane consumers are rebound.
+    auto previousSource = std::move(m_bcoStreamSource);
+    auto previousControl = std::move(m_bcoControl);
+    m_bcoStreamSource = std::move(source);
+    m_bcoControl = std::move(control);
+    m_sourceMode = mode;
+    if (m_bandConfigController) m_bandConfigController->setBcoControl(m_bcoControl.get());
+    if (m_recordingController) m_recordingController->setBcoControl(m_bcoControl.get());
+    m_diagnosticsService->publish({infrastructure::DiagnosticSeverity::Info, "Application",
+        description, std::chrono::system_clock::now()});
+    return true;
 }
 
 void ApplicationBootstrap::configureBcoStreamSource()

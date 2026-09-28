@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+add_subdirectory(modules/bco-generator)
+
 find_package(Qt6 REQUIRED COMPONENTS
     Core
     Gui
@@ -127,6 +129,9 @@ set(SIRIUSSCOPE_PROCESSING_SOURCES
 )
 
 set(SIRIUSSCOPE_PIPELINE_SOURCES
+    src/pipeline/acquisition_control.h
+    src/pipeline/bco_acquisition_session.h
+    src/pipeline/bco_acquisition_session.cpp
     src/pipeline/README.md
     src/pipeline/bearing_aggregator.h
     src/pipeline/bearing_aggregator.cpp
@@ -344,6 +349,10 @@ target_link_libraries(siriusscope_infrastructure
 )
 
 add_library(siriusscope_hardware STATIC
+    src/hardware/udp/udp_bco_stream_source.h
+    src/hardware/udp/udp_bco_stream_source.cpp
+    src/hardware/udp/udp_bco_control.h
+    src/hardware/udp/udp_bco_control.cpp
     ${SIRIUSSCOPE_HARDWARE_ADAPTER_SOURCES}
     ${SIRIUSSCOPE_HARDWARE_FACTORY_SOURCES}
     ${SIRIUSSCOPE_HARDWARE_STUB_SOURCES}
@@ -364,6 +373,8 @@ target_link_libraries(siriusscope_hardware
         Threads::Threads
         siriusscope_hardware_iface
         siriusscope_infrastructure_iface
+        BcoGenerator::Core
+        BcoGenerator::Host
 )
 
 add_library(siriusscope_application STATIC

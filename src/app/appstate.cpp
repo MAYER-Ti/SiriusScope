@@ -17,6 +17,8 @@ AppState &AppState::instance()
  */
 void AppState::setMode(Mode newMode)
 {
+    if (newMode != Mode::Test && newMode != Mode::Combat && newMode != Mode::Control)
+        return;
     if (m_modeChangeLocked)
         return;
     if (m_mode == newMode)

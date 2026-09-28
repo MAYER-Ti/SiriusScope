@@ -2,9 +2,14 @@
 #include "app/qmlsingletons.h"
 #include "hardware/simulator/high_load_simulator_bco_stream_source.h"
 #include "hardware/simulator/simulated_bco_payload_accounting.h"
+#include "hardware/udp/udp_bco_control.h"
 
 #include <QCoreApplication>
 #include <QStandardPaths>
+#include <QProcess>
+#include <QElapsedTimer>
+#include <array>
+#include <thread>
 
 #include <algorithm>
 #include <chrono>
@@ -252,6 +257,197 @@ void testBootstrapWiresGeneratorPulseSettingsToSimulator(TestRunner& test)
     }
 }
 
+void testBootstrapSelectsUdp(TestRunner& test)
+{
+    siriusscope::hardware::UdpBcoSourceConfig endpoint;
+    endpoint.bindPort = 0;
+    siriusscope::app::ApplicationBootstrap bootstrap(endpoint);
+    test.require(AppState::instance().mode() == AppState::Mode::Combat,
+                 "explicit UDP endpoint selects Hardware in UI as well as transport");
+    test.require(dynamic_cast<siriusscope::hardware::UdpBcoStreamSource*>(bootstrap.bcoStreamSource()) != nullptr,
+                 "explicit UDP endpoint selects the network receiver");
+    test.require(dynamic_cast<siriusscope::hardware::UdpBcoControl*>(bootstrap.bcoControl()) != nullptr,
+                 "UDP source uses matching recording control adapter");
+    test.require(bootstrap.bandConfigController()->applyGeneratorPulseSettings(1, 200000.0, 25000.0),
+                 "UDP source accepts generator settings through application controller");
+}
+
+
+void testBootstrapSwitchesSourcesAndPreservesControllers(TestRunner& test)
+{
+    auto& state = AppState::instance();
+    state.setModeChangeLocked(false);
+    state.setMode(AppState::Mode::Test);
+    siriusscope::app::ApplicationBootstrap bootstrap;
+    bootstrap.registerQmlSingletons();
+    auto* waterfall = bootstrap.waterfallController();
+    auto* recording = bootstrap.recordingController();
+    auto* bands = bootstrap.bandListModel();
+    auto* bandController = bootstrap.bandConfigController();
+    auto* pipeline = bootstrap.dataIngestPipeline();
+    test.require(bandController->applyBandSettings(0, 3'050'000'000.0, 400'000'000.0,
+                                                 40.0, 10, 20, QStringLiteral("vertical")),
+                 "band configuration applies before source switch");
+    test.require(bandController->applyGeneratorPulseSettings(1, 200000.0, 25000.0),
+                 "pulse configuration applies before source switch");
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        state.setMode(AppState::Mode::Combat);
+        test.require(dynamic_cast<siriusscope::hardware::UdpBcoStreamSource*>(
+                         bootstrap.bcoStreamSource()) != nullptr,
+                     "hardware mode selects UDP receiver without CLI options");
+        test.require(dynamic_cast<siriusscope::hardware::UdpBcoControl*>(
+                         bootstrap.bcoControl()) != nullptr,
+                     "hardware mode selects matching UDP control");
+        test.require(!waterfall->sourceActive(), "mode switch does not start recording");
+        state.setModeChangeLocked(true);
+        state.setMode(AppState::Mode::Test);
+        test.require(state.mode() == AppState::Mode::Combat, "mode lock rejects source switch");
+        state.setModeChangeLocked(false);
+        state.setMode(AppState::Mode::Test);
+        auto* generator = dynamic_cast<siriusscope::hardware::HighLoadSimulatorBcoStreamSource*>(
+            bootstrap.bcoStreamSource());
+        test.require(generator != nullptr, "generator mode restores built-in source");
+        if (generator) {
+            const auto pulses = generator->pulseBandConfigs();
+            const auto updated = std::find_if(pulses.begin(), pulses.end(), [](const auto& value) {
+                return value.bandIndex == 1;
+            });
+            test.require(updated != pulses.end() && updated->pulsePeriodUs == 200000.0
+                             && updated->pulseWidthUs == 25000.0,
+                         "generator pulse settings survive source switching");
+        }
+        const auto* band = bands->bandState(0);
+        test.require(band && band->config.centerFrequencyHz == 3'050'000'000LL
+                         && band->config.widthHz == 400'000'000LL
+                         && band->thresholdAmplitude == 40.0
+                         && band->inputAttenuatorDb == 10 && band->outputAttenuatorDb == 20
+                         && band->polarization == QStringLiteral("vertical"),
+                     "receiver settings survive source switching");
+        test.require(bootstrap.waterfallController() == waterfall
+                         && bootstrap.recordingController() == recording
+                         && bootstrap.bandListModel() == bands
+                         && bootstrap.bandConfigController() == bandController
+                         && bootstrap.dataIngestPipeline() == pipeline,
+                     "mode changes preserve controller and pipeline identities");
+        test.require(siriusscope::app::WaterfallControllerQmlSingleton::instance == waterfall
+                         && siriusscope::app::RecordingControllerQmlSingleton::instance == recording
+                         && siriusscope::app::BandConfigControllerQmlSingleton::instance == bandController,
+                     "mode changes preserve QML singleton identities");
+    }
+}
+
+void testHardwareWaitsForExternalProcess(TestRunner& test, const QString& generatorPath)
+{
+    auto& state = AppState::instance();
+    state.setModeChangeLocked(false);
+    state.setMode(AppState::Mode::Test);
+    bco_generator::host::Endpoint quietAddress;
+    test.require(bco_generator::host::ipv4Endpoint("127.0.0.1", 0, quietAddress),
+                 "quiet generator endpoint parses");
+    bco_generator::host::UdpSocket quietEndpoint;
+    std::string error;
+    const bool opened = quietEndpoint.open(quietAddress, error);
+    test.require(opened, "reserve endpoint without producer");
+    if (!opened) return;
+    siriusscope::hardware::UdpBcoSourceConfig endpoint;
+    endpoint.generatorPort = quietEndpoint.localPort();
+    endpoint.bindPort = 0;
+    siriusscope::app::ApplicationBootstrap bootstrap(endpoint);
+    state.setMode(AppState::Mode::Test);
+    state.setMode(AppState::Mode::Combat);
+    auto* source = dynamic_cast<siriusscope::hardware::UdpBcoStreamSource*>(bootstrap.bcoStreamSource());
+    auto* recording = bootstrap.recordingController();
+    test.require(source != nullptr, "hardware restores configured UDP source");
+    if (!source) return;
+    recording->startRecording();
+    test.require(recording->recordingActive() && bootstrap.waterfallController()->sourceActive(),
+                 "hardware recording waits while generator is absent");
+    std::array<std::byte, 2048> datagram{};
+    bco_generator::host::Endpoint sender;
+    test.require(quietEndpoint.receive(datagram, sender, 1000) > 0,
+                 "source subscribes to configured external endpoint");
+    state.setMode(AppState::Mode::Test);
+    test.require(state.mode() == AppState::Mode::Combat && bootstrap.bcoStreamSource() == source,
+                 "recording prevents source switching");
+    test.require(!recording->setBcoControl(nullptr), "active control cannot be replaced");
+    std::this_thread::sleep_for(std::chrono::milliseconds{150});
+    QCoreApplication::processEvents();
+    test.require(source->metrics().producedSamples == 0
+                     && bootstrap.dataIngestPipeline()->metricsSnapshot().inputSamples == 0,
+                 "absent external generator never produces fallback samples");
+    test.require(bootstrap.statusModel()->bcoValue() == QStringLiteral("ожидание данных"),
+                 "hardware honestly reports waiting before any DATA");
+
+    quietEndpoint.close();
+    QProcess generator;
+    generator.start(generatorPath, {QStringLiteral("--bind"), QStringLiteral("127.0.0.1"),
+        QStringLiteral("--port"), QString::number(endpoint.generatorPort),
+        QStringLiteral("--rate"), QStringLiteral("1280")});
+    test.require(generator.waitForStarted(2000), "separate generator starts after receiver");
+    QElapsedTimer timeout;
+    timeout.start();
+    while (timeout.elapsed() < 5000 &&
+           (bootstrap.dataIngestPipeline()->metricsSnapshot().processedSamples == 0
+            || bootstrap.dataIngestPipeline()->waterfallRowQueueMetrics().pushedRows < 3
+            || bootstrap.statusModel()->bcoValue() != QStringLiteral("приём данных"))) {
+        QCoreApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    }
+    test.require(source->metrics().producedSamples > 0
+                     && bootstrap.dataIngestPipeline()->metricsSnapshot().processedSamples > 0,
+                 "late external process supplies samples through bootstrap to pipeline");
+    test.require(bootstrap.dataIngestPipeline()->waterfallRowQueueMetrics().pushedRows >= 3
+                     && bootstrap.dataIngestPipeline()->latestSpectrumSnapshot() != nullptr,
+                 "default external rate produces live waterfall and spectrum before stop");
+    test.require(bootstrap.statusModel()->bcoValue() == QStringLiteral("приём данных"),
+                 "valid network data updates hardware status");
+    recording->stopRecording();
+    generator.terminate();
+    if (!generator.waitForFinished(2000)) { generator.kill(); generator.waitForFinished(); }
+    test.require(!state.modeChangeLocked() && !bootstrap.waterfallController()->sourceActive()
+                     && recording->canStartRecording(), "stop releases source and mode lock");
+    state.setMode(AppState::Mode::Test);
+    auto* builtIn = dynamic_cast<siriusscope::hardware::HighLoadSimulatorBcoStreamSource*>(
+        bootstrap.bcoStreamSource());
+    test.require(builtIn != nullptr, "generator is restored after network recording");
+    recording->startRecording();
+    timeout.restart();
+    while (builtIn && builtIn->metrics().producedSamples == 0 && timeout.elapsed() < 2000) {
+        QCoreApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    }
+    test.require(recording->recordingActive() && builtIn && builtIn->metrics().producedSamples > 0,
+                 "restored built-in source generates data without external process");
+    recording->stopRecording();
+}
+
+void testControlModeDisablesAcquisition(TestRunner& test)
+{
+    auto& state = AppState::instance();
+    state.setModeChangeLocked(false);
+    state.setMode(AppState::Mode::Control);
+    siriusscope::app::ApplicationBootstrap bootstrap;
+    auto* recording = bootstrap.recordingController();
+    test.require(!recording->canStartRecording() && !bootstrap.bcoStreamSource(),
+                 "control mode initializes without acquisition");
+    test.require(bootstrap.statusModel()->bcoValue() == QStringLiteral("приём отключён"),
+                 "initial Control status reflects disabled acquisition");
+    recording->startRecording();
+    bootstrap.scanController()->startScan(10.0, 20.0, 5.0);
+    test.require(!recording->recordingActive() && !bootstrap.waterfallController()->sourceActive()
+                     && !bootstrap.scanController()->scanActive() && !state.modeChangeLocked(),
+                 "control mode rejects recording/scanning and allows mode selection");
+    state.setMode(AppState::Mode::Test);
+    test.require(recording->canStartRecording()
+                     && dynamic_cast<siriusscope::hardware::HighLoadSimulatorBcoStreamSource*>(
+                         bootstrap.bcoStreamSource()) != nullptr,
+                 "leaving control restores built-in acquisition");
+    state.setMode(AppState::Mode::Control);
+    test.require(!recording->canStartRecording() && !bootstrap.bcoStreamSource(),
+                 "switching to control disables acquisition");
+    state.setMode(AppState::Mode::Test);
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -259,10 +455,17 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
     QStandardPaths::setTestModeEnabled(true);
     TestRunner test;
+    AppState::instance().setModeChangeLocked(false);
+    AppState::instance().setMode(AppState::Mode::Test);
 
     testBootstrapProvidesObjects(test);
     testBootstrapBaselinePipelineDisablesSignalParameterStage(test);
     testBootstrapWiresGeneratorPulseSettingsToSimulator(test);
+    testBootstrapSelectsUdp(test);
+    testBootstrapSwitchesSourcesAndPreservesControllers(test);
+    test.require(argc > 1, "external generator executable supplied by CTest");
+    if (argc > 1) testHardwareWaitsForExternalProcess(test, QString::fromLocal8Bit(argv[1]));
+    testControlModeDisablesAcquisition(test);
 
     return test.result();
 }

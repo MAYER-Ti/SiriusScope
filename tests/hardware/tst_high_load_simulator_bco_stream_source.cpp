@@ -12,6 +12,7 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -192,6 +193,262 @@ int peakForBeam(const hardware::BcoSampleBlock& block, int beamIndex)
         }
     }
     return peak;
+}
+
+// Explicit reference records deliberately avoid the generator's math/helpers.
+struct ExpectedSample
+{
+    std::uint64_t index;
+    int band;
+    int beam;
+    int amplitude;
+    std::int64_t frequencyHz;
+    std::int64_t offsetHz;
+};
+
+void requireSamples(TestRunner& test,
+                    const hardware::BcoSampleBlock& block,
+                    const std::vector<ExpectedSample>& expected,
+                    const std::string& context)
+{
+    test.require(block.samples.size() == expected.size(), context + ": record count");
+    test.require(block.stats.sampleCount == expected.size(), context + ": metadata count");
+    for (std::size_t i = 0; i < std::min(block.samples.size(), expected.size()); ++i) {
+        const auto& actual = block.samples[i];
+        const auto& reference = expected[i];
+        test.require(actual.sampleIndex == reference.index
+                         && actual.bandIndex == reference.band
+                         && actual.beamIndex == reference.beam
+                         && actual.amplitude == reference.amplitude
+                         && actual.absoluteFrequencyHz == reference.frequencyHz
+                         && actual.frequencyOffsetHz == reference.offsetHz,
+                     context + ": reference record " + std::to_string(i));
+    }
+    if (!expected.empty()) {
+        test.require(block.stats.firstSampleIndex == expected.front().index
+                         && block.stats.lastSampleIndex == expected.back().index,
+                     context + ": metadata index range");
+    }
+}
+
+hardware::SimulatorRadioScene makeReferenceScene()
+{
+    // With antenna at 0 degrees, both beams have gain exp(-1/2): amplitude 61.
+    return {{{0.0, 3'000'000'000LL, 100, 30.0, false, 0, 0}}};
+}
+
+bool collectReferenceBlocks(TestRunner& test,
+                            hardware::HighLoadSimulatorBcoStreamSource& source,
+                            const hardware::BcoStreamConfig& config,
+                            std::size_t count,
+                            std::vector<hardware::IBcoStreamSource::SampleBlockPtr>& blocks)
+{
+    const auto configured = source.configure(config);
+    test.require(configured.success, "reference source configures");
+    if (!configured) {
+        return false;
+    }
+    const bool arrived = collectBlocks(source, count, blocks, std::chrono::seconds{2});
+    test.require(arrived, "reference blocks arrive before timeout");
+    const bool valid = blocks.size() >= count
+        && std::all_of(blocks.begin(), blocks.end(), [](const auto& block) {
+               return block != nullptr;
+           });
+    test.require(valid, "reference blocks are non-null");
+    return valid;
+}
+
+void testReferencePulseBoundariesAndEmptyBatch(TestRunner& test)
+{
+    auto load = makeShortLoadConfig(); // Ten time slots per batch.
+    load.pulseBandConfigs = {{0, true, 20.0, 3.0}};
+    hardware::HighLoadSimulatorBcoStreamSource source(load);
+    source.setRadioScene(makeReferenceScene());
+    auto config = makeValidConfig();
+    config.timeBase.samplePeriodNs = 1000;
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    if (!collectReferenceBlocks(test, source, config, 3, blocks)) {
+        return;
+    }
+
+    for (const std::size_t batch : {0U, 2U}) {
+        const std::uint64_t first = batch == 0 ? 42 : 62;
+        requireSamples(test, *blocks[batch], {
+            {first,     0, 0, 61, 3'000'000'000LL, 0},
+            {first,     0, 1, 61, 3'000'000'000LL, 0},
+            {first + 1, 0, 0, 61, 3'000'000'000LL, 0},
+            {first + 1, 0, 1, 61, 3'000'000'000LL, 0},
+            {first + 2, 0, 0, 61, 3'000'000'000LL, 0},
+            {first + 2, 0, 1, 61, 3'000'000'000LL, 0},
+        }, "pulse has inclusive start and exclusive end");
+    }
+    requireSamples(test, *blocks[1], {}, "pause still delivers an empty batch");
+    test.require(blocks[1]->stats.firstSampleIndex == 52
+                     && blocks[1]->stats.lastSampleIndex == 52
+                     && blocks[1]->stats.packetCount == 0,
+                 "empty batch preserves its time-slot origin without packets");
+}
+
+void testReferenceOddBudgetTruncatesBeamPair(TestRunner& test)
+{
+    auto load = makeShortLoadConfig();
+    load.samplesPerSecond = 500; // Five records/time slots per batch.
+    hardware::HighLoadSimulatorBcoStreamSource source(load);
+    source.setRadioScene(makeReferenceScene());
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    if (!collectReferenceBlocks(test, source, makeValidConfig(), 2, blocks)) {
+        return;
+    }
+    // Characterization of a current limitation, not a desired portable-core contract:
+    // the missing second beam is not resumed, and time advances by the whole budget.
+    for (std::size_t batch = 0; batch < 2; ++batch) {
+        const std::uint64_t first = batch == 0 ? 42 : 47;
+        requireSamples(test, *blocks[batch], {
+            {first,     0, 0, 61, 3'000'000'000LL, 0},
+            {first,     0, 1, 61, 3'000'000'000LL, 0},
+            {first + 1, 0, 0, 61, 3'000'000'000LL, 0},
+            {first + 1, 0, 1, 61, 3'000'000'000LL, 0},
+            {first + 2, 0, 0, 61, 3'000'000'000LL, 0},
+        }, "odd batch budget compatibility");
+    }
+}
+
+void testReferenceDriftAndReconfigureReplay(TestRunner& test)
+{
+    hardware::HighLoadSimulatorBcoStreamSource source(makeShortLoadConfig());
+    auto scene = makeReferenceScene();
+    scene.sources[0].frequencyDriftEnabled = true;
+    scene.sources[0].driftSpanHz = 10'000'000;
+    scene.sources[0].driftPeriodSteps = 4;
+    source.setRadioScene(scene);
+    const std::vector<ExpectedSample> expected{
+        {42, 0, 0, 61, 3'000'000'000LL, 0},
+        {42, 0, 1, 61, 3'000'000'000LL, 0},
+        {43, 0, 0, 61, 3'010'000'000LL, 10'000'000},
+        {43, 0, 1, 61, 3'010'000'000LL, 10'000'000},
+        {44, 0, 0, 61, 3'000'000'000LL, 0},
+        {44, 0, 1, 61, 3'000'000'000LL, 0},
+        {45, 0, 0, 61, 2'990'000'000LL, -10'000'000},
+        {45, 0, 1, 61, 2'990'000'000LL, -10'000'000},
+        {46, 0, 0, 61, 3'000'000'000LL, 0},
+        {46, 0, 1, 61, 3'000'000'000LL, 0},
+    };
+    for (int run = 0; run < 2; ++run) {
+        std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+        if (!collectReferenceBlocks(test, source, makeValidConfig(), 1, blocks)) {
+            return;
+        }
+        requireSamples(test, *blocks.front(), expected,
+                       "configure resets sample origin and drift phase");
+    }
+}
+
+void testReferenceBandEdgesAndVisibility(TestRunner& test)
+{
+    auto load = makeShortLoadConfig();
+    load.minVisibleAmplitude = 61;
+    hardware::HighLoadSimulatorBcoStreamSource source(load);
+    source.setRadioScene({{
+        {0.0, 2'749'999'999LL, 100, 30.0, false, 0, 0}, // Outside band.
+        {0.0, 2'750'000'000LL, 100, 30.0, false, 0, 0}, // Inclusive edge.
+        {0.0, 3'250'000'000LL, 100, 30.0, false, 0, 0},
+        {0.0, 3'250'000'001LL, 100, 30.0, false, 0, 0},
+        {0.0, 3'000'000'000LL, 99, 30.0, false, 0, 0},  // Rounds to 60.
+        {0.0, 3'000'000'000LL, 0, 30.0, false, 0, 0},   // Invalid amplitude.
+        {0.0, 5'800'000'000LL, 100, 30.0, false, 0, 0}, // Disabled band.
+    }});
+    auto config = makeValidConfig();
+    config.bandConfigs.push_back(makeBandConfig(1, 5'800'000'000LL, false));
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    if (!collectReferenceBlocks(test, source, config, 1, blocks)) {
+        return;
+    }
+    requireSamples(test, *blocks.front(), {
+        {42, 0, 0, 61, 2'750'000'000LL, -250'000'000},
+        {42, 0, 1, 61, 2'750'000'000LL, -250'000'000},
+        {42, 0, 0, 61, 3'250'000'000LL, 250'000'000},
+        {42, 0, 1, 61, 3'250'000'000LL, 250'000'000},
+        {43, 0, 0, 61, 2'750'000'000LL, -250'000'000},
+        {43, 0, 1, 61, 2'750'000'000LL, -250'000'000},
+        {43, 0, 0, 61, 3'250'000'000LL, 250'000'000},
+        {43, 0, 1, 61, 3'250'000'000LL, 250'000'000},
+        {44, 0, 0, 61, 2'750'000'000LL, -250'000'000},
+        {44, 0, 1, 61, 2'750'000'000LL, -250'000'000},
+    }, "band edges, visibility threshold and scene order");
+}
+
+void testReferenceFastPathTemplates(TestRunner& test)
+{
+    hardware::HighLoadSimulatorBcoStreamSource source(makeBaselineRawLoadConfig());
+    auto scene = makeReferenceScene();
+    scene.sources[0].frequencyDriftEnabled = true;
+    scene.sources[0].driftSpanHz = 10'000'000;
+    scene.sources[0].driftPeriodSteps = 4;
+    source.setRadioScene(scene);
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    if (!collectReferenceBlocks(test, source, makeValidConfig(), 2, blocks)) {
+        return;
+    }
+    // Current load-generation fast path uses fixed frequencies and a separate index
+    // per beam record, unlike the physical-scene path. Preserve this distinction.
+    for (std::size_t batch = 0; batch < 2; ++batch) {
+        std::vector<ExpectedSample> expected;
+        expected.reserve(37'120);
+        for (std::uint64_t i = 0; i < 37'120; ++i) {
+            expected.push_back({42 + batch * 37'120 + i, 0, static_cast<int>(i % 2),
+                                61, 3'000'000'000LL, 0});
+        }
+        requireSamples(test, *blocks[batch], expected, "baseline fast-path reference");
+        test.require(blocks[batch]->stats.packetCount == 145,
+                     "baseline packet accounting is fixed at 145 packets per batch");
+    }
+}
+
+void testCallbackDeliveryAndRetainedBlockOwnership(TestRunner& test)
+{
+    hardware::HighLoadSimulatorBcoStreamSource source(makeShortLoadConfig());
+    source.setRadioScene(makeReferenceScene());
+    test.require(source.configure(makeValidConfig()).success, "callback source configures");
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::vector<hardware::IBcoStreamSource::SampleBlockPtr> blocks;
+    std::vector<std::thread::id> callbackThreads;
+    const auto callerThread = std::this_thread::get_id();
+    const auto started = source.start([&](auto block) {
+        {
+            std::lock_guard lock(mutex);
+            blocks.push_back(std::move(block));
+            callbackThreads.push_back(std::this_thread::get_id());
+        }
+        condition.notify_one();
+    });
+    test.require(started.success, "callback source starts");
+    {
+        std::unique_lock lock(mutex);
+        test.require(condition.wait_for(lock, std::chrono::seconds{2}, [&] {
+                         return blocks.size() >= 3;
+                     }), "callback delivers three blocks");
+    }
+    test.require(source.stop().success, "stop joins callback producer");
+    if (blocks.size() < 3 || !blocks[0] || !blocks[1] || !blocks[2]) {
+        test.require(false, "callback blocks remain accessible after stop");
+        return;
+    }
+    test.require(std::all_of(callbackThreads.begin(), callbackThreads.end(), [&](auto id) {
+                     return id != callerThread && id == callbackThreads.front();
+                 }), "callbacks run on one producer thread outside the caller thread");
+    test.require(blocks[0].get() != blocks[1].get() && blocks[0].get() != blocks[2].get(),
+                 "retained block storage is not reused by later callbacks");
+    std::vector<ExpectedSample> expected;
+    for (std::uint64_t i = 0; i < 5; ++i) {
+        expected.push_back({42 + i, 0, 0, 61, 3'000'000'000LL, 0});
+        expected.push_back({42 + i, 0, 1, 61, 3'000'000'000LL, 0});
+    }
+    requireSamples(test, *blocks[0], expected, "retained first block after later callbacks");
+    const auto metrics = source.metrics();
+    test.require(metrics.producedBatches == blocks.size()
+                     && metrics.producedSamples == blocks.size() * 10,
+                 "post-stop metrics account for every delivered callback");
 }
 
 void testConfigureRejectsEmptyBands(TestRunner& test)
@@ -890,6 +1147,12 @@ int main()
 {
     TestRunner test;
 
+    testReferencePulseBoundariesAndEmptyBatch(test);
+    testReferenceOddBudgetTruncatesBeamPair(test);
+    testReferenceDriftAndReconfigureReplay(test);
+    testReferenceBandEdgesAndVisibility(test);
+    testReferenceFastPathTemplates(test);
+    testCallbackDeliveryAndRetainedBlockOwnership(test);
     testConfigureRejectsEmptyBands(test);
     testConfigureRejectsAllDisabledBands(test);
     testSourceGeneratesBlocks(test);

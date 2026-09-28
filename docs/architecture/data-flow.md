@@ -331,6 +331,19 @@ Rules:
 
 ## 11. Simulator Flow
 
+Current implementation: the standalone `modules/bco-generator` C++20 library performs
+synchronous generation into caller-owned spans. `HighLoadSimulatorBcoStreamSource`
+is its host adapter (scheduling, profiles, diagnostics, type conversion).
+
+Raw delivery is `IBcoStreamSource -> BcoAcquisitionSession -> SourceToPipelineBridge
+-> DataIngestPipeline`. Bootstrap owns the acquisition session and injects its
+`IAcquisitionControl` into `WaterfallController`; the controller never receives raw
+source blocks. Input enable/disable is synchronized with producer callbacks. Source
+stop must join callbacks before the acquisition session or pipeline is destroyed.
+See [portable generator](../../modules/bco-generator/README.md) for the buffer contract
+and the remaining host-side allocation/copy boundary.
+
+
 ```text
 Simulator profile
     -> same BCO stream interface as hardware
@@ -475,3 +488,23 @@ The following details remain `TBD`:
 - final storage chunk format for raw/near-raw stream;
 - final queue capacities and overload policies;
 - final metrics export format.
+
+## Implemented external generator transport
+
+In Hardware mode, bootstrap selects `UdpBcoStreamSource` and
+`UdpBcoControl`. The independent `bco-generator` process uses the portable core and
+SBCO v1 codec; its host runner handles scheduling and UDP. An RX std::thread validates
+packets and fills a bounded 32 × 8192 sample pool. Blocks go through
+`BcoAcquisitionSession → SourceToPipelineBridge → DataIngestPipeline`; raw data never
+passes through WaterfallController/QObject/QML. Subscription/configuration keepalives
+and Stop also run on RX, not the GUI thread. Local bind/start is not remote ACK.
+
+The Generator menu mode selects the built-in source; Control disables acquisition.
+Source changes are allowed only between recording/scan sessions, preserving band
+configuration and the existing pipeline/controllers. Explicit UDP CLI options select
+Hardware initially; the default endpoint is 127.0.0.1:46001 with local port 46000.
+Starting recording opens the receiver even if the external generator is absent;
+no synthetic fallback is used. See [SBCO UDP v1](../hardware/bco-udp-protocol.md) for MTU, control,
+lifetime, loss/drop policy, diagnostics and current limitations. This simulator
+protocol is not a claim of compatibility with real BCO wire packets or a completed
+60–90 MB/s physical-network performance audit.

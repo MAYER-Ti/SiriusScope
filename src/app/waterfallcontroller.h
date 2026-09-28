@@ -2,7 +2,7 @@
 
 #include "app/interfaces/processing_flush_control.h"
 #include "core/domain_models.h"
-#include "hardware/interfaces/bco_stream_source.h"
+#include "pipeline/acquisition_control.h"
 #include "infrastructure/interfaces/diagnostics_sink.h"
 #include "pipeline/data_ingest_pipeline.h"
 #include "waterfallrenderbufferadapter.h"
@@ -26,11 +26,6 @@
 
 class FrequencyViewportModel;
 class WaterfallRingBuffer;
-
-namespace siriusscope::pipeline {
-class SourceToPipelineBridge;
-struct SourceToPipelineBridgeMetrics;
-} // namespace siriusscope::pipeline
 
 namespace siriusscope::app {
 
@@ -73,7 +68,7 @@ class WaterfallController final : public QObject, public IProcessingFlushControl
 
 public:
     explicit WaterfallController(FrequencyViewportModel* viewportModel,
-                                 hardware::IBcoStreamSource* streamSource,
+                                 pipeline::IAcquisitionControl* acquisition,
                                  std::vector<core::BandConfig> bandConfigs,
                                  IWaterfallSessionStorage* sessionStorage,
                                  infrastructure::IDiagnosticsSink* diagnosticsSink,
@@ -87,7 +82,8 @@ public:
 
     QObject* ringBuffer() const;
     bool liveMode() const noexcept;
-    bool sourceActive() const noexcept { return m_sourceStarted; }
+    bool sourceActive() const noexcept
+    { return m_acquisition && m_acquisition->sourceActive(); }
     bool historyLoading() const noexcept { return m_historyLoading; }
     QString currentUtcText() const;
     bool sessionActive() const noexcept { return m_sessionActive; }
@@ -161,11 +157,6 @@ private:
         QVector<WaterfallRowSlot> rowSlots;
     };
 
-    void enqueueSampleBlock(hardware::IBcoStreamSource::SampleBlockPtr block);
-    void startSourceBridge();
-    void stopSourceBridge(bool flush);
-    void publishSourceBridgeMetrics(
-        const pipeline::SourceToPipelineBridgeMetrics& metrics) const;
     void startHistoryWorker();
     void stopHistoryWorker();
     void historyWorkerLoop();
@@ -196,10 +187,9 @@ private:
     void publish(infrastructure::DiagnosticSeverity severity, const std::string& message) const;
 
     FrequencyViewportModel* m_viewportModel = nullptr;
-    hardware::IBcoStreamSource* m_streamSource = nullptr;
+    pipeline::IAcquisitionControl* m_acquisition = nullptr;
     infrastructure::IDiagnosticsSink* m_diagnosticsSink = nullptr;
     pipeline::DataIngestPipeline* m_dataIngestPipeline = nullptr;
-    std::unique_ptr<pipeline::SourceToPipelineBridge> m_sourceBridge;
     WaterfallRingBuffer* m_ringBuffer = nullptr;
     IWaterfallSessionStorage* m_sessionStorage = nullptr;
     std::unique_ptr<InMemoryWaterfallSessionStorage> m_ownedSessionStorage;
@@ -218,9 +208,7 @@ private:
     double m_sourceMaxHz = 18e9;
     bool m_retuning = false;
     bool m_historyLoading = false;
-    bool m_sourceStarted = false;
     bool m_sessionActive = false;
-    bool m_acceptingLiveSamples = false;
     std::vector<core::BandConfig> m_bandConfigs;
 
     mutable std::mutex m_historyMutex;

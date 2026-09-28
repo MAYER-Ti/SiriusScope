@@ -4,6 +4,7 @@
 #include "app/spectrumenvelopecontroller.h"
 #include "app/spectrumenvelopeworker.h"
 #include "app/waterfallcontroller.h"
+#include "pipeline/bco_acquisition_session.h"
 #include "app/waterfallringbuffer.h"
 #include "core/domain_models.h"
 #include "hardware/interfaces/bco_stream_source.h"
@@ -265,8 +266,9 @@ void testStartLiveSourceStartsStreamSource(TestRunner& test)
     pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
     const auto bands = makeBandConfigs();
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -294,8 +296,9 @@ void testStopLiveSourceStopsStreamSource(TestRunner& test)
     pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
     const auto bands = makeBandConfigs();
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -349,8 +352,9 @@ void testSourceBlocksGoToDataPlane(TestRunner& test)
     app::WaterfallControllerConfig config;
     config.renderBinCount = 64;
     config.visibleRowCount = 8;
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -383,8 +387,9 @@ void testSourceBlockIgnoredBeforeRecording(TestRunner& test)
     pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
     const auto bands = makeBandConfigs();
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -420,8 +425,9 @@ void testStopRecordingFlushesRuntimeBridge(TestRunner& test)
     app::WaterfallControllerConfig config;
     config.renderBinCount = 64;
     config.visibleRowCount = 8;
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -474,8 +480,9 @@ void testSourceBlocksUpdateWaterfallRingBufferThroughQueuedRows(TestRunner& test
     config.renderBinCount = 64;
     config.visibleRowCount = 8;
     config.maxWaterfallRowsPerUiTick = 256;
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -549,8 +556,9 @@ void testLiveInsertsEmptyRowsForTimeGaps(TestRunner& test)
     const auto bands = makeBandConfigs();
     const auto config = makeLiveGapControllerConfig();
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -598,8 +606,9 @@ void testLiveAdjacentRowsDoNotInsertGaps(TestRunner& test)
     const auto bands = makeBandConfigs();
     const auto config = makeLiveGapControllerConfig();
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -635,8 +644,9 @@ void testLiveGapRowsAreNotStored(TestRunner& test)
     const auto bands = makeBandConfigs();
     const auto config = makeLiveGapControllerConfig();
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -674,8 +684,9 @@ void testHugeLiveGapIsClamped(TestRunner& test)
     const auto bands = makeBandConfigs();
     const auto config = makeLiveGapControllerConfig(10);
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -726,8 +737,9 @@ void testHighLoadPathDoesNotPublishRawBuses(TestRunner& test)
         sampleCount += static_cast<int>(samples.size());
     });
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -775,8 +787,9 @@ void testHighLoadPathDoesNotCopyBlocksToSpectrumWorker(TestRunner& test)
                      &app::SpectrumEnvelopeController::acceptSnapshot);
     envelopeWorker.setViewport(viewport.viewMinHz(), viewport.viewMaxHz());
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -807,8 +820,9 @@ void testStopRecordingFreezesDataPlaneAcceptance(TestRunner& test)
     pipeline::DataIngestPipeline dataPipeline(makePipelineConfig(), &diagnostics);
     const auto bands = makeBandConfigs();
 
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,
@@ -851,8 +865,9 @@ void testFlushProcessingForcesSignalParameterSnapshot(TestRunner& test)
     app::WaterfallControllerConfig config;
     config.renderBinCount = 64;
     config.visibleRowCount = 8;
+    pipeline::BcoAcquisitionSession acquisition(&source, &dataPipeline, &diagnostics);
     app::WaterfallController controller(&viewport,
-                                        &source,
+                                        &acquisition,
                                         bands,
                                         &storage,
                                         &diagnostics,

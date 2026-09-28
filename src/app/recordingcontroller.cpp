@@ -42,6 +42,19 @@ RecordingController::RecordingController(hardware::IBcoControl* bcoControl,
 {
 }
 
+bool RecordingController::setBcoControl(hardware::IBcoControl* control)
+{
+    if (m_recordingState != RecordingState::Idle && m_recordingState != RecordingState::Failed) {
+        return false;
+    }
+    m_bcoControl = control;
+    m_recordingState = RecordingState::Idle;
+    m_bcoProcessingState = hardware::BcoProcessingState::Idle;
+    emit recordingStateChanged();
+    emit bcoProcessingStateChanged();
+    return true;
+}
+
 bool RecordingController::recordingActive() const noexcept
 {
     return m_recordingState == RecordingState::Active;
@@ -54,7 +67,8 @@ bool RecordingController::bcoProcessingActive() const noexcept
 
 bool RecordingController::canStartRecording() const noexcept
 {
-    return m_recordingState == RecordingState::Idle || m_recordingState == RecordingState::Failed;
+    return m_bcoControl
+        && (m_recordingState == RecordingState::Idle || m_recordingState == RecordingState::Failed);
 }
 
 bool RecordingController::canStopRecording() const noexcept
